@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/manual/images/00-loading-screen.png" alt="CrystalPilot" width="820">
+  <img src="docs/readme/images/banner.png" alt="CrystalPilot" width="820">
 </p>
 
 # CrystalPilot
