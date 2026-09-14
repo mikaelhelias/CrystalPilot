@@ -188,7 +188,7 @@ Elias, M. (2026). *CrystalPilot: a browser interface for XDS crystallographic da
 
 With gratitude to Wolfgang Kabsch for XDS [1, 2]; Greta Assmann, Wolfgang Brehm and Kay Diederichs for XDSCC12 [3]; Phil Evans for POINTLESS [4, 5], and Phil Evans and Garib Murshudov for AIMLESS [6]; the Collaborative Computational Project No. 4 (CCP4) for the CCP4 suite [7], including CTRUNCATE, which implements the French–Wilson procedure [8]; Marcin Wojdyr for gemmi [9]; and DECTRIS for the neggia HDF5 reader [10]. CrystalPilot’s resolution cut-off heuristics are informed by [6, 11].
 
-CrystalPilot was coded with the help of Anthropic Claude Opus.
+CrystalPilot was coded with the help of Anthropic Claude Opus. The loading-screen artwork was created with GPT-6 Astra.
 
 ### References
 
