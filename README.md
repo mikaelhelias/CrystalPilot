@@ -99,7 +99,7 @@ A highly capable frame viewer is integrated, with resolution and ice rings, pred
 
 First download from their authors (free for academic use):
 - **XDS** (Linux 64-bit package): https://xds.mr.mpg.de
-- **DECTRIS neggia** (`dectris-neggia.so`, for Eiger `.h5` data): https://github.com/dectris/neggia/releases
+- **DECTRIS neggia** (`dectris-neggia.so`, for Eiger `.h5` data): https://github.com/dectris-cloud/neggia/releases
 - **CCP4** (optional; needed for POINTLESS, AIMLESS and the MTZ export): https://www.ccp4.ac.uk
 
 ### Windows 10 (version 2004 or newer) / Windows 11
@@ -186,7 +186,7 @@ Elias, M. (2026). *CrystalPilot: a browser interface for XDS crystallographic da
 
 ## Acknowledgements
 
-With gratitude to Wolfgang Kabsch for XDS [1, 2], Kay Diederichs for XDSCC12 [3], Phil Evans and Garib Murshudov for POINTLESS and AIMLESS [4–6], the CCP4 consortium for the CCP4 suite [7], including CTRUNCATE [8], Marcin Wojdyr for gemmi [9], and DECTRIS for the neggia HDF5 reader [10]. The resolution cut-off criteria follow [6, 11].
+With gratitude to Wolfgang Kabsch for XDS [1, 2]; Greta Assmann, Wolfgang Brehm and Kay Diederichs for XDSCC12 [3]; Phil Evans for POINTLESS [4, 5], and Phil Evans and Garib Murshudov for AIMLESS [6]; the Collaborative Computational Project No. 4 (CCP4) for the CCP4 suite [7], including CTRUNCATE, which implements the French–Wilson procedure [8]; Marcin Wojdyr for gemmi [9]; and DECTRIS for the neggia HDF5 reader [10]. CrystalPilot’s resolution cut-off heuristics are informed by [6, 11].
 
 CrystalPilot was coded with the help of Anthropic Claude Opus.
 
@@ -198,10 +198,10 @@ CrystalPilot was coded with the help of Anthropic Claude Opus.
 4. Evans, P. (2006). Scaling and assessment of data quality. *Acta Cryst.* D62, 72–82. https://doi.org/10.1107/S0907444905036693
 5. Evans, P. R. (2011). An introduction to data reduction: space-group determination, scaling and intensity statistics. *Acta Cryst.* D67, 282–292. https://doi.org/10.1107/S090744491003982X
 6. Evans, P. R. & Murshudov, G. N. (2013). How good are my data and what is the resolution? *Acta Cryst.* D69, 1204–1214. https://doi.org/10.1107/S0907444913000061
-7. Agirre, J. *et al.* (2023). The CCP4 suite: integrative software for macromolecular crystallography. *Acta Cryst.* D79, 449–461. https://doi.org/10.1107/S2059798323003595
+7. Collaborative Computational Project, Number 4 (2023). The CCP4 suite: integrative software for macromolecular crystallography. *Acta Cryst.* D79, 449–461. https://doi.org/10.1107/S2059798323003595
 8. French, S. & Wilson, K. (1978). On the treatment of negative intensity observations. *Acta Cryst.* A34, 517–525. https://doi.org/10.1107/S0567739478001114
 9. Wojdyr, M. (2022). GEMMI: A library for structural biology. *J. Open Source Softw.* 7, 4200. https://doi.org/10.21105/joss.04200
-10. DECTRIS. Neggia: HDF5 plugin for XDS. https://github.com/dectris/neggia
+10. DECTRIS. Neggia: XDS plugin for DECTRIS EIGER HDF5 files. https://github.com/dectris-cloud/neggia
 11. Karplus, P. A. & Diederichs, K. (2012). Linking crystallographic model and data quality. *Science* 336, 1030–1033. https://doi.org/10.1126/science.1218231
 
 ## Author
