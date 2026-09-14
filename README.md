@@ -180,13 +180,29 @@ py -3 build.py
 
 ## How to cite
 
+If CrystalPilot helps your work, please cite it together with the programs it runs:
+
 Elias, M. (2026). *CrystalPilot: a browser interface for XDS crystallographic data processing.* Zenodo. https://doi.org/10.5281/zenodo.22756729
 
 ## Acknowledgements
 
-With gratitude to Wolfgang Kabsch for XDS, Kay Diederichs for XDSCC12, Phil Evans and others for POINTLESS and AIMLESS, Marcin Wojdyr and others for gemmi, and the CCP4 consortium.
+With gratitude to Wolfgang Kabsch for XDS [1, 2], Kay Diederichs for XDSCC12 [3], Phil Evans and Garib Murshudov for POINTLESS and AIMLESS [4–6], the CCP4 consortium for the CCP4 suite [7], including CTRUNCATE [8], Marcin Wojdyr for gemmi [9], and DECTRIS for the neggia HDF5 reader [10]. The resolution cut-off criteria follow [6, 11].
 
 CrystalPilot was coded with the help of Anthropic Claude Opus.
+
+### References
+
+1. Kabsch, W. (2010). XDS. *Acta Cryst.* D66, 125–132. https://doi.org/10.1107/S0907444909047337
+2. Kabsch, W. (2010). Integration, scaling, space-group assignment and post-refinement. *Acta Cryst.* D66, 133–144. https://doi.org/10.1107/S0907444909047374
+3. Assmann, G., Brehm, W. & Diederichs, K. (2016). Identification of rogue datasets in serial crystallography. *J. Appl. Cryst.* 49, 1021–1028. https://doi.org/10.1107/S1600576716005471
+4. Evans, P. (2006). Scaling and assessment of data quality. *Acta Cryst.* D62, 72–82. https://doi.org/10.1107/S0907444905036693
+5. Evans, P. R. (2011). An introduction to data reduction: space-group determination, scaling and intensity statistics. *Acta Cryst.* D67, 282–292. https://doi.org/10.1107/S090744491003982X
+6. Evans, P. R. & Murshudov, G. N. (2013). How good are my data and what is the resolution? *Acta Cryst.* D69, 1204–1214. https://doi.org/10.1107/S0907444913000061
+7. Agirre, J. *et al.* (2023). The CCP4 suite: integrative software for macromolecular crystallography. *Acta Cryst.* D79, 449–461. https://doi.org/10.1107/S2059798323003595
+8. French, S. & Wilson, K. (1978). On the treatment of negative intensity observations. *Acta Cryst.* A34, 517–525. https://doi.org/10.1107/S0567739478001114
+9. Wojdyr, M. (2022). GEMMI: A library for structural biology. *J. Open Source Softw.* 7, 4200. https://doi.org/10.21105/joss.04200
+10. DECTRIS. Neggia: HDF5 plugin for XDS. https://github.com/dectris/neggia
+11. Karplus, P. A. & Diederichs, K. (2012). Linking crystallographic model and data quality. *Science* 336, 1030–1033. https://doi.org/10.1126/science.1218231
 
 ## Author
 
