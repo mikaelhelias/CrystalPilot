@@ -1,0 +1,4 @@
+OUTPUT_FILE= merged.ahkl
+  FRIEDEL'S_LAW= TRUE
+  MERGE= FALSE
+  INPUT_FILE= /tmp/cp_api_d/projects/real/XDS_ASCII.HKL

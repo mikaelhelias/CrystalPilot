@@ -1,0 +1,31 @@
+# Only what is needed to use, build and test CrystalPilot is tracked.
+# Everything at the top level is ignored unless listed here.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
+!/CITATION.cff
+!/docs/
+!/linux/
+!/windows/
+!/files/
+
+# files/: sources, build script, docs generator, tests
+/files/*
+!/files/src/
+!/files/build.py
+!/files/tools/
+!/files/tests/
+/files/src/1/
+/files/src/src_FILEMAP.md
+/files/src/AUTOPILOT_OPTIMIZE_SPEC*.md
+/files/tests/ui/out/
+
+# built manual and installer settings (published on Releases / per installation)
+/docs/manual/CrystalPilot-Manual.html
+/docs/manual/CrystalPilot-Manual.pdf
+/windows/crystalpilot.cfg
+
+__pycache__/
+*.pyc

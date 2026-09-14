@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use CrystalPilot, please cite it as below."
+title: "CrystalPilot: a browser interface for XDS crystallographic data processing"
+type: software
+authors:
+  - family-names: Elias
+    given-names: Mikael
+version: 0.6.3
+date-released: 2026-09-14
+license: GPL-3.0-only
+repository-code: "https://github.com/mikaelhelias/CrystalPilot"
+abstract: >-
+  CrystalPilot is a user-friendly, consolidated interface for X-ray diffraction
+  data processing with XDS: project management, XDS.INP and XSCALE.INP editing,
+  automatic analysis of IDXREF, CORRECT and XSCALE results with resolution
+  cut-off criteria, AutoPilot processing of single data sets or batches,
+  automatic Table 1, a frame viewer, and work modes for learning.
+keywords:
+  - crystallography
+  - X-ray diffraction
+  - XDS
+  - data processing
+  - structural biology
