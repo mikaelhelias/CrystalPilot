@@ -4,6 +4,8 @@
 
 # CrystalPilot
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22756729.svg)](https://doi.org/10.5281/zenodo.22756729)
+
 **Crystallographic data processing & analysis: a browser interface for XDS.**
 
 CrystalPilot aims to make X-ray data processing user-friendly and consolidated in one interface. It manages projects, handles your data and the XDS input files, and follows the processing from the images to a merged data set. Along the way it builds "Table 1" automatically. Its work modes, from Tutorial to Expert, also make it a platform for learning data processing. It runs on Linux, and on Windows through WSL2 with a one-click installer.
@@ -175,6 +177,10 @@ cd files
 py -3 build.py
 ```
 
+
+## How to cite
+
+Elias, M. (2026). *CrystalPilot: a browser interface for XDS crystallographic data processing.* Zenodo. https://doi.org/10.5281/zenodo.22756729
 
 ## Acknowledgements
 

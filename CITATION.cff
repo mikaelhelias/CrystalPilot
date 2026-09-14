@@ -8,6 +8,7 @@ authors:
 version: 0.6.3
 date-released: 2026-09-14
 license: GPL-3.0-only
+doi: 10.5281/zenodo.22756729
 repository-code: "https://github.com/mikaelhelias/CrystalPilot"
 abstract: >-
   CrystalPilot is a user-friendly, consolidated interface for X-ray diffraction
