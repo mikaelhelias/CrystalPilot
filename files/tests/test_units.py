@@ -292,6 +292,52 @@ def define_checks(m, scratch):
             assert m._h5_find_master(d / p) == str(d / "lyso_1_master.h5"), p
         assert m._h5_find_master(d / "other_master.h5") is None
 
+    # ── CCP4 detection (CCP4 9 is unpacked wherever the user likes) ──────
+    @check("CCP4: found through $CCP4 / $CBIN, and without f2mtz")
+    def _():
+        root = scratch / "ccp4root" / "ccp4-9.0"
+        (root / "bin").mkdir(parents=True, exist_ok=True)
+        for n in ("pointless", "aimless", "ctruncate", "cad"):     # no f2mtz
+            (root / "bin" / n).write_text("", encoding="utf-8")
+        assert m._is_ccp4_bin(root / "bin")
+        assert not m._is_ccp4_bin(root)
+        keep = {k: os.environ.get(k) for k in ("PATH", "CCP4", "CBIN", "CCP4_MASTER", "CCP4_BIN")}
+        try:
+            os.environ["PATH"] = str(scratch / "nothing-here")     # no CCP4 on PATH
+            for k in ("CCP4", "CBIN", "CCP4_MASTER", "CCP4_BIN"):
+                os.environ.pop(k, None)
+            os.environ["CCP4"] = str(root)
+            assert m._find_ccp4_bin() == str(root / "bin"), "via $CCP4"
+            os.environ.pop("CCP4")
+            os.environ["CBIN"] = str(root / "bin")
+            assert m._find_ccp4_bin() == str(root / "bin"), "via $CBIN"
+            os.environ.pop("CBIN")
+            # $CCP4_MASTER points at the folder that holds ccp4-9.0
+            os.environ["CCP4_MASTER"] = str(root.parent)
+            assert m._find_ccp4_bin() == str(root / "bin"), "via $CCP4_MASTER"
+        finally:
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    # ── what the user types into a path field ────────────────────────────
+    @check("path settings: blanks, quotes, ~ and a folder all give a usable path")
+    def _():
+        d = scratch / "cleanpath"; d.mkdir(exist_ok=True)
+        so = d / "dectris-neggia.so"
+        so.write_bytes(b"\x7fELF")
+        names = ("dectris-neggia.so", "dectris-neggia.dylib")
+        assert m._clean_path_setting(str(so) + "  ", names) == str(so), "trailing blank"
+        assert m._clean_path_setting('"' + str(so) + '"', names) == str(so), "quoted"
+        assert m._clean_path_setting(str(d), names) == str(so), "folder instead of file"
+        assert m._clean_path_setting("", names) == "", "empty stays empty"
+        assert m._clean_path_setting(None, names) == "", "None stays empty"
+        assert m._clean_path_setting("~/x.so", names) == str(Path.home() / "x.so"), "~ expanded"
+        # a path that does not exist is returned as given (the caller refuses it)
+        assert m._clean_path_setting("/no/such/file.so", names) == str(Path("/no/such/file.so"))
+
     # ── HDF5 preflight: can XDS reach the frames it is about to read? ────
     def _pre_inp(folder, template, lib="auto"):
         folder.mkdir(parents=True, exist_ok=True)

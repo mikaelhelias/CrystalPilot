@@ -182,8 +182,17 @@ fi
 step "CCP4 (optional)"
 if [ -n "$CCP4_SETUP" ] && [ ! -f "$CCP4_SETUP" ]; then warn "--ccp4-setup file does not exist: $CCP4_SETUP"; CCP4_SETUP=""; fi
 if [ -z "$CCP4_SETUP" ]; then
-    for c in "${CCP4:-}"/bin/ccp4.setup-sh /opt/xtal/ccp4-*/bin/ccp4.setup-sh /opt/ccp4-*/bin/ccp4.setup-sh /usr/local/ccp4-*/bin/ccp4.setup-sh "$HOME"/ccp4-*/bin/ccp4.setup-sh /Applications/ccp4-*/bin/ccp4.setup-sh; do
-        [ -f "$c" ] && { CCP4_SETUP="$c"; break; }
+    # CCP4 9 is unpacked wherever the user likes, and the folder may be
+    # CCP4-9/9.0 rather than ccp4-9.0 - so search one and two levels under the
+    # usual roots, in both spellings.
+    for base in "${CCP4:-}" "${CCP4_MASTER:-}" /opt /opt/xtal /usr/local /usr/local/xtal /software \
+                /Applications "$HOME" "$HOME/Downloads" "$HOME/Documents" "$HOME/Desktop" "$HOME/software"; do
+        [ -n "$base" ] || continue
+        for c in "$base"/bin/ccp4.setup-sh \
+                 "$base"/[Cc][Cc][Pp]4*/bin/ccp4.setup-sh \
+                 "$base"/[Cc][Cc][Pp]4*/*/bin/ccp4.setup-sh; do
+            [ -f "$c" ] && { CCP4_SETUP="$c"; break 2; }
+        done
     done
 fi
 if [ -n "$CCP4_SETUP" ]; then

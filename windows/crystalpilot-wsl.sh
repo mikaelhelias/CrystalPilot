@@ -41,6 +41,67 @@ ensure_interop() {
     printf ':WSLInterop:M::MZ::/init:PF' | $S tee /proc/sys/fs/binfmt_misc/register >/dev/null 2>&1 || true
 }
 
+# The projects folder is shown on Windows as P:\Projects.  Windows can map a
+# drive letter only to the runtime's root share, so the installer binds
+# /Projects to the projects folder.  When a runtime starts without processing
+# /etc/fstab (an imported distribution, systemd off, a hand-made runtime), the
+# mount is missing and /Projects is an ordinary folder on the runtime disk:
+# Explorer still shows P:\Projects, so data copied there lands in a folder the
+# program never looks at, and XDS reports missing HDF5 data files.  Put the
+# mount back at every start and carry anything left behind over to the projects
+# folder (never overwriting: a name that already exists is kept aside).
+# Move everything from $1 into $2 without ever overwriting: a name that exists
+# already is carried to $PM_KEEP instead, so nothing of the user's is lost.
+_pm_merge() {
+    local src="$1" dst="$2" rel="$3" f n
+    $PM_SUDO mkdir -p "$dst" 2>/dev/null
+    for f in "$src"/* "$src"/.[!.]*; do
+        [ -e "$f" ] || continue
+        n=$(basename "$f")
+        if [ -d "$f" ] && [ -d "$dst/$n" ]; then
+            _pm_merge "$f" "$dst/$n" "$rel/$n"
+        elif [ -e "$dst/$n" ]; then
+            $PM_SUDO mkdir -p "$PM_KEEP$rel" 2>/dev/null
+            $PM_SUDO mv "$f" "$PM_KEEP$rel/" 2>/dev/null && echo "    kept aside: ${rel:+${rel#/}/}$n (that name is already in the projects folder)"
+        else
+            $PM_SUDO mv "$f" "$dst/" 2>/dev/null && echo "    recovered: ${rel:+${rel#/}/}$n"
+        fi
+    done
+    $PM_SUDO rmdir "$src" 2>/dev/null
+}
+
+ensure_projects_mount() {
+    [ -d /Projects ] || return 0
+    case "$PROJECTS_DIR" in /Projects|/Projects/*) return 0 ;; esac
+    PM_SUDO=""; [ "$(id -u)" != "0" ] && PM_SUDO="sudo -n"
+    local src stray stamp
+    src=$(findmnt -n -o SOURCE /Projects 2>/dev/null)
+    if [ -n "$src" ]; then
+        case "$src" in *"[$PROJECTS_DIR]"*) return 0 ;; esac    # already the right folder
+        echo "[crystalpilot] P:\\Projects pointed at $src - reconnecting it to $PROJECTS_DIR"
+        $PM_SUDO umount /Projects 2>/dev/null || return 0
+    fi
+    $PM_SUDO mkdir -p "$PROJECTS_DIR" 2>/dev/null
+    stray=$(ls -A /Projects 2>/dev/null)
+    if [ -n "$stray" ]; then
+        stamp=$(date '+%Y-%m-%d_%H%M%S')
+        PM_KEEP="$PROJECTS_DIR/recovered_from_P_$stamp"
+        echo "[crystalpilot] P:\\Projects was not connected to $PROJECTS_DIR - the files copied there were"
+        echo "               invisible to the program; moving them into the projects folder now:"
+        _pm_merge /Projects "$PROJECTS_DIR" ""
+        [ -d "$PM_KEEP" ] && echo "               (what could not be merged is in $PM_KEEP)"
+        $PM_SUDO mkdir -p /Projects 2>/dev/null
+    fi
+    if $PM_SUDO mount --bind "$PROJECTS_DIR" /Projects 2>/dev/null; then
+        echo "[crystalpilot] P:\\Projects -> $PROJECTS_DIR"
+        if ! grep -q "[[:space:]]/Projects[[:space:]]" /etc/fstab 2>/dev/null; then
+            $PM_SUDO sh -c "echo '$PROJECTS_DIR /Projects none bind 0 0' >> /etc/fstab" 2>/dev/null
+        fi
+    else
+        echo "[crystalpilot] could not connect P:\\Projects to $PROJECTS_DIR - reach your projects through the desktop shortcut"
+    fi
+}
+
 case "$cmd" in
   start)
     APP=""; MANUAL=""; NET_DRIVES=()
@@ -124,6 +185,7 @@ case "$cmd" in
     # unless XDS_GUI_PROJECTS is set; point it at the real folder.
     export XDS_GUI_PROJECTS="$PROJECTS_DIR"
     mkdir -p "$PROJECTS_DIR"
+    ensure_projects_mount
     cd "$CPDIR" || exit 1
     echo "[crystalpilot] projects: $PROJECTS_DIR  (Windows: $(wslpath -w "$PROJECTS_DIR" 2>/dev/null))"
     exec "$PYTHON" -u "$CPDIR/crystalpilot.py" --port "$PORT" --host 127.0.0.1 \
@@ -146,6 +208,7 @@ case "$cmd" in
     echo "PORT=$PORT"
     echo "PROJECTS_DIR=$PROJECTS_DIR"
     echo "PROJECTS_WIN=$(wslpath -w "$PROJECTS_DIR" 2>/dev/null)"
+    echo "PROJECTS_MOUNT=$(findmnt -n -o SOURCE /Projects 2>/dev/null || echo none)"
     echo "XDS=$([ -x "$CPDIR/xds/xds_par" ] && echo yes || echo no)"
     echo "NEGGIA=$([ -f "$CPDIR/xds/dectris-neggia.so" ] && echo yes || echo no)"
     case "$CCP4_MODE" in

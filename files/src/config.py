@@ -386,34 +386,73 @@ def _wsl_drives():
 # CCP4 detection
 CCP4_BIN = str(SETTINGS.get("ccp4_bin") or "")  # from settings, else auto-detected or user-configured
 
+CCP4_PROGRAMS = ("pointless", "aimless", "ctruncate", "f2mtz", "cad")
+
+
+def _is_ccp4_bin(folder):
+    """True when this folder holds at least one of the programs we run."""
+    try:
+        d = Path(folder)
+    except Exception:
+        return False
+    for n in CCP4_PROGRAMS:
+        if (d / n).is_file() or (d / (n + ".exe")).is_file():
+            return True
+    return False
+
+
 def _find_ccp4_bin():
-    """Try to locate f2mtz from CCP4 installation. Returns path to bin dir or empty string."""
-    # 1. Check if f2mtz is already on PATH (user sourced ccp4.setup)
-    f2mtz = shutil.which("f2mtz")
-    if f2mtz:
-        return str(Path(f2mtz).parent)
-    # 2. Check CCP4/CBIN environment variables
-    for var in ("CBIN", "CCP4_BIN", "CCP4"):
-        val = os.environ.get(var, "")
-        if val:
-            candidate = Path(val) / "bin" / "f2mtz" if var == "CCP4" else Path(val) / "f2mtz"
-            if candidate.exists():
-                return str(candidate.parent)
-    # 3. Probe common install locations
+    """Locate the CCP4 bin folder.  Returns the path or an empty string.
+
+    CCP4 9 is installed by unpacking an archive wherever the user likes, so
+    there is no fixed place to look: try the environment first (a sourced
+    ccp4.setup-sh), then a broad set of roots two levels deep.  Any of the
+    programs CrystalPilot actually runs counts - keying the whole detection
+    on f2mtz alone missed installations that have everything else.
+    """
     import glob as _glob
-    patterns = [
-        "/Applications/ccp4-*/bin",          # macOS
-        "/opt/xtal/ccp4-*/bin",              # Linux common
-        "/usr/local/ccp4-*/bin",             # Linux alt
-        str(Path.home() / "ccp4-*/bin"),     # Home dir
-        str(Path.home() / "CCP4-*/bin"),
-    ]
-    for pat in patterns:
-        hits = sorted(_glob.glob(pat), reverse=True)  # newest first
-        for h in hits:
-            if (Path(h) / "f2mtz").exists():
-                return h
+
+    # 1. on PATH - the user sourced ccp4.setup-sh in the shell that started us
+    for n in CCP4_PROGRAMS:
+        hit = shutil.which(n)
+        if hit:
+            return str(Path(hit).parent)
+
+    # 2. what ccp4.setup-sh leaves in the environment
+    for var in ("CBIN", "CCP4_BIN"):
+        val = os.environ.get(var, "")
+        if val and _is_ccp4_bin(val):
+            return str(Path(val))
+    for var in ("CCP4", "CCP4_MASTER"):
+        val = os.environ.get(var, "")
+        if not val:
+            continue
+        for cand in (Path(val) / "bin", Path(val)):
+            if _is_ccp4_bin(cand):
+                return str(cand)
+        for hit in sorted(_glob.glob(str(Path(val) / "[Cc][Cc][Pp]4*" / "bin")), reverse=True):
+            if _is_ccp4_bin(hit):
+                return hit
+
+    # 3. the usual places, plus where a downloaded archive is unpacked
+    home = Path.home()
+    roots = [Path("/opt"), Path("/opt/xtal"), Path("/usr/local"), Path("/usr/local/xtal"),
+             Path("/software"), Path("/Applications"), home, home / "Downloads",
+             home / "Documents", home / "Desktop", home / "Applications", home / "software"]
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not root.is_dir():
+            continue
+        for pat in ("[Cc][Cc][Pp]4*/bin", "[Cc][Cc][Pp]4*/*/bin"):
+            for hit in sorted(_glob.glob(str(root / pat)), reverse=True):   # newest first
+                if _is_ccp4_bin(hit):
+                    return hit
     return ""
+
 
 # ── XDSCC12 detection ─────────────────────────────────────────────────────────
 # XDSCC12: standalone binary by Kay Diederichs (Uni Konstanz).
@@ -458,6 +497,30 @@ def _find_xdscc12():
 # The library is distributed by DECTRIS and often installed alongside XDS.
 
 NEGGIA_LIB = ""  # Auto-detected at startup; can be set via Settings or CLI
+
+def _clean_path_setting(value, filenames=()):
+    """Make what a user typed or pasted into a usable path.
+
+    Strips blanks and surrounding quotes (a path pasted from a terminal often
+    carries a trailing space, one from Explorer a pair of quotes), expands ~
+    and $HOME, and accepts a folder when the file is inside it.  Returns ""
+    for an empty value.  The path is not required to exist - the caller
+    decides what to do when it does not.
+    """
+    v = str(value or "").strip().strip('"').strip("'").strip()
+    if not v:
+        return ""
+    v = os.path.expandvars(os.path.expanduser(v))
+    p = Path(v)
+    if filenames and p.is_dir():
+        for n in filenames:
+            if (p / n).is_file():
+                return str(p / n)
+    return str(p)
+
+
+NEGGIA_NAMES = ('dectris-neggia.so', 'dectris-neggia.dylib')
+
 
 def _find_neggia():
     """Try to locate the dectris-neggia shared library.
@@ -528,8 +591,13 @@ try:
     NEGGIA_LIB = _find_neggia()
 except Exception:
     NEGGIA_LIB = ""
-if SETTINGS.get("neggia_lib") and Path(str(SETTINGS["neggia_lib"])).is_file():
-    NEGGIA_LIB = str(SETTINGS["neggia_lib"])
+# A path the user set in the interface wins over auto-detection.  It used to
+# be dropped without a word when it did not point at a file any more (a pasted
+# trailing space was enough), which looked exactly like "the program does not
+# save the path": keep it and let the Environment screen report it instead.
+NEGGIA_LIB_SET = _clean_path_setting(SETTINGS.get("neggia_lib"), NEGGIA_NAMES)
+if NEGGIA_LIB_SET:
+    NEGGIA_LIB = NEGGIA_LIB_SET
 
 # ── AutoPilot configuration ───────────────────────────────────────────────────
 AUTOPILOT_MAX_RETRIES   = 3   # max retries per XDS step before fallback

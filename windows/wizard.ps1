@@ -181,16 +181,34 @@ function Find-App {
     foreach ($c in @((Join-Path $Here "crystalpilot.py"), (Join-Path $Root "crystalpilot.py"))) { if (Test-Path $c) { return $c } }
     return ""
 }
+function Test-Ccp4Bin {
+    # any of the programs CrystalPilot runs is enough - an installation
+    # without f2mtz is still a CCP4
+    param([string]$Dir)
+    if (-not $Dir) { return $false }
+    foreach ($n in @("pointless.exe", "aimless.exe", "ctruncate.exe", "f2mtz.exe", "cad.exe")) {
+        if (Test-Path (Join-Path $Dir $n)) { return $true }
+    }
+    return $false
+}
 function Find-WindowsCcp4 {
     $bases = @()
     foreach ($d in (Get-FixedDrives)) { $bases += ($d.Letter + "\") }
-    foreach ($b in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA, $env:USERPROFILE)) { if ($b) { $bases += $b } }
+    # CCP4 9 is installed by unpacking a zip and running install_ccp4.exe from
+    # it, so the folder is often still in Downloads or on the Desktop.
+    foreach ($b in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA, $env:USERPROFILE,
+                     (Get-DownloadsDir),
+                     (Join-Path $env:USERPROFILE "Downloads"), (Join-Path $env:USERPROFILE "Documents"),
+                     (Join-Path $env:USERPROFILE "Desktop"), $env:CCP4)) {
+        if ($b -and (Test-Path $b)) { $bases += $b }
+    }
     $roots = @()
-    foreach ($b in $bases) {
+    if ($env:CCP4 -and (Test-Ccp4Bin (Join-Path $env:CCP4 "bin"))) { $roots += $env:CCP4 }
+    foreach ($b in ($bases | Select-Object -Unique)) {
         foreach ($c in (Get-ChildItem -Path $b -Filter "CCP4*" -Directory -ErrorAction SilentlyContinue)) {
-            if (Test-Path (Join-Path $c.FullName "bin\pointless.exe")) { $roots += $c.FullName }
+            if (Test-Ccp4Bin (Join-Path $c.FullName "bin")) { $roots += $c.FullName }
             foreach ($sub in (Get-ChildItem -Path $c.FullName -Directory -ErrorAction SilentlyContinue)) {
-                if (Test-Path (Join-Path $sub.FullName "bin\pointless.exe")) { $roots += $sub.FullName }
+                if (Test-Ccp4Bin (Join-Path $sub.FullName "bin")) { $roots += $sub.FullName }
             }
         }
     }

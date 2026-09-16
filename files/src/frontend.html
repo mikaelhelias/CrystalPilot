@@ -1696,7 +1696,15 @@
         const _ENV_KEY = 'crystalpilot-env-fingerprint';
         let _envData = null;
         function _envStored() { try { return localStorage.getItem(_ENV_KEY) || ''; } catch (e) { return ''; } }
-        function _envStore(v) { try { localStorage.setItem(_ENV_KEY, v); } catch (e) {} }
+        function _envStore(v) {
+            try { localStorage.setItem(_ENV_KEY, v); } catch (e) {}
+            // also on the server: the browser store is per browser, and the
+            // Linux launcher does not always open the same one
+            try {
+                fetch(`${API}/config`, { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                         body: JSON.stringify({ env_seen: v }) });
+            } catch (e) {}
+        }
         function _escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
         async function envCheck(force) {
@@ -1710,7 +1718,7 @@
             try { _figuresGate(); } catch (e) {}
             const stored = _envStored();
             // first launch, or the situation changed since the user dismissed it
-            if (!force && stored === d.fingerprint) return;
+            if (!force && (stored === d.fingerprint || (d.seen && d.seen === d.fingerprint))) return;
             _envRender(d);
             const box = document.getElementById('envcheck');
             if (box) box.style.display = 'flex';
@@ -1744,6 +1752,10 @@
                     actions = '<input type="text" id="env-neggia-path" value="' + _escHtml(c.path || '') + '" placeholder="/path/to/dectris-neggia.so">'
                             + '<button class="btn-ghost btn-sm" onclick="browseFolder(\'env-neggia\')" title="Browse">\ud83d\udcc2</button>'
                             + '<button class="btn-secondary btn-sm" onclick="_envSave(\'neggia_lib\', \'env-neggia-path\')">Save &amp; re-check</button>';
+                } else if (c.action === 'set_ccp4_path') {
+                    actions = '<input type="text" id="env-ccp4-path" value="' + _escHtml(c.path || '') + '" placeholder="CCP4 folder, or its bin folder">'
+                            + '<button class="btn-ghost btn-sm" onclick="browseFolder(\'env-ccp4\')" title="Browse">\ud83d\udcc2</button>'
+                            + '<button class="btn-secondary btn-sm" onclick="_envSave(\'ccp4_bin\', \'env-ccp4-path\')">Save &amp; re-check</button>';
                 }
                 if (c.action === 'open_folder' && c.path) {
                     actions += '<button class="btn-secondary btn-sm" onclick="openFolder(' + JSON.stringify(c.path).replace(/"/g, '&quot;') + ')">\ud83d\udcc2 Open in file manager</button>';
@@ -1762,10 +1774,16 @@
             if (!el) return;
             const body = {}; body[key] = el.value.trim();
             try {
-                await fetch(`${API}/config`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-                if (key === 'xds_path') { const x = document.getElementById('xds-path-input'); if (x) x.value = el.value.trim(); }
-                if (key === 'neggia_lib') { const n = document.getElementById('ap-neggia-path'); if (n) n.value = el.value.trim(); }
-            } catch (e) {}
+                const r = await fetch(`${API}/config`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+                const d = await r.json();
+                // A path the server cannot use is refused: saying "saved" and
+                // dropping it at the next start is what this used to do.
+                if (d.error) { showToast(d.error, 'error'); return; }
+                const saved = (d[key] !== undefined && d[key] !== null) ? d[key] : el.value.trim();
+                el.value = saved;
+                if (key === 'xds_path') { const x = document.getElementById('xds-path-input'); if (x) x.value = saved; }
+                if (key === 'neggia_lib') { const n = document.getElementById('ap-neggia-path'); if (n) n.value = saved; }
+            } catch (e) { showToast('Could not save: ' + e.message, 'error'); return; }
             envCheck(true);
         }
         // "Set" button next to the XDS path field in the sidebar
@@ -20808,8 +20826,14 @@
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (statusEl) {
-                    if (val) {
-                        statusEl.textContent = '\u2713 Saved: ' + val;
+                    if (d && d.error) {
+                        statusEl.textContent = d.error;
+                        statusEl.style.color = '#f6ad55';
+                    } else if (val) {
+                        // show what the server kept: blanks, quotes and ~ are
+                        // cleaned up there, and a folder becomes the file
+                        if (d && d.neggia_lib && inp) inp.value = d.neggia_lib;
+                        statusEl.textContent = '\u2713 Saved: ' + ((d && d.neggia_lib) || val);
                         statusEl.style.color = '#68d391';
                     } else {
                         statusEl.textContent = 'Cleared (no HDF5 library configured)';
