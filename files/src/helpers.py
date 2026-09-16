@@ -689,3 +689,158 @@ def _report_matches(name):
     stamp = name[len("crystalpilot-report_"):-4]            # YYYY-MM-DD_HHMMSS
     return (len(stamp) == 17 and stamp[4] == "-" and stamp[7] == "-" and stamp[10] == "_"
             and stamp.replace("-", "").replace("_", "").isdigit())
+
+
+
+def _check_h5_frames(xds_inp_path):
+    """Check that XDS can really reach the HDF5 frames named in XDS.INP.
+
+    XDS replaces the ?????? in NAME_TEMPLATE_OF_DATA_FRAMES with 'master' and
+    hands that name to the LIB= plugin (dectris-neggia).  The plugin follows
+    the external links in /entry/data; a relative link is looked up next to
+    the master file and nowhere else (no working directory, no search path).
+    A data file that is missing there fails with
+        NEGGIA ERROR: OPENING FILE RETURNED ERROR CODE: 2
+    inside the plugin, and XDS then reports "could not open ...
+    dectris-neggia.so" — which blames the library instead of the data.
+    Say what is really wrong before XDS starts.
+
+    Returns (fatal, lines).  lines is empty when nothing could be checked or
+    everything is in place; fatal means XDS cannot read the images at all.
+    """
+    lines = []
+    try:
+        content = Path(xds_inp_path).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return False, []
+
+    template, lib_paths = '', []
+    for raw in content.splitlines():
+        ls = raw.strip()
+        if not ls or ls.startswith('!'):
+            continue
+        m = re.match(r'NAME_TEMPLATE_OF_DATA_FRAMES\s*=\s*(\S+)', ls, re.I)
+        if m:
+            template = m.group(1)
+        m = re.match(r'LIB\s*=\s*(\S+)', ls, re.I)
+        if m:
+            lib_paths.append(m.group(1))
+
+    if not template or not template.lower().endswith(('.h5', '.hdf5')):
+        return False, []                      # not HDF5 data — nothing to check
+
+    work_dir = Path(xds_inp_path).parent
+    # XDS builds the master file name from the template itself
+    master = Path(re.sub(r'\?+', 'master', template))
+    if not master.is_absolute():
+        master = work_dir / master
+
+    if not lib_paths:
+        lines.append("XDS.INP has no LIB= line. HDF5/Eiger data can only be read "
+                     "through dectris-neggia.so — set the HDF5 library path in "
+                     "Settings, or add LIB= to XDS.INP.")
+        return True, lines
+    if len(lib_paths) > 1:
+        lines.append("XDS.INP has %d LIB= lines. XDS opens the plugin once per "
+                     "line and the second one fails ('handle' not null) — keep one."
+                     % len(lib_paths))
+    if not Path(lib_paths[0]).exists():
+        lines.append("The HDF5 reader library is not there: " + lib_paths[0])
+        return True, lines
+
+    if not master.exists():
+        lines.append("XDS will open " + str(master) + ", which does not exist.")
+        parent = master.parent
+        if not parent.is_dir():
+            lines.append("The folder " + str(parent) + " is not there either "
+                         "(a network drive that is not mounted looks like this).")
+        else:
+            near = sorted(p.name for p in parent.glob('*master*.h5'))
+            if near:
+                lines.append("The folder does contain: " + ", ".join(near[:4]))
+        return True, lines
+
+    try:
+        import h5py
+    except Exception:
+        return False, []                      # cannot check without h5py
+    # hdf5plugin only matters for reading compressed frames, not for the links
+
+    missing, present, per_file = [], 0, 0
+    try:
+        with h5py.File(str(master), 'r') as f:
+            if 'entry/data' not in f:
+                return False, []              # not an Eiger master — leave it to XDS
+            group = f['entry/data']
+            names = {p.name.lower(): p.name for p in master.parent.iterdir()}
+            for key in sorted(group):
+                link = group.get(key, getlink=True)
+                target = getattr(link, 'filename', None)
+                if target is None:
+                    present += 1              # frames live inside the master
+                    continue
+                path = Path(target) if target.startswith('/') else master.parent / target
+                if path.exists():
+                    present += 1
+                    if not per_file:
+                        try:
+                            per_file = int(group[key].shape[0])
+                        except Exception:
+                            per_file = 0
+                else:
+                    missing.append((key, target))
+    except Exception:
+        return False, []                      # unreadable master — XDS will say so
+
+    if not missing:
+        return False, []
+
+    # Which chunk files does this run actually need?  neggia picks the file by
+    # (frame - 1) // frames-per-file + 1, so a dataset processed only in part
+    # can be complete for the frames in DATA_RANGE.
+    needed = None
+    if per_file:
+        m = re.search(r'^\s*DATA_RANGE\s*=\s*(\d+)\s+(\d+)', content, re.I | re.M)
+        if m:
+            first, last = int(m.group(1)), int(m.group(2))
+            needed = set(range((first - 1) // per_file + 1,
+                               (last - 1) // per_file + 2))
+
+    def _index(key):
+        digits = re.search(r'(\d+)$', key)
+        return int(digits.group(1)) if digits else None
+
+    blocking = [(k, t) for k, t in missing
+                if needed is None or _index(k) is None or _index(k) in needed]
+    # Only neggia is known to look next to the master and nowhere else; with
+    # another plugin (durin, the HDF5 library itself) say it but let it run.
+    neggia = 'neggia' in Path(lib_paths[0]).name.lower()
+    fatal = neggia and ((present == 0) or bool(blocking and needed is not None))
+
+    lines.append("%d of the %d data files listed in %s %s missing from %s:"
+                 % (len(missing), len(missing) + present, master.name,
+                    "is" if len(missing) == 1 else "are", master.parent))
+    for key, target in missing[:6]:
+        hint = ""
+        base = target.rsplit('/', 1)[-1]
+        if base.lower() in names and names[base.lower()] != base:
+            hint = "   (the folder has '%s' — same name, different capitals; "\
+                   "Linux keeps them apart)" % names[base.lower()]
+        elif target.startswith('/'):
+            hint = "   (the master stores this as an absolute path from the "\
+                   "beamline; the plugin does not look next to the master then)"
+        elif '/' in target:
+            hint = "   (the master points into a sub-folder)"
+        lines.append("    " + target + hint)
+    if len(missing) > 6:
+        lines.append("    ... and %d more" % (len(missing) - 6))
+    if present:
+        lines.append("%d data file(s) are in place." % present)
+    if present and needed is not None and not blocking:
+        lines.append("The frames in DATA_RANGE are covered, so XDS can run — "
+                     "but a wider range will fail.")
+    else:
+        lines.append("Copy the missing files next to the master file, or point "
+                     "NAME_TEMPLATE_OF_DATA_FRAMES at the folder that has the "
+                     "whole dataset.")
+    return fatal, lines
