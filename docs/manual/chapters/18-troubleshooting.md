@@ -19,7 +19,7 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 | `XSCALE.INP has no INPUT_FILE= line and no XDS_ASCII.HKL was found` | no CORRECT output yet | run CORRECT, or add inputs with Auto-detect |
 | `another program is already running in <folder>` | a run is active there, maybe in another tab | wait or **Stop** |
 | `... exceeded the time limit of 240 min and was stopped` | very large data set or slow storage | raise `step_timeout` in `~/.crystalpilot/settings.json` |
-| `CCP4 not found` | CCP4 not installed or not sourced | Linux: source `ccp4.setup-sh` before starting; Windows: run the wizard again after installing CCP4 |
+| `CCP4 not found` | CCP4 not installed, not sourced, or installed somewhere CrystalPilot does not search (CCP4 9 is unpacked wherever you like) | Environment screen → CCP4 row: enter the CCP4 folder (or its bin folder) and Save & re-check. It is remembered per computer. Linux: sourcing `ccp4.setup-sh` before starting also works, but only for a start from that same terminal |
 | `Not authorised` (403) when scripting | the request lacks the per-launch token | send the token printed in the console as `X-CrystalPilot-Token` or `?token=`; set `XDS_GUI_TOKEN` to fix it |
 | `Port already in use` | another CrystalPilot (or program) on the port | the launcher opens the browser on the running one; otherwise change the port |
 | Loading screen never switches (Windows) | the server did not start | read the console window; run the wizard again |

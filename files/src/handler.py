@@ -132,6 +132,7 @@ def _environment_report():
     # neggia: configured path, else next to the XDS binaries (the folder the
     # user may just have set), else the usual system locations
     neg = NEGGIA_LIB if (NEGGIA_LIB and Path(NEGGIA_LIB).exists()) else ''
+    gone = NEGGIA_LIB if (NEGGIA_LIB and not neg) else ''
     if not neg:
         for _n in ('dectris-neggia.so', 'dectris-neggia.dylib'):
             if (xds_path / _n).exists():
@@ -143,8 +144,9 @@ def _environment_report():
                        "detail": neg, "path": neg, "action": "set_neggia_path"})
     else:
         checks.append({"id": "neggia", "status": "warn", "title": "Eiger HDF5 reader (dectris-neggia)",
-                       "detail": "Not found. Only needed for Eiger .h5 data: download dectris-neggia.so from DECTRIS and place it next to xds_par, or enter its path here.",
-                       "path": "", "action": "set_neggia_path",
+                       "detail": ("The library set here is no longer at " + gone + " - enter its path again.") if gone else
+                                 "Not found. Only needed for Eiger .h5 data: download dectris-neggia.so from DECTRIS and place it next to xds_par, or enter its path here.",
+                       "path": gone, "action": "set_neggia_path",
                        "link": "https://github.com/dectris/neggia/releases", "link_label": "neggia releases"})
 
     # CCP4 (optional)
@@ -153,10 +155,14 @@ def _environment_report():
         progs = [p for p in ("pointless", "aimless", "ctruncate", "f2mtz", "cad") if (Path(ccp4) / p).exists() or (Path(ccp4) / (p + ".exe")).exists()]
         miss = [p for p in ("pointless", "aimless", "ctruncate", "f2mtz", "cad") if p not in progs]
         checks.append({"id": "ccp4", "status": "ok" if not miss else "warn", "title": "CCP4 (optional)",
-                       "detail": ("Found in " + ccp4) + (" - missing: " + ", ".join(miss) if miss else ""), "path": ccp4})
+                       "detail": ("Found in " + ccp4) + (" - missing: " + ", ".join(miss) if miss else ""),
+                       "path": ccp4, "action": "set_ccp4_path"})
     else:
         checks.append({"id": "ccp4", "status": "warn", "title": "CCP4 (optional)",
-                       "detail": "Not found. XDS processing works without it. CCP4 adds POINTLESS, AIMLESS, CTRUNCATE and MTZ export (f2mtz). Install it and source ccp4.setup-sh before starting CrystalPilot.",
+                       "detail": "Not found. XDS processing works without it. CCP4 adds POINTLESS, AIMLESS, CTRUNCATE and MTZ export. "
+                                 "It is searched for on PATH, in $CCP4/$CBIN and in the usual folders - if it lives somewhere else "
+                                 "(CCP4 9 is unpacked wherever you like), enter its folder here.",
+                       "path": "", "action": "set_ccp4_path",
                        "link": "https://www.ccp4.ac.uk/download/", "link_label": "CCP4 download page"})
 
     _pw = _windows_view(str(PROJECTS_DIR))
@@ -1398,7 +1404,11 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         # Config
         elif path == "/api/environment":
             try:
-                self.send_json(_environment_report())
+                _env = _environment_report()
+                # what was dismissed on this machine (settings file, so it
+                # survives a different browser or a cleared browser store)
+                _env["seen"] = str(_load_settings().get("env_seen") or "")
+                self.send_json(_env)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
@@ -3949,21 +3959,53 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
 
         # Update config
         elif path == "/api/config":
+            # What the user typed is cleaned up first (blanks, quotes, ~, a
+            # folder instead of the file) and has to exist.  Storing a path
+            # that is then dropped without a word at the next start is what
+            # made the reader path look like it was never saved.
+            neggia = data.get("neggia_lib")
+            if neggia is not None:
+                neggia = _clean_path_setting(neggia, NEGGIA_NAMES)
+                if neggia and not Path(neggia).is_file():
+                    self.send_json({"error": "No file at " + neggia +
+                                             ". Give the full path of dectris-neggia.so (or the folder it is in)."}, 400)
+                    return
             new_path = data.get("xds_path")
             if new_path:
+                new_path = _clean_path_setting(new_path) or new_path
+                if not Path(new_path).is_dir():
+                    self.send_json({"error": "No folder at " + new_path +
+                                             ". Give the folder that contains xds_par (or xds)."}, 400)
+                    return
                 xds_runner = XDSRunner(new_path)
             ccp4 = data.get("ccp4_bin")
             if ccp4 is not None:
+                # the user may give the CCP4 root or its bin folder
+                ccp4 = _clean_path_setting(ccp4)
+                if ccp4 and not _is_ccp4_bin(ccp4):
+                    import glob as _glob_ccp4
+                    _alt = [str(Path(ccp4) / "bin")]
+                    _alt += sorted(_glob_ccp4.glob(str(Path(ccp4) / "[Cc][Cc][Pp]4*" / "bin")), reverse=True)
+                    _alt += sorted(_glob_ccp4.glob(str(Path(ccp4) / "[Cc][Cc][Pp]4*" / "*" / "bin")), reverse=True)
+                    _hit = next((a for a in _alt if _is_ccp4_bin(a)), "")
+                    if not _hit:
+                        self.send_json({"error": "No CCP4 programs in " + ccp4 +
+                                                 ". Give the CCP4 folder or its bin folder (the one with pointless, aimless, ctruncate)."}, 400)
+                        return
+                    ccp4 = _hit
                 CCP4_BIN = ccp4
-            neggia = data.get("neggia_lib")
             if neggia is not None:
                 NEGGIA_LIB = neggia
             par = data.get("parallel")
             if par is not None:
                 XDS_PARALLEL = bool(par)
+            # The Environment screen's "Don't show this again": kept per
+            # machine, so it also holds when the page is opened in another
+            # browser (on Linux the launcher may not reuse the same one).
+            env_seen = data.get("env_seen")
             # Remember these choices for the next start (per machine)
             _save_settings(xds_path=str(xds_runner.xds_path) if new_path else None,
-                           ccp4_bin=ccp4, neggia_lib=neggia,
+                           ccp4_bin=ccp4, neggia_lib=neggia, env_seen=env_seen,
                            parallel=(bool(par) if par is not None else None))
             self.send_json({"message": "Config updated", "xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN,
                             "neggia_lib": NEGGIA_LIB, "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE)})
