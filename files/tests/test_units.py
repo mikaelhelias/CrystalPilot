@@ -292,6 +292,57 @@ def define_checks(m, scratch):
             assert m._h5_find_master(d / p) == str(d / "lyso_1_master.h5"), p
         assert m._h5_find_master(d / "other_master.h5") is None
 
+    # ── HDF5 preflight: can XDS reach the frames it is about to read? ────
+    def _pre_inp(folder, template, lib="auto"):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "neggia.so").write_bytes(b"\x7fELF")
+        if lib == "auto":
+            lib = "LIB= %s\n" % (folder / "neggia.so")
+        inp = folder / "XDS.INP"
+        inp.write_text("JOB= XYCORR\nNAME_TEMPLATE_OF_DATA_FRAMES= %s\n%sDATA_RANGE= 1 100\n"
+                       % (template, lib), encoding="utf-8")
+        return inp
+
+    @check("h5 preflight: CBF data is not an HDF5 problem - stays quiet")
+    def _():
+        d = scratch / "pre_cbf"
+        assert m._check_h5_frames(_pre_inp(d, str(d / "img_?????.cbf"))) == (False, [])
+
+    @check("h5 preflight: the master XDS would open is missing -> fatal, and it is named")
+    def _():
+        d = scratch / "pre_nomaster"
+        fatal, lines = m._check_h5_frames(_pre_inp(d, str(d / "lyso_??????.h5")))
+        assert fatal and any("lyso_master.h5" in l for l in lines), lines
+
+    @check("h5 preflight: HDF5 without LIB= is fatal; two LIB= lines are flagged")
+    def _():
+        d = scratch / "pre_lib"
+        fatal, lines = m._check_h5_frames(_pre_inp(d, str(d / "lyso_??????.h5"), lib=""))
+        assert fatal and any("LIB=" in l for l in lines), lines
+        d2 = scratch / "pre_lib2"
+        so = d2 / "neggia.so"
+        inp2 = _pre_inp(d2, str(d2 / "lyso_??????.h5"), lib="LIB= %s\nLIB= %s\n" % (so, so))
+        assert any("LIB= lines" in l for l in m._check_h5_frames(inp2)[1])
+
+    @check("h5 preflight: master with missing data files -> fatal; complete set -> quiet")
+    def _():
+        try:
+            import h5py, numpy as np
+        except Exception:
+            return          # no h5py on this interpreter - the WSL suite covers it
+        d = scratch / "pre_links"
+        inp = _pre_inp(d, str(d / "lyso_??????.h5"))
+        with h5py.File(d / "lyso_master.h5", "w") as f:
+            g = f.create_group("entry/data")
+            for n in (1, 2):
+                g["data_%06d" % n] = h5py.ExternalLink("lyso_data_%06d.h5" % n, "/entry/data/data")
+        fatal, lines = m._check_h5_frames(inp)
+        assert fatal and any("lyso_data_000001.h5" in l for l in lines), lines
+        for n in (1, 2):
+            with h5py.File(d / ("lyso_data_%06d.h5" % n), "w") as f:
+                f.create_dataset("entry/data/data", data=np.zeros((50, 4, 4), dtype="uint16"))
+        assert m._check_h5_frames(inp) == (False, [])
+
     @check("XDSINPGenerator: Eiger header gives EIGER, LIB line, ranges, no misplaced keys")
     def _():
         hdr = {"nx": "4150", "ny": "4371", "x_pixel_size": "0.075", "y_pixel_size": "0.075", "wavelength": "0.9793",

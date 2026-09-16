@@ -257,6 +257,22 @@ def stream_xds(project_name, steps, write_fn, run_folder=None, copy_gxparm=False
             send("log", {"text": ">>>   Parallel steps (COLSPOT, INTEGRATE) will fail."})
             send("log", {"text": ">>>   Ensure the full XDS installation directory is in your $PATH."})
 
+    # Preflight: for HDF5 data, check that the frames XDS is about to ask for
+    # can actually be reached (see _check_h5_frames — a missing chunk file is
+    # reported by XDS as a problem with dectris-neggia.so).
+    try:
+        _h5_fatal, _h5_lines = _check_h5_frames(xds_inp)
+    except Exception:
+        _h5_fatal, _h5_lines = False, []
+    if _h5_lines:
+        if _h5_fatal:
+            send("error_msg", {"message": "XDS cannot read the images:\n" + "\n".join(_h5_lines)})
+            send("done", {})
+            return
+        send("log", {"text": ">>> WARNING: " + _h5_lines[0]})
+        for _ln in _h5_lines[1:]:
+            send("log", {"text": ">>>   " + _ln})
+
     # Copy GXPARM.XDS -> XPARM.XDS if requested (re-integrate with refined geometry)
     if copy_gxparm:
         gxparm = work_dir / "GXPARM.XDS"
@@ -3433,6 +3449,21 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
     if strategy_fix and _ap_apply_xdsinp_fix(xds_inp_path, dict(strategy_fix), send):
         send("ap_log", {"text": ">>> Strategy applied to XDS.INP: " + ', '.join(k + '= ' + v for k, v in strategy_fix.items())})
 
+    # Preflight: HDF5 frames reachable?  (same check as the manual run)
+    try:
+        _h5_fatal, _h5_lines = _check_h5_frames(xds_inp_path)
+    except Exception:
+        _h5_fatal, _h5_lines = False, []
+    if _h5_lines:
+        send("ap_log", {"text": ""})
+        send("ap_log", {"text": ">>> " + ("XDS cannot read the images:" if _h5_fatal else "WARNING:")})
+        for _ln in _h5_lines:
+            send("ap_log", {"text": ">>>   " + _ln})
+        if _h5_fatal:
+            send("ap_error", {"message": _h5_lines[0]})
+            send("ap_done", {"status": "error"})
+            return
+
     max_retries = AUTOPILOT_MAX_RETRIES
 
     send("ap_log", {"text": ""})
@@ -3499,9 +3530,10 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                     _tmp_text = _lp_tmp.read_text(encoding='utf-8', errors='replace')[:2000]
                     if 'CANNOT OPEN OR READ' in _tmp_text.upper():
                         _xds_err_msg = ("XDS cannot read the image files. This usually means:\n"
-                                        "  • LIB= path is missing or incorrect (required for HDF5/Eiger data)\n"
-                                        "  • The dectris-neggia.so library is incompatible or corrupted\n"
+                                        "  • For HDF5: the _data_00000N.h5 files are not next to the master file\n"
+                                        "    (the plugin looks there and nowhere else; XDS then blames the library)\n"
                                         "  • NAME_TEMPLATE_OF_DATA_FRAMES does not match actual files\n"
+                                        "  • LIB= path is missing or incorrect (required for HDF5/Eiger data)\n"
                                         "Check the AutoPilot log above for the exact XDS error.")
                         break
                     elif 'ERROR' in _tmp_text.upper():

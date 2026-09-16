@@ -13,6 +13,8 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 | `!!! ERROR !!! ILLEGAL (OBSOLETE ?) KEYWORD OR PARAMETER VALUE` | a malformed line in XDS.INP | the log quotes the line; fix it in the Full Input File tab |
 | `INSUFFICIENT PERCENTAGE OF INDEXED REFLECTIONS` | geometry, spot range or several lattices | chapter 6 |
 | `CANNOT OPEN OR READ FILE` for an `.h5` frame | neggia library missing or `LIB=` wrong | Environment screen → Eiger HDF5 reader; regenerate XDS.INP |
+| `XDS cannot read the images: N of the M data files ... are missing` | the `_data_00000N.h5` files are not in the same folder as the master file | copy the whole data set together, or point the template at the folder that holds it. The reader follows the links stored in the master file and looks next to the master and nowhere else |
+| `NEGGIA ERROR: OPENING FILE RETURNED ERROR CODE: 2` followed by `could not open ... dectris-neggia.so` | same thing: a data file is missing. The library itself is fine — it printed the error | as above; CrystalPilot now says so before the run starts |
 | `!!! ERROR !!! MISPLACED PARAMETER` (XSCALE) | keyword in the wrong section of a hand-edited XSCALE.INP | save the parameters again (both save buttons write a correct layout) |
 | `XSCALE.INP has no INPUT_FILE= line and no XDS_ASCII.HKL was found` | no CORRECT output yet | run CORRECT, or add inputs with Auto-detect |
 | `another program is already running in <folder>` | a run is active there, maybe in another tab | wait or **Stop** |
