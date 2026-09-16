@@ -729,6 +729,16 @@ def _check_h5_frames(xds_inp_path):
     if not template or not template.lower().endswith(('.h5', '.hdf5')):
         return False, []                      # not HDF5 data — nothing to check
 
+    # XDS does not accept a single file name here.  It replaces the frame-number
+    # wildcards with 'master' itself and refuses anything else outright:
+    #     !!! ERROR !!! INVALID "NAME_TEMPLATE_OF_DATA_FRAMES="
+    if '?' not in template:
+        suggest = re.sub(r'(_master|_data_\d+|_\d+)(\.[^.]+)$', r'_??????\2', template, flags=re.I)
+        lines.append("NAME_TEMPLATE_OF_DATA_FRAMES names one file. XDS needs the frame-number "
+                     "wildcards there and puts 'master' in their place itself"
+                     + (" — use " + suggest if suggest != template else "") + ".")
+        return True, lines
+
     work_dir = Path(xds_inp_path).parent
     # XDS builds the master file name from the template itself
     master = Path(re.sub(r'\?+', 'master', template))
@@ -750,6 +760,9 @@ def _check_h5_frames(xds_inp_path):
 
     if not master.exists():
         lines.append("XDS will open " + str(master) + ", which does not exist.")
+        if '_data_' in master.name.lower():
+            lines.append("The template contains _data_ — XDS builds the master file name from it, "
+                         "so it has to be PREFIX_??????.h5 without _data.")
         parent = master.parent
         if not parent.is_dir():
             lines.append("The folder " + str(parent) + " is not there either "

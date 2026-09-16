@@ -370,6 +370,25 @@ def define_checks(m, scratch):
         inp2 = _pre_inp(d2, str(d2 / "lyso_??????.h5"), lib="LIB= %s\nLIB= %s\n" % (so, so))
         assert any("LIB= lines" in l for l in m._check_h5_frames(inp2)[1])
 
+    @check("h5 preflight: a template naming one file is refused (XDS: INVALID NAME_TEMPLATE)")
+    def _():
+        d = scratch / "pre_nowild"
+        for name, want in (("lyso_master.h5", "lyso_??????.h5"),
+                           ("lyso_data_000001.h5", "lyso_??????.h5")):
+            inp = _pre_inp(d, str(d / name))
+            (d / name).write_bytes(bytes([0x89]) + b"HDF")
+            fatal, lines = m._check_h5_frames(inp)
+            assert fatal, name
+            assert any("NAME_TEMPLATE_OF_DATA_FRAMES names one file" in l for l in lines), lines
+            assert any(want in l for l in lines), (name, lines)
+
+    @check("h5 preflight: a _data_?????? template is explained (XDS looks for _data_master)")
+    def _():
+        d = scratch / "pre_datawild"
+        inp = _pre_inp(d, str(d / "lyso_data_??????.h5"))
+        fatal, lines = m._check_h5_frames(inp)
+        assert fatal and any("_data_" in l and "without _data" in l for l in lines), lines
+
     @check("h5 preflight: master with missing data files -> fatal; complete set -> quiet")
     def _():
         try:
