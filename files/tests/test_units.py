@@ -569,7 +569,7 @@ def define_checks(m, scratch):
 
     @check("config: version, localhost default, token, step timeout, assets")
     def _():
-        assert re.match(r"^\d+\.\d+\.\d+$", m.VERSION)
+        assert re.match(r"^\d+\.\d+\.\d+[a-z]?$", m.VERSION), m.VERSION   # 0.6.6, and 0.6.6b for a follow-up build
         assert m.HOST == "127.0.0.1" and len(m.API_TOKEN) >= 20 and m.XDS_STEP_TIMEOUT > 0
         assert set(m.STATIC_ASSETS) >= {"logo.png", "logo.jpg", "diffraction_bg.jpg", "splash.jpg"}
         # the header logo is the CrystalPilot PNG; logo.jpg is its alias

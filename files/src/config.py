@@ -14,7 +14,7 @@ if _sys_early.version_info < (3, 7):
     )
 del _sys_early
 
-VERSION = "0.6.7"
+VERSION = "0.6.6b"
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
