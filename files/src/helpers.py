@@ -198,6 +198,82 @@ def _xscale_inputs_from_subfolder(text, relback):
     return '\n'.join(out)
 
 
+# --- Windows paths the user pastes into the interface -------------------------
+# Under WSL "D:\data\xtal1" or "\\server\share\xtal1" (Explorer's "Copy as
+# path") means nothing to Python, and the folder is only readable when the drive
+# is mounted.  WSL mounts the fixed drives by itself - unless [automount] is off
+# - but never a network share and never a disk plugged in after the runtime
+# started.  Translating the path and mounting the drive on the spot turns a
+# pasted Windows path into a working way to reach the frames.
+_MOUNT_TRIED = {}          # mount point -> when it was last tried (a dead share costs one timeout)
+
+
+def _drvfs_mount(source, mount_point):
+    r"""Mount a Windows drive letter ("D:") or share ("\\server\share") inside
+    WSL.  True when the folder can be read afterwards."""
+    if not IS_WSL:
+        return False
+    if os.path.ismount(mount_point):
+        return True
+    last = _MOUNT_TRIED.get(mount_point, 0)
+    import time as _time
+    if last and (_time.time() - last) < 60:
+        return False                    # just failed: do not pay the timeout again
+    _MOUNT_TRIED[mount_point] = _time.time()
+    cmd, opts = [], "noatime"
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n"]
+        opts += ",uid=%d,gid=%d" % (os.getuid(), os.getgid())
+    try:
+        os.makedirs(mount_point, exist_ok=True)
+    except Exception:
+        return False
+    ok = False
+    try:
+        r = subprocess.run(cmd + ["mount", "-t", "drvfs", source, mount_point, "-o", opts],
+                           capture_output=True, text=True, timeout=12)
+        ok = (r.returncode == 0)
+    except Exception:
+        ok = False
+    if not ok:
+        try:
+            os.rmdir(mount_point)       # leave no empty folder pretending to be a drive
+        except Exception:
+            pass
+    return ok
+
+
+def _to_local_path(path):
+    """A path as the user may have typed or pasted it, as this program can open it.
+
+    Returns (path, problem).  Outside WSL, and for an ordinary Linux path, the
+    path comes back unchanged and problem is empty; problem says in plain words
+    why a Windows drive or share could not be reached.
+    """
+    p = (path or "").strip().strip('"').strip("'")
+    if not p or not IS_WSL:
+        return path, ""
+    m = re.match(r"^([A-Za-z]):([\\/].*)?$", p)
+    if m:
+        letter = m.group(1).upper()
+        rest = (m.group(2) or "").replace("\\", "/").lstrip("/")
+        mp = WSL_MOUNT_ROOT + letter.lower()
+        if not os.path.ismount(mp) and not _drvfs_mount(letter + ":", mp):
+            return path, ("drive " + letter + ": is not available inside Linux - is it still "
+                          "connected?  Starting CrystalPilot again mounts the drives that are.")
+        return (mp + "/" + rest if rest else mp), ""
+    if p.startswith("\\\\") and len(p) > 2:
+        parts = [x for x in p[2:].replace("\\", "/").split("/") if x]
+        if len(parts) >= 2 and all(re.match(r"^[A-Za-z0-9._$ ()-]+$", x) for x in parts[:2]):
+            server, share, rest = parts[0], parts[1], "/".join(parts[2:])
+            mp = WSL_MOUNT_ROOT + "unc/" + server + "/" + share
+            if not os.path.ismount(mp) and not _drvfs_mount("\\\\" + server + "\\" + share, mp):
+                return path, ("the share \\\\" + server + "\\" + share + " could not be reached - "
+                              "open it once in Windows Explorer, then try again")
+            return (mp + "/" + rest if rest else mp), ""
+    return path, ""
+
+
 def _windows_view(path):
     r"""How a WSL path looks from Windows: 'P:\\sub' when the launcher mapped the
     projects folder to a drive letter (CRYSTALPILOT_DRIVE), else the
@@ -215,8 +291,14 @@ def _windows_view(path):
     if drive and (p == proj or p.startswith(proj.rstrip("/") + "/")):
         rest = p[len(proj):].lstrip("/")
         return drive + "\\" + rest.replace("/", "\\") if rest else drive + "\\"
-    if p.startswith("/mnt/") and len(p) > 6 and p[5].isalpha() and (len(p) == 6 or p[6] == "/"):
-        return p[5].upper() + ":" + p[6:].replace("/", "\\") if len(p) > 6 else p[5].upper() + ":\\"
+    unc = WSL_MOUNT_ROOT + "unc/"
+    if p.startswith(unc) and len(p.split("/")) > len(unc.split("/")):
+        return "\\\\" + p[len(unc):].replace("/", "\\")
+    root = WSL_MOUNT_ROOT                      # /mnt/ unless wsl.conf moved it
+    n = len(root)
+    if p.startswith(root) and len(p) > n and p[n].isalpha() and (len(p) == n + 1 or p[n + 1] == "/"):
+        rest = p[n + 1:]
+        return p[n].upper() + ":" + (rest.replace("/", "\\") if rest else "\\")
     distro = os.environ.get("WSL_DISTRO_NAME", "")
     return ("\\\\wsl.localhost\\" + distro + p.replace("/", "\\")) if distro else ""
 

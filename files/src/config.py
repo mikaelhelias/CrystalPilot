@@ -14,7 +14,7 @@ if _sys_early.version_info < (3, 7):
     )
 del _sys_early
 
-VERSION = "0.6.6"
+VERSION = "0.6.7"
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -367,6 +367,32 @@ def _detect_wsl():
         return False
 IS_WSL = _detect_wsl()
 
+def _wsl_automount_root():
+    """Where WSL puts the Windows drives.  /mnt/ unless /etc/wsl.conf says
+    otherwise ([automount] root=/): with root=/ the drives are /c, /d ... and
+    looking only under /mnt would find nothing at all."""
+    root = "/mnt/"
+    if not IS_WSL:
+        return root
+    try:
+        section = ""
+        with open("/etc/wsl.conf", "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.split("#", 1)[0].split(";", 1)[0].strip()
+                if line.startswith("[") and line.endswith("]"):
+                    section = line[1:-1].strip().lower()
+                elif section == "automount" and "=" in line:
+                    key, val = line.split("=", 1)
+                    if key.strip().lower() == "root":
+                        val = val.strip().strip('"').strip("'")
+                        if val:
+                            root = val if val.endswith("/") else val + "/"
+    except Exception:
+        pass
+    return root
+
+WSL_MOUNT_ROOT = _wsl_automount_root()
+
 def _wsl_drives():
     """Windows drives currently mounted inside WSL, e.g. ['/mnt/c', '/mnt/z'].
 
@@ -376,7 +402,7 @@ def _wsl_drives():
     drives = []
     if IS_WSL:
         try:
-            for d in sorted(Path("/mnt").iterdir()):
+            for d in sorted(Path(WSL_MOUNT_ROOT).iterdir()):
                 if len(d.name) == 1 and d.name.isalpha() and d.is_dir() and os.path.ismount(str(d)):
                     drives.append(str(d))
         except Exception:

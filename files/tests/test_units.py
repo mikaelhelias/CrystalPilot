@@ -1201,6 +1201,79 @@ def define_checks(m, scratch):
         assert "_docsSearchNow" in html and "cpdsRowHtml" in html, "the Docs box no longer draws shared rows"
 
 
+    # -- Windows paths and the drives WSL did not mount ----------------------
+    @check("windows paths: a pasted Explorer path becomes a Linux path (drive mounted on demand)")
+    def _():
+        root = str(scratch / "mnt") + "/"
+        was = (m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount)
+        m.IS_WSL, m.WSL_MOUNT_ROOT = True, root
+        m._drvfs_mount = lambda source, mount_point: True      # pretend the mount worked
+        try:
+            for typed, want in ((r"D:\data\xtal1", root + "d/data/xtal1"),
+                                ("d:/data/xtal1",     root + "d/data/xtal1"),
+                                ("D:" + chr(92),      root + "d"),
+                                ("D:",                root + "d"),
+                                (r'"D:\data"',       root + "d/data"),
+                                (r"\\server\share\xtal1", root + "unc/server/share/xtal1"),
+                                ("/home/user/data",   "/home/user/data"),
+                                ("",                  "")):
+                got, problem = m._to_local_path(typed)
+                assert got == want, (typed, got, want)
+                assert not problem, (typed, problem)
+        finally:
+            m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount = was
+
+    @check("windows paths: a drive that cannot be mounted is reported, not silently swallowed")
+    def _():
+        was = (m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount)
+        m.IS_WSL, m.WSL_MOUNT_ROOT = True, str(scratch / "mnt") + "/"
+        m._drvfs_mount = lambda source, mount_point: False
+        try:
+            got, problem = m._to_local_path(r"E:\frames")
+            assert got == r"E:\frames", got         # unchanged, so the caller can show what was typed
+            assert problem and "E:" in problem, problem
+        finally:
+            m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount = was
+
+    @check("windows paths: outside WSL nothing is translated")
+    def _():
+        was = m.IS_WSL
+        m.IS_WSL = False
+        try:
+            assert m._to_local_path(r"D:\data") == (r"D:\data", "")
+        finally:
+            m.IS_WSL = was
+
+    @check("windows paths: the Windows view is the way back (any automount root)")
+    def _():
+        if os.name == "nt":
+            return          # _windows_view resolves POSIX paths; it only means anything inside WSL
+        was_wsl, was_root, was_drive = m.IS_WSL, m.WSL_MOUNT_ROOT, os.environ.get("CRYSTALPILOT_DRIVE")
+        os.environ.pop("CRYSTALPILOT_DRIVE", None)
+        m.IS_WSL = True
+        try:
+            for root, path, want in (("/mnt/", "/mnt/d/data/xtal1", r"D:\data\xtal1"),
+                                     ("/mnt/", "/mnt/d",           "D:" + chr(92)),
+                                     ("/mnt/", "/mnt/unc/server/share/x", r"\\server\share\x"),
+                                     ("/",     "/c/data",          r"C:\data")):
+                m.WSL_MOUNT_ROOT = root
+                got = m._windows_view(path)
+                assert got == want, (root, path, got, want)
+            m.WSL_MOUNT_ROOT = "/mnt/"
+            assert not m._windows_view("/home/user/data").startswith("D:")   # a Linux path is not a drive
+        finally:
+            m.IS_WSL, m.WSL_MOUNT_ROOT = was_wsl, was_root
+            if was_drive is not None:
+                os.environ["CRYSTALPILOT_DRIVE"] = was_drive
+
+    @check("windows drives: the file browser chips read the automount root, not a fixed /mnt")
+    def _():
+        html = m.get_frontend_html()
+        assert "d.replace('/mnt/', '')" not in html, "the drive buttons still assume /mnt"
+        assert "filter(Boolean).pop()" in html, "the drive button label is not taken from the mount point"
+        assert "d.problem" in html, "the browser does not show why a drive could not be reached"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
     build = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else newest_build()

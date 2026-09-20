@@ -41,6 +41,36 @@ ensure_interop() {
     printf ':WSLInterop:M::MZ::/init:PF' | $S tee /proc/sys/fs/binfmt_misc/register >/dev/null 2>&1 || true
 }
 
+# Where WSL puts the Windows drives: /mnt/ unless /etc/wsl.conf moves it
+# ([automount] root=/ gives /c, /d ...).  The app looks at the same place.
+wsl_mount_root() {
+    local root=""
+    if [ -r /etc/wsl.conf ]; then
+        root=$(awk '
+            /^[[:space:]]*\[/ { sec = tolower($0); next }
+            sec ~ /automount/ && /^[[:space:]]*root[[:space:]]*=/ {
+                sub(/^[^=]*=[[:space:]]*/, ""); gsub(/["[:space:]\r]/, "");
+                if ($0 != "") { print; exit }
+            }' /etc/wsl.conf 2>/dev/null)
+    fi
+    [ -n "$root" ] || root="/mnt/"
+    case "$root" in */) ;; *) root="$root/" ;; esac
+    printf '%s' "$root"
+}
+
+# A runtime whose /etc/wsl.conf has no [automount] section does not mount the
+# Windows drives at all: without this, every start depends on the launcher
+# mounting them by hand.  Add the section - never touch one that is already
+# there - so the drives come back by themselves from the next start of WSL on.
+ensure_automount_conf() {
+    grep -qi '^[[:space:]]*\[automount\]' /etc/wsl.conf 2>/dev/null && return 0
+    local S=""; [ "$(id -u)" != "0" ] && S="sudo -n"
+    if $S sh -c 'printf "\n[automount]\nenabled=true\nroot=/mnt/\n" >> /etc/wsl.conf' 2>/dev/null; then
+        echo "[crystalpilot] WSL was not set to mount the Windows drives - /etc/wsl.conf repaired"
+        echo "[crystalpilot] (close CrystalPilot, run 'wsl --shutdown' once, and the drives are there at every start)"
+    fi
+}
+
 # The projects folder is shown on Windows as P:\Projects.  Windows can map a
 # drive letter only to the runtime's root share, so the installer binds
 # /Projects to the projects folder.  When a runtime starts without processing
@@ -110,7 +140,7 @@ case "$cmd" in
             --app)    APP="$2";  shift 2 ;;
             --manual) MANUAL="$2"; shift 2 ;;        # docs/manual folder on the Windows side
             --port)   PORT="$2"; shift 2 ;;
-            --net)    NET_DRIVES+=("$2"); shift 2 ;;   # "Z:=\\server\share" (from the launcher)
+            --net|--drive) NET_DRIVES+=("$2"); shift 2 ;;  # "Z:=\\server\share" or "D:=" (from the launcher)
             *) shift ;;
         esac
     done
@@ -121,15 +151,24 @@ case "$cmd" in
             mkdir -p "$CPDIR/docs/manual" && cp -f "$MANUAL"/CrystalPilot-Manual.* "$CPDIR/docs/manual/" 2>/dev/null && echo "[crystalpilot] updated the illustrated manual"
         fi
     fi
-    # WSL mounts fixed drives under /mnt automatically but not mapped network
-    # drives.  Mount the ones the launcher reports so they show up as Z:, Y:, ...
-    # buttons in the app's folder browser.
-    mount_net_drive() {
+    # WSL is supposed to mount the fixed drives by itself, but it does not
+    # always: [automount] can be off in /etc/wsl.conf (an imported runtime, an
+    # installation managed by someone else), and a disk plugged in - or a share
+    # mapped - after the runtime started is never picked up.  The launcher
+    # reports every drive letter Windows has; mount the ones that are missing,
+    # so C:, D:, Z: ... all appear in the app's folder browser.
+    MOUNT_ROOT=$(wsl_mount_root)
+    AUTOMOUNTED=0
+    for _d in "$MOUNT_ROOT"?; do
+        [ -d "$_d" ] && mountpoint -q "$_d" 2>/dev/null && AUTOMOUNTED=1 && break
+    done
+    mount_win_drive() {
         local spec="$1" letter unc lower mp S opts
         letter="${spec%%=*}"; unc="${spec#*=}"
+        [ "$unc" = "$spec" ] && unc=""                  # "C:" without a share behind it
         lower=$(printf '%s' "${letter%:}" | tr 'A-Z' 'a-z')
         [ ${#lower} -eq 1 ] || return 0
-        mp="/mnt/$lower"
+        mp="$MOUNT_ROOT$lower"
         if mountpoint -q "$mp" 2>/dev/null; then return 0; fi
         mkdir -p "$mp" 2>/dev/null || return 0
         S=""; opts="noatime"
@@ -138,21 +177,24 @@ case "$cmd" in
         # so every attempt gets a short timeout and the drives are done in parallel.
         timeout 8 $S mount -t drvfs "$letter" "$mp" -o "$opts" 2>/dev/null; rc=$?
         # rc 124 = timed out: the share itself is unreachable, the UNC path would only time out again
-        if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ -n "$unc" ] && [ "$unc" != "$spec" ]; then
+        if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ -n "$unc" ]; then
             timeout 8 $S mount -t drvfs "$unc" "$mp" -o "$opts" 2>/dev/null; rc=$?
         fi
         if [ $rc -eq 0 ]; then
-            echo "[crystalpilot] network drive $letter ($unc) -> $mp"
+            if [ -n "$unc" ]; then echo "[crystalpilot] network drive $letter ($unc) -> $mp"
+            else                   echo "[crystalpilot] drive $letter -> $mp"; fi
         else
-            echo "[crystalpilot] network drive $letter ($unc) is not reachable right now - skipped"
+            if [ -n "$unc" ]; then echo "[crystalpilot] network drive $letter ($unc) is not reachable right now - skipped"
+            else                   echo "[crystalpilot] drive $letter could not be mounted - skipped"; fi
             rmdir "$mp" 2>/dev/null
         fi
     }
     if [ ${#NET_DRIVES[@]} -gt 0 ]; then
-        echo "[crystalpilot] mounting network drives ..."
-        for spec in "${NET_DRIVES[@]}"; do mount_net_drive "$spec" & done
+        echo "[crystalpilot] checking the Windows drives ..."
+        for spec in "${NET_DRIVES[@]}"; do mount_win_drive "$spec" & done
         wait
     fi
+    [ "$AUTOMOUNTED" = "1" ] || ensure_automount_conf
     # Pick up a newer build handed over by the launcher (developer workflow:
     # rebuild on Windows, relaunch, done).
     if [ -n "$APP" ] && [ -f "$APP" ] && ! cmp -s "$APP" "$CPDIR/crystalpilot.py"; then

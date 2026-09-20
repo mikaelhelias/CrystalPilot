@@ -115,15 +115,28 @@ $url = "http://localhost:$Port"
 # ("info" already checked for a running server; a second wsl call would only add seconds)
 if ($cfg["RUNNING"] -eq "yes") { Show-AlreadyRunning $url }
 
-# ── Mapped network drives (Z: ...) - WSL does not mount these by itself ──────
+# ── The drives Windows has (WSL does not always mount them itself) ──────────
+# Network drives are never mounted by WSL, the local ones only when
+# [automount] is on in the runtime's /etc/wsl.conf - and never a disk plugged
+# in after it started.  Report every letter; the Linux side mounts the ones
+# that are missing and leaves the rest alone.
 $netArgs = @()
 try {
-    foreach ($d in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=4" -ErrorAction Stop)) {
-        # skip letters that point at a WSL runtime itself (e.g. the P: projects drive): mounting
-        # them back inside Linux would only add a slow loop through the network share
-        # A disconnected mapping reports no size; skipping it here saves the
-        # 8-second mount timeout inside WSL for every unreachable share.
-        if ($d.DeviceID -and $d.ProviderName -and $d.Size -and $d.ProviderName -notmatch '^\\\\wsl(\$|\.localhost)\\') { $netArgs += @("--net", ($d.DeviceID + "=" + $d.ProviderName)) }
+    foreach ($d in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3 OR DriveType=4" -ErrorAction Stop)) {
+        # A card reader without a card, or a disconnected mapping, reports no size;
+        # skipping it here saves an 8-second mount timeout inside WSL for each one.
+        if (-not $d.DeviceID -or -not $d.Size) { continue }
+        # the projects drive is the runtime's own folder seen from Windows:
+        # mounting it back into Linux would be a loop through the share
+        if ($ProjectsDrive -and $d.DeviceID -eq $ProjectsDrive.Substring(0, 2)) { continue }
+        if ($d.DriveType -eq 4) {
+            # skip letters that point at a WSL runtime itself (e.g. the P: projects drive): mounting
+            # them back inside Linux would only add a slow loop through the network share
+            if (-not $d.ProviderName -or $d.ProviderName -match '^\\\\wsl(\$|\.localhost)\\') { continue }
+            $netArgs += @("--net", ($d.DeviceID + "=" + $d.ProviderName))
+        } else {
+            $netArgs += @("--net", ($d.DeviceID + "="))
+        }
     }
 } catch { }
 
@@ -151,10 +164,10 @@ Write-Host ("  XDS: " + $cfg["XDS"] + "   Eiger/neggia: " + $cfg["NEGGIA"] + "  
 if ($app) { Write-Host ("  Build:            " + (Split-Path $app -Leaf)) -ForegroundColor DarkGray }
 Write-Host ""
 Write-Host "  The server runs in this window. Close it (or press Ctrl+C) to stop CrystalPilot." -ForegroundColor Yellow
-Write-Host "  Tip: Windows drives are under /mnt/c, /mnt/d ... in the app's file browser." -ForegroundColor DarkGray
+Write-Host "  Tip: Windows drives are under /mnt/c, /mnt/d ... in the app's file browser - or paste a path like D:\data\xtal1 into it." -ForegroundColor DarkGray
 if ($netArgs.Count -gt 0) {
     $letters = @(); for ($k = 1; $k -lt $netArgs.Count; $k += 2) { $letters += ($netArgs[$k].Split("=")[0]) }
-    Write-Host ("  Network drives to mount: " + ($letters -join ", ") + "  (only those currently connected will appear)") -ForegroundColor DarkGray
+    Write-Host ("  Drives offered to Linux: " + ($letters -join ", ") + "  (those WSL has not mounted itself are added now)") -ForegroundColor DarkGray
 }
 Write-Host ""
 

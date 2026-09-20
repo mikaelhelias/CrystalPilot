@@ -175,7 +175,7 @@ def _environment_report():
                    "path": str(PROJECTS_DIR.resolve()), "action": "open_folder"})
     if IS_WSL:
         checks.append({"id": "wsl", "status": "info", "title": "Windows Subsystem for Linux",
-                       "detail": "CrystalPilot runs inside Ubuntu on WSL. Windows drives are under /mnt/c, /mnt/d, ... and network drives are mounted at start."})
+                       "detail": "CrystalPilot runs inside Ubuntu on WSL. Windows drives are under /mnt/c, /mnt/d, ... - every drive connected at start is mounted, and a Windows path pasted into the file browser (D:\\data\\...) is opened directly."})
 
     fingerprint = "|".join(c["id"] + ":" + c["status"] for c in checks)
     return {"version": VERSION,
@@ -1739,10 +1739,16 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             req_path = qs.get("path", [""])[0] or str(Path.home())
             try:
+                # A Windows path pasted from Explorer ("D:\data\xtal1",
+                # "\\server\share\xtal1") is translated, and the drive or share
+                # mounted when WSL has not done it - see _to_local_path.
+                typed, path_problem = req_path, ""
+                if not RESTRICT_BROWSE:
+                    req_path, path_problem = _to_local_path(req_path)
                 p = Path(req_path).resolve()
                 missing = None
                 if not p.exists() or not p.is_dir():
-                    missing = req_path      # tell the UI we fell back to home
+                    missing = typed         # tell the UI we fell back to home
                     p = Path.home()
                 # When --restrict-browse is active, clamp to PROJECTS_DIR tree
                 # (a real parent check: /home/u/xds2 is not inside /home/u/xds)
@@ -1762,7 +1768,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 for child in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
                     if not child.name.startswith("."):
                         entries.append({"name": child.name, "path": str(child), "is_dir": child.is_dir()})
-                self.send_json({"cwd": str(p), "entries": entries, "missing": missing})
+                self.send_json({"cwd": str(p), "entries": entries, "missing": missing, "problem": path_problem})
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
@@ -3883,10 +3889,14 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         # Create project
         if path == "/api/projects":
             try:
+                # the data folder may be typed as a Windows path (D:\data\...)
+                data_path = data.get("data_path", "")
+                if data_path:
+                    data_path = _to_local_path(data_path)[0]
                 result = ProjectManager.create(
                     data["name"],
                     data.get("description", ""),
-                    data.get("data_path", "")
+                    data_path
                 )
                 self.send_json(result)
             except ValueError as e:
