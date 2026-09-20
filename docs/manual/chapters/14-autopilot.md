@@ -99,18 +99,18 @@ The table shows each data set's status (with the phase and the attempt while it 
 Click a row to follow that data set below the table. The phase bar and the live log show the progress:
 
 1. Import, generate or check `XDS.INP`.
-2. XYCORR → INIT → COLSPOT → IDXREF with automatic recovery: when a step fails AutoPilot diagnoses the log (beam-centre search, SPOT_RANGE widening, SIGNAL_PIXEL changes, ice rings, insufficient spots) and retries, up to three times per step.
+2. XYCORR → INIT → COLSPOT → IDXREF with automatic recovery: when a step fails AutoPilot diagnoses the log and retries, up to three times per step. For IDXREF the fixes are wider spot-position and spindle tolerances, a refinement without the detector position, SEPMIN / CLUSTER_RADIUS for close lattices, and a lower MINIMUM_FRACTION_OF_INDEXED_SPOTS; when indexing still fails, the Auto-Index search of chapter 6 (SPOT_RANGE wedges, SIGNAL_PIXEL, index origin) takes over at the tier you chose. For INTEGRATE it is a larger DELPHI (10, 20, 45, 90) or a refinement without the cell. AutoPilot does not search for the beam centre: a wrong ORGX/ORGY has to be corrected by hand, or comes right with the beamline's XDS.INP.
 3. DEFPIX → INTEGRATE → CORRECT.
-4. Resolution cut-off by the chosen criterion, applied to XDS.INP, CORRECT re-run.
-5. The re-integration with the refined geometry, as chosen in step 4.
-6. XSCALE with the same limit; optional ΔCC½ exclusions and a final CORRECT/XSCALE.
+4. Ice rings with strong or moderate evidence are excluded and CORRECT re-run (when chosen); a data set whose ISa is below 3 stops here. The resolution cut-off is worked out by the chosen criterion. It is not written into `XDS.INP`: CORRECT keeps all the data, and the limit is applied in XSCALE and XDSCONV.
+5. The re-integration with the refined geometry, as chosen in step 4 of the wizard. The first integration is always put aside first, so a re-integration that fails, or that loses under *only if better*, is undone. The optional ΔCC½ exclusions happen here: XDSCC12, EXCLUDE_DATA_RANGE, and DEFPIX-INTEGRATE-CORRECT once more.
+6. XSCALE at the cut-off.
 7. XDSCONV and f2mtz/cad (or gemmi) to an MTZ.
 
 ![AutoPilot results on a 60-frame wedge (hence the completeness warning): status and diagnoses, the shell table, the MTZ path.](images/14-02-autopilot-results.png)
 
 When it has finished, the summary shows:
 
-- **Status**, number of retries and the list of diagnosed problems (for example `ice_rings_detected`, `beam_center_adjusted`).
+- **Status**, number of retries and the list of diagnosed problems (for example `ice_rings_detected`, `solution_inaccurate`).
 - **Optimization**: ISa, R-meas, CC½, I/σ and resolution before and after the re-integration pass.
 - The **statistics by resolution shell** from XSCALE, the chosen cut-offs by every criterion, and the **MTZ** path.
 - **Open in Statistics Tab** builds Table 1 from this run; **Open project** opens the data set in Data Processing. Results are saved as `AUTOPILOT_RESULTS.json` in the project. With a project open and no data set clicked, the tab shows that project's last AutoPilot result.

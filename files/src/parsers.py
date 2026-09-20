@@ -493,6 +493,7 @@ class LPParser:
         # Use the LAST table
         if all_tables:
             metrics['statistics_table'] = all_tables[-1]
+            metrics['cutoffs'] = LPParser.determine_resolution_cutoff(all_tables[-1])
 
         # Extract the actual low-resolution limit from the
         # "RESOLUTION RANGE  I/Sigma  Chi^2  R-FACTOR ..." table.
@@ -585,6 +586,15 @@ class LPParser:
                 nums = line.split('AT', 1)[1].split()
                 try:
                     metrics['refined_beam_center'] = {'orgx': float(nums[0]), 'orgy': float(nums[1])}
+                except (ValueError, IndexError):
+                    pass
+
+        # ── Crystal mosaicity (refined value, last one printed) ────────
+        # Format:  CRYSTAL MOSAICITY (DEGREES)     0.135
+        for line in lines:
+            if 'CRYSTAL MOSAICITY (DEGREES)' in line:
+                try:
+                    metrics['mosaicity'] = float(line.split()[-1])
                 except (ValueError, IndexError):
                     pass
 
@@ -1339,6 +1349,7 @@ class LPParser:
             all_tables.append(current_table)
         if all_tables:
             metrics['statistics_table'] = all_tables[-1]
+            metrics['cutoffs'] = LPParser.determine_resolution_cutoff(all_tables[-1])
 
         # Extract the actual low-resolution limit from the
         # "RESOLUTION RANGE  I/Sigma  Chi^2  R-FACTOR ..." table.
@@ -2347,7 +2358,9 @@ class LPParser:
         # If statistics_table provided, use existing detect_ice_rings.
         if statistics_table:
             ice_rings = LPParser.detect_ice_rings(statistics_table)
-            detected = [r for r in ice_rings if r.get('detected')]
+            # Data are only thrown away on strong or moderate evidence: the same
+            # rings the ice-ring panel pre-ticks and the figures mark.
+            detected = [r for r in ice_rings if LPParser.ice_ring_is_actionable(r)]
             if detected:
                 exclude_ranges = {}
                 for ring in detected:
@@ -2480,59 +2493,79 @@ class LPParser:
         if not shells:
             return result
 
-        # ── I/σ ≈ 2.0 cutoff ──────────────────────────────────────────
-        isig_cutoff = None
+        # One definition for the whole program (interface, AutoPilot, batch,
+        # figures): the point where the statistic crosses its threshold,
+        # interpolated linearly in 1/d² between the two shells around it.
+        # The log prints the HIGH limit of each shell, but the statistic is the
+        # mean over the whole shell: it is attached to the middle of the shell
+        # in 1/d². (Attached to the limit, every cut-off came out about half a
+        # shell too optimistic.) The first shell starts at 1/d² = 0.
+        low_edge = 0.0
         for s in shells:
-            if s['isig'] is not None and s['isig'] < 2.0:
-                isig_cutoff = s['d']
-                break
-        # If all shells have I/σ > 2, use the highest-resolution shell
-        if isig_cutoff is None and shells and shells[-1]['isig'] is not None:
-            isig_cutoff = shells[-1]['d']
-        result['all_cutoffs']['isig2'] = isig_cutoff
+            high_edge = 1.0 / (s['d'] * s['d'])
+            s['inv_d2'] = 0.5 * (low_edge + high_edge)
+            low_edge = high_edge
+            s['star'] = '*' in str(statistics_table[s['idx']].get('cc_half', ''))
 
-        # ── CC½ ≈ 50% cutoff ──────────────────────────────────────────
-        cc_cutoff = None
-        for s in shells:
-            if s['cc'] is not None and s['cc'] < 50.0:
-                cc_cutoff = s['d']
-                break
-        if cc_cutoff is None and shells and shells[-1]['cc'] is not None:
-            cc_cutoff = shells[-1]['d']
-        result['all_cutoffs']['cc_half_50'] = cc_cutoff
+        def _crossing(field, threshold, cross_above):
+            """(d, reached). reached is False when every shell passes."""
+            for k in range(1, len(shells)):
+                v0, v1 = shells[k - 1][field], shells[k][field]
+                if v0 is None or v1 is None:
+                    continue
+                if cross_above:
+                    crossed = v0 <= threshold < v1
+                else:
+                    crossed = v0 >= threshold > v1
+                if crossed:
+                    frac = (threshold - v0) / (v1 - v0)
+                    inv = shells[k - 1]['inv_d2'] + frac * (shells[k]['inv_d2'] - shells[k - 1]['inv_d2'])
+                    if inv > 0:
+                        return (1.0 / inv) ** 0.5, True
+            # No clean crossing. If the last shell fails (values not monotonic),
+            # cut at the last shell that still passes; if all fail, the first.
+            last = shells[-1][field]
+            if len(shells) >= 2 and last is not None:
+                fails = last > threshold if cross_above else last < threshold
+                if fails:
+                    for s in reversed(shells):
+                        v = s[field]
+                        if v is None:
+                            continue
+                        if (v <= threshold) if cross_above else (v >= threshold):
+                            return s['d'], True
+                    return shells[0]['d'], True
+            # Every shell passes: all the data can be kept.
+            return (shells[-1]['d'] if last is not None else None), False
 
-        # ── R-obs ≈ 55% cutoff ────────────────────────────────────────
-        robs_cutoff = None
-        for s in shells:
-            if s['robs'] is not None and s['robs'] > 55.0:
-                robs_cutoff = s['d']
-                break
-        if robs_cutoff is None and shells and shells[-1]['robs'] is not None:
-            robs_cutoff = shells[-1]['d']
-        result['all_cutoffs']['r_obs_55'] = robs_cutoff
+        reached = {}
+        for key, field, threshold, above in (('isig2', 'isig', 2.0, False),
+                                             ('cc_half_50', 'cc', 50.0, False),
+                                             ('r_obs_55', 'robs', 55.0, True)):
+            value, reached[key] = _crossing(field, threshold, above)
+            result['all_cutoffs'][key] = round(value, 2) if value is not None else None
 
-        # ── CC½ significance cutoff ───────────────────────────────────
-        # CC½ is significant when CC½ > 2/sqrt(N) approximately.
-        # Simpler proxy: CC½ > 0 and marked with '*' by XDS, or CC½ < 30%.
-        ccsig_cutoff = None
-        for s in shells:
-            if s['cc'] is not None and s['cc'] < 30.0:
-                ccsig_cutoff = s['d']
-                break
-        if ccsig_cutoff is None and shells and shells[-1]['cc'] is not None:
-            ccsig_cutoff = shells[-1]['d']
-        result['all_cutoffs']['cc_half_sig'] = ccsig_cutoff
+        # ── CC½ significance ──────────────────────────────────────────
+        # The last shell whose CC½ XDS marks with '*' (significant at the 0.1 %
+        # level; Karplus & Diederichs, 2012). Not a fixed percentage.
+        starred = [s for s in shells if s['star']]
+        if starred:
+            result['all_cutoffs']['cc_half_sig'] = starred[-1]['d']
+            reached['cc_half_sig'] = starred[-1] is not shells[-1]
+        else:
+            # A log without significance marks: fall back on I/σ.
+            result['all_cutoffs']['cc_half_sig'] = result['all_cutoffs']['isig2']
+            reached['cc_half_sig'] = reached['isig2']
+        result['reached'] = reached
 
         # Select the requested criterion
         chosen = result['all_cutoffs'].get(criterion)
         result['resolution'] = chosen
 
-        # Find corresponding shell index
+        # The shell the cut-off falls in or next to (for marking a table row)
         if chosen is not None:
-            for s in shells:
-                if s['d'] == chosen:
-                    result['shell_index'] = s['idx']
-                    break
+            nearest = min(shells, key=lambda s: abs(s['d'] - chosen))
+            result['shell_index'] = nearest['idx']
 
         return result
 
@@ -2584,6 +2617,12 @@ class LPParser:
         (1.883, 0.015, '1.88', 'Ih'),
         (1.721, 0.015, '1.72', 'Ih'),
     ]
+
+    @staticmethod
+    def ice_ring_is_actionable(ring):
+        """The one rule for acting on a detected ring (excluding it, marking it)."""
+        return bool(ring.get('detected') and ring.get('in_range', True)
+                    and ring.get('confidence') in ('strong', 'moderate'))
 
     @staticmethod
     def detect_ice_rings(statistics_table):
@@ -2723,13 +2762,15 @@ class LPParser:
                 entry['detected'] = True
                 entry['confidence'] = 'moderate'
             elif n_indicators == 1:
-                vals = list(entry['indicators'].values())
-                if any(isinstance(v, (int, float)) and (v > 2.0 or v > 8.0) for v in vals):
-                    entry['detected'] = True
-                    entry['confidence'] = 'moderate'
-                else:
-                    entry['detected'] = True
-                    entry['confidence'] = 'weak'
+                # One indicator alone is weak evidence unless it is a large one:
+                # completeness more than 8 points below the neighbours, or R-meas
+                # or I/sigma more than twice theirs.
+                ind = entry['indicators']
+                large = (ind.get('completeness_drop', 0) > 8.0
+                         or ind.get('rmeas_spike', 0) > 2.0
+                         or ind.get('isigma_spike', 0) > 2.0)
+                entry['detected'] = True
+                entry['confidence'] = 'moderate' if large else 'weak'
 
             results.append(entry)
 

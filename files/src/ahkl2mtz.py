@@ -460,6 +460,116 @@ def analyze_merging_stats(input_hkl, n_shells=20, weighting='X', res_low=None, r
     }
 
 
+_T1_RPIM_CACHE = {}
+
+
+def table1_rpim(hkl_path, stats_table):
+    """Exact R-pim (overall and highest shell) for Table 1.
+
+    XDS and XSCALE print R-meas but not R-pim.  R-meas / sqrt(multiplicity)
+    is only an approximation, so the value is computed from the unmerged
+    reflections with gemmi (XDS-style weighting).  The shells are the ones
+    of the log: the reflections are sorted by resolution and cut at the
+    observation counts of the log's own table, so no shell limit has to be
+    guessed from a number rounded to 0.01 A.
+
+    Nothing is trusted blindly: the R-meas gemmi finds for the same
+    reflections must agree with the R-meas printed in the log, otherwise
+    the value is withheld and the reason returned.
+
+    Returns {"overall": str|None, "outer": str|None, "source": name,
+             "d_low": low-resolution limit of the data (A),
+             "reason": text when something is withheld}.
+    """
+    import gemmi
+    import numpy as np
+    from pathlib import Path as _P
+
+    hkl_path = _P(hkl_path)
+    out = {"overall": None, "outer": None, "source": hkl_path.name, "reason": ""}
+
+    def _num(text):
+        try:
+            return float(str(text).replace('%', '').replace('*', ''))
+        except (TypeError, ValueError):
+            return None
+
+    shells = [r for r in stats_table if str(r.get('resolution', '')).lower() != 'total']
+    totals = [r for r in stats_table if str(r.get('resolution', '')).lower() == 'total']
+    if not shells or not totals:
+        out["reason"] = "no shell table"
+        return out
+    try:
+        counts = [int(r['observed']) for r in shells]
+    except (KeyError, TypeError, ValueError):
+        out["reason"] = "shell table without observation counts"
+        return out
+
+    st = hkl_path.stat()
+    key = (str(hkl_path), st.st_mtime_ns, st.st_size, tuple(counts),
+           str(totals[-1].get('r_meas')), str(shells[-1].get('r_meas')))
+    if key in _T1_RPIM_CACHE:
+        return dict(_T1_RPIM_CACHE[key])
+
+    xds = gemmi.read_xds_ascii(str(hkl_path))
+    full = gemmi.Intensities()
+    full.import_xds(xds)
+    cell, sg = full.unit_cell, full.spacegroup
+    hkl = np.array(full.miller_array, dtype=np.int32)
+    val = np.array(full.value_array, dtype=np.float64)
+    sig = np.array(full.sigma_array, dtype=np.float64)
+    n_file, n_log = len(hkl), sum(counts)
+    # The log leaves out a few observations (signal/noise below -3); more than
+    # 1 % apart means the file and the log do not belong together.
+    if n_file < n_log or (n_file - n_log) > 0.01 * max(n_log, 1):
+        out["reason"] = ("%s holds %d observations, the log counts %d: "
+                         "not the same run" % (hkl_path.name, n_file, n_log))
+        return out
+    if hasattr(cell, 'calculate_d_array'):
+        d = np.asarray(cell.calculate_d_array(hkl))
+    else:
+        d = np.array([cell.calculate_d(h) for h in hkl])
+    order = np.argsort(-d, kind='stable')
+    # The lowest-resolution observation the statistics include: the true low
+    # limit of the data (XSCALE.LP does not print it).
+    out["d_low"] = round(float(d[order[0]]), 2)
+    friedel = getattr(xds, 'friedels_law', True)
+    dtype = gemmi.DataType.Mean if friedel else gemmi.DataType.Anomalous
+
+    def _stats(idx):
+        part = gemmi.Intensities()
+        part.set_data(cell, sg, hkl[idx], val[idx], sig[idx])
+        part.prepare_for_merging(dtype)
+        try:
+            s = part.calculate_merging_stats(None, use_weights='X')[0]
+        except TypeError:
+            s = part.calculate_merging_stats(None)[0]
+        return s.r_meas() * 100.0, s.r_pim() * 100.0
+
+    def _checked(idx, row, what):
+        r_meas, r_pim = _stats(idx)
+        logged = _num(row.get('r_meas'))
+        if logged is None or not (r_meas == r_meas and r_pim == r_pim):
+            return None, "%s: no R-meas to check against" % what
+        if abs(r_meas - logged) > max(0.2, 0.01 * abs(logged)):
+            return None, ("%s: R-meas from %s is %.1f %%, the log says %.1f %%"
+                          % (what, hkl_path.name, r_meas, logged))
+        return "%.1f" % r_pim, ""
+
+    reasons = []
+    out["overall"], why = _checked(order[:n_log], totals[-1], "overall")
+    if why:
+        reasons.append(why)
+    out["outer"], why = _checked(order[n_log - counts[-1]:n_log], shells[-1], "highest shell")
+    if why:
+        reasons.append(why)
+    out["reason"] = "; ".join(reasons)
+    if len(_T1_RPIM_CACHE) > 16:
+        _T1_RPIM_CACHE.clear()
+    _T1_RPIM_CACHE[key] = dict(out)
+    return out
+
+
 def analyze_completeness(input_hkl, n_shells=20, res_low=None, res_high=None):
     """Compute completeness per resolution shell from XDS_ASCII.HKL.
 
@@ -1129,9 +1239,18 @@ def analyze_anisotropy(input_hkl, n_shells=15):
 
     # ── Extract reflection data as numpy arrays ──
     # gemmi XdsAscii stores h,k,l,iobs,sigma per reflection
+    uid = None   # index of the unique reflection each observation belongs to
     try:
-        # Try modern gemmi API first
-        if hasattr(xds, 'miller_array'):
+        if hasattr(gemmi, 'Intensities') and hasattr(gemmi, 'DataType'):
+            # Asymmetric-unit indices, sorted: equivalent observations are neighbours.
+            merged_view = gemmi.Intensities()
+            merged_view.import_xds(xds)
+            merged_view.prepare_for_merging(gemmi.DataType.Mean)
+            hkl = np.array(merged_view.miller_array, dtype=np.int32)
+            if len(hkl) > 1:
+                changed = np.any(hkl[1:] != hkl[:-1], axis=1)
+                uid = np.concatenate(([0], np.cumsum(changed))).astype(np.int64)
+        elif hasattr(xds, 'miller_array'):
             hkl = np.array(xds.miller_array, dtype=np.int32)
         elif hasattr(gemmi, 'Intensities'):
             intens = gemmi.Intensities()
@@ -1148,7 +1267,10 @@ def analyze_anisotropy(input_hkl, n_shells=15):
 
     # Get intensity and sigma arrays
     try:
-        if hasattr(xds, 'iobs_array'):
+        if uid is not None:
+            iobs = np.array(merged_view.value_array, dtype=np.float64)
+            sigma = np.array(merged_view.sigma_array, dtype=np.float64)
+        elif hasattr(xds, 'iobs_array'):
             iobs = np.array(xds.iobs_array, dtype=np.float64)
             sigma = np.array(xds.sigma_array, dtype=np.float64)
         elif hasattr(gemmi, 'Intensities'):
@@ -1179,7 +1301,10 @@ def analyze_anisotropy(input_hkl, n_shells=15):
     c_star = a * b * sg_ / vol
 
     # Compute d-spacing for each reflection
-    d_arr = np.array([cell.calculate_d(h) for h in hkl], dtype=np.float64)
+    if hasattr(cell, 'calculate_d_array'):
+        d_arr = np.asarray(cell.calculate_d_array(hkl), dtype=np.float64)
+    else:
+        d_arr = np.array([cell.calculate_d(h) for h in hkl], dtype=np.float64)
 
     # ── Classify reflections by dominant axis ──
     # Use fractional Miller index contribution to determine which axis
@@ -1219,6 +1344,33 @@ def analyze_anisotropy(input_hkl, n_shells=15):
     valid = (sigma > 0) & (d_arr > 0) & np.isfinite(iobs) & np.isfinite(sigma)
 
     # ── Compute per-axis shell statistics ──
+    def _cc_half(ids, values):
+        """CC1/2 of one shell: the observations of EACH unique reflection are
+        split at random into two halves, the halves averaged, and the two sets
+        of half-means correlated (Karplus & Diederichs, 2012). Reflections
+        measured once cannot take part. None when fewer than 10 can."""
+        if ids is None or len(ids) < 20:
+            return None
+        order = np.lexsort((np.random.random(len(ids)), ids))
+        ids, values = ids[order], values[order]
+        first = np.concatenate(([True], ids[1:] != ids[:-1]))
+        group = np.cumsum(first) - 1
+        start = np.flatnonzero(first)
+        half = (np.arange(len(ids)) - start[group]) % 2
+        n_groups = int(group[-1]) + 1
+        n1 = np.bincount(group[half == 0], minlength=n_groups)
+        n2 = np.bincount(group[half == 1], minlength=n_groups)
+        s1 = np.bincount(group[half == 0], weights=values[half == 0], minlength=n_groups)
+        s2 = np.bincount(group[half == 1], weights=values[half == 1], minlength=n_groups)
+        both = (n1 > 0) & (n2 > 0)
+        if int(np.sum(both)) < 10:
+            return None
+        m1, m2 = s1[both] / n1[both], s2[both] / n2[both]
+        if np.std(m1) == 0 or np.std(m2) == 0:
+            return None
+        c12 = np.corrcoef(m1, m2)[0, 1]
+        return round(float(c12) * 100, 1) if np.isfinite(c12) else None
+
     def _axis_shells(mask, d_vals, i_vals, s_vals, n_bins):
         """Compute resolution shell statistics for a subset of reflections."""
         sel = mask & valid
@@ -1228,6 +1380,7 @@ def analyze_anisotropy(input_hkl, n_shells=15):
         ds = d_vals[sel]
         iv = i_vals[sel]
         sv = s_vals[sel]
+        us = uid[sel] if uid is not None else None
 
         # Bin by 1/d² for even shell spacing
         inv_d2 = 1.0 / (ds * ds)
@@ -1260,26 +1413,23 @@ def analyze_anisotropy(input_hkl, n_shells=15):
             bi_s = sv[bm]
             bi_d = ds[bm]
 
-            # Mean I/σ
-            i_over_sig = bi_i / bi_s
-            mean_isig = float(np.mean(i_over_sig))
+            # Mean I/σ of the merged unique reflections (inverse-variance weighted
+            # mean of the observations of each one), as CORRECT and XSCALE print
+            # it. The I/σ of single observations is lower by about the square
+            # root of the multiplicity and would understate every axis.
+            if us is not None:
+                _, inverse = np.unique(us[bm], return_inverse=True)
+                w = 1.0 / (bi_s * bi_s)
+                sum_w = np.bincount(inverse, weights=w)
+                sum_wi = np.bincount(inverse, weights=w * bi_i)
+                mean_isig = float(np.mean(sum_wi / np.sqrt(sum_w)))
+            else:
+                mean_isig = float(np.mean(bi_i / bi_s))
 
-            # CC½ via random half-dataset split
-            cc_half = None
-            if n_in >= 10:
-                try:
-                    perm = np.random.permutation(n_in)
-                    half1 = bi_i[perm[:n_in // 2]]
-                    half2 = bi_i[perm[n_in // 2:2 * (n_in // 2)]]
-                    if len(half1) >= 5 and len(half2) >= 5:
-                        mn = min(len(half1), len(half2))
-                        h1 = half1[:mn]
-                        h2 = half2[:mn]
-                        c12 = np.corrcoef(h1, h2)[0, 1]
-                        if np.isfinite(c12):
-                            cc_half = round(float(c12) * 100, 1)
-                except Exception:
-                    pass
+            try:
+                cc_half = _cc_half(us[bm] if us is not None else None, bi_i)
+            except Exception:
+                cc_half = None
 
             d_max = round(1.0 / math.sqrt(edges[bi]) if edges[bi] > 0 else 999, 3)
             d_min = round(1.0 / math.sqrt(edges[bi + 1]) if edges[bi + 1] > 0 else 0.1, 3)

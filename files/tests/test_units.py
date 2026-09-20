@@ -262,6 +262,116 @@ def define_checks(m, scratch):
             cut = LP.determine_resolution_cutoff(table, "isig2")
             assert cut.get("all_cutoffs"), cut
 
+    @check("cut-offs: one definition - interpolated in 1/d², significance = the '*' of XDS")
+    def _():
+        # In the fixture I/sigma is 2.14 in the 1.84 A shell and 0.68 in the 1.68 A
+        # shell. The old backend answered 1.68 (it kept the whole failing shell)
+        # while the page interpolated: AutoPilot and the buttons disagreed.
+        r = LP.parse_correct(fixture("CORRECT.LP"))
+        cuts = r["cutoffs"]["all_cutoffs"]
+        # A shell's value sits in the middle of the shell (in 1/d²), not at its
+        # high limit: shells end at 2.05, 1.84 and 1.68 A, so 2.14 belongs to
+        # the middle of 2.05-1.84 and 0.68 to the middle of 1.84-1.68.
+        e0, e1, e2 = 1 / 2.05 ** 2, 1 / 1.84 ** 2, 1 / 1.68 ** 2
+        m1, m2 = (e0 + e1) / 2, (e1 + e2) / 2
+        expect = (1 / (m1 + (2.0 - 2.14) / (0.68 - 2.14) * (m2 - m1))) ** 0.5
+        assert abs(cuts["isig2"] - expect) < 0.006, (cuts["isig2"], expect)
+        assert 1.84 < cuts["isig2"] < 2.05, cuts   # 2.14 is the mean of a shell that ends at 1.84
+        assert cuts["cc_half_sig"] == r["recommended_resolution_cutoff"] == 1.68, cuts
+        assert r["cutoffs"]["reached"]["isig2"] is True
+        # significance is the star, not a percentage: 12.0* is significant, 3.0 is not
+        rows = [{"resolution": d, "i_sigma": "9", "r_obs": "5%", "cc_half": c}
+                for d, c in (("3.00", "99.0*"), ("2.50", "20.0*"), ("2.20", "12.0*"), ("2.00", "3.0"))]
+        assert LP.determine_resolution_cutoff(rows, "cc_half_sig")["resolution"] == 2.20
+        # every shell passes: keep all the data and say the criterion was not reached
+        good = [{"resolution": d, "i_sigma": "9", "r_obs": "5%", "cc_half": "99.0*"} for d in ("3.00", "2.00")]
+        res = LP.determine_resolution_cutoff(good, "isig2")
+        assert res["resolution"] == 2.0 and res["reached"]["isig2"] is False, res
+        # the page takes the server's numbers instead of trusting its own copy
+        html = m.get_frontend_html()
+        assert html.count("m.cutoffs.all_cutoffs") >= 2 and "cm.cutoffs.all_cutoffs" in html
+
+    @check("Table 1: true low-resolution limit, mosaicity, and no approximate R-pim")
+    def _():
+        r = LP.parse_correct(fixture("CORRECT.LP"))
+        # the shell table's first row (4.04) is the HIGH limit of the first shell
+        assert r["resolution_range_low"] == 19.948 and r["statistics_table"][0]["resolution"] == "4.04"
+        assert r["mosaicity"] == 0.135, r.get("mosaicity")
+        html = m.get_frontend_html()
+        render = html[html.index("function t1Render("):html.index("function _t1Rows(")]
+        assert "resolution_range_low" in render and "stats[0].resolution" not in render
+        assert "calcRpim" not in html and "Math.sqrt(redund)" not in html, "R-meas/sqrt(N) is back"
+        assert "d.rpim" in render
+        # without a statistics table nothing is invented
+        got = m._table1_rpim_for({"xscale": {}, "correct": {}})
+        assert got["overall"] is None and got["reason"]
+
+    def _xds_ascii_header():
+        # the 12-item record gemmi expects of an unmerged XDS_ASCII.HKL, P1, 30 x 40 x 50 A
+        head = ["!FORMAT=XDS_ASCII    MERGE=FALSE    FRIEDEL'S_LAW=TRUE", "!SPACE_GROUP_NUMBER=1",
+                "!UNIT_CELL_CONSTANTS= 30 40 50 90 90 90", "!X-RAY_WAVELENGTH=1",
+                "!NUMBER_OF_ITEMS_IN_EACH_DATA_RECORD=12"]
+        head += ["!ITEM_%s=%d" % (k, i) for i, k in enumerate(
+            ['H', 'K', 'L', 'IOBS', 'SIGMA(IOBS)', 'XD', 'YD', 'ZD', 'RLP', 'PEAK', 'CORR', 'MAXC'], 1)]
+        return head + ["!END_OF_HEADER"]
+
+    @check("Table 1: exact R-pim from unmerged reflections, checked against the log")
+    def _():
+        try:
+            import gemmi, numpy  # noqa: F401
+        except ImportError:
+            raise SkipCheck("gemmi/numpy not installed here")
+        d = scratch / "rpim"; d.mkdir(exist_ok=True)
+        # P1 cell, three unique reflections measured 2, 3 and 2 times
+        obs = [((1, 0, 0), [100.0, 110.0]), ((0, 1, 0), [50.0, 56.0, 53.0]), ((0, 0, 1), [20.0, 24.0])]
+        lines = _xds_ascii_header()
+        for (h, k, l), values in obs:
+            lines += ["%d %d %d %.3f %.3f 1 1 1 1 100 100 0" % (h, k, l, v, 5.0) for v in values]
+        lines.append("!END_OF_DATA")
+        (d / "XDS_ASCII.HKL").write_text("\n".join(lines) + "\n")
+        num = den = num_m = 0.0
+        for _hkl, values in obs:
+            n, mean = len(values), sum(values) / len(values)
+            dev = sum(abs(v - mean) for v in values)
+            num += (1.0 / (n - 1)) ** 0.5 * dev; num_m += (n / (n - 1.0)) ** 0.5 * dev; den += sum(values)
+        table = [{"resolution": "30.00", "observed": "7", "unique": "3", "r_meas": "%.1f%%" % (100 * num_m / den)},
+                 {"resolution": "total", "observed": "7", "unique": "3", "r_meas": "%.1f%%" % (100 * num_m / den)}]
+        got = m.table1_rpim(d / "XDS_ASCII.HKL", table)
+        assert got["overall"] == "%.1f" % (100 * num / den), (got, 100 * num / den)
+        # a log that does not belong to the file: the value is withheld, with the reason
+        wrong = [dict(row, r_meas="55.0%") for row in table]
+        got = m.table1_rpim(d / "XDS_ASCII.HKL", wrong)
+        assert got["overall"] is None and "R-meas" in got["reason"], got
+
+    @check("anisotropy: CC½ pairs observations of the SAME reflection")
+    def _():
+        try:
+            import gemmi, numpy as np  # noqa: F401
+        except ImportError:
+            raise SkipCheck("gemmi/numpy not installed here")
+        d = scratch / "aniso"; d.mkdir(exist_ok=True)
+        rng = np.random.RandomState(1)
+        lines = _xds_ascii_header()
+        for h in range(1, 16):
+            for k in range(0, 4):
+                for l in range(0, 4):
+                    true = float(rng.exponential(1000.0)) + 50.0
+                    for _rep in range(4):     # precise repeats: CC½ must be near 100 %
+                        lines.append("%d %d %d %.3f %.3f 1 1 1 1 100 100 0" % (h, k, l, true * (1 + 0.01 * rng.randn()), true * 0.01))
+        lines.append("!END_OF_DATA")
+        (d / "XDS_ASCII.HKL").write_text("\n".join(lines) + "\n")
+        res = m.analyze_anisotropy(str(d / "XDS_ASCII.HKL"))
+        assert res.get("success"), res
+        per = res["per_axis"]
+        shells = per["a_star"]["shells"] if isinstance(per.get("a_star"), dict) else per["a_star"]
+        ccs = [s["cc_half"] for s in shells if s.get("cc_half") is not None]
+        # four repeats with sigma = 1 % of I: merged I/sigma is 100 * sqrt(4) = 200,
+        # the I/sigma of a single observation would be 100
+        isigs = [s["mean_i_sigma"] for s in shells if s.get("mean_i_sigma") is not None]
+        assert isigs and all(190 < v < 210 for v in isigs), isigs
+        # the old code correlated unrelated reflections and gave values around zero
+        assert ccs and min(ccs) > 90.0, ccs
+
     # ── helpers ──────────────────────────────────────────────────────────
     @check("_is_xds_reflection_file: .HKL/.ahkl/XDS header yes, mtz no")
     def _():

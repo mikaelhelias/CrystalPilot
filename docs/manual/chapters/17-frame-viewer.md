@@ -21,13 +21,13 @@
 ![Resolution rings and ice rings on the frame; the Rings, Ice, Spots and Save buttons.](images/17-02-frame-rings.png)
 
 - **◎ Rings**: resolution rings from the geometry (wavelength, distance, pixel size, beam centre). The geometry comes from the frame header, from the project's `XDS.INP` (**↻ From Project**), from any XDS.INP (**📂 Locate XDS.INP…**, then **⚡ Read XDS.INP Geometry**) or from the px / dist / bcx / bcy fields, which you can edit. The rings tell you at a glance where your data ends.
-- **❄ Ice**: dashed rings at the hexagonal ice spacings (3.90, 3.67, 3.44, 2.67, 2.25, 2.07, 1.92 Å…). Spots or powder rings on them mean ice in the loop; exclude those shells (EXCLUDE_RESOLUTION_RANGE) if the statistics show it.
-- **⊕ Spots**: the `SPOT.XDS` overlay from the current output folder for frames inside SPOT_RANGE: green spots were indexed, red were not. Many red spots in one region point to a second lattice, a shadow or ice.
+- **❄ Ice**: dashed rings at the hexagonal ice spacings (3.90, 3.67, 3.44, 2.67, 2.25, 2.07, 1.95, 1.92, 1.88, 1.72 Å). Spots or powder rings on them mean ice in the loop; exclude those shells (EXCLUDE_RESOLUTION_RANGE) if the statistics show it.
+- **⊕ Spots**: the `SPOT.XDS` overlay from the current output folder for frames inside SPOT_RANGE: indexed spots are circles, spots that were not indexed are crosses (the colours change with the colour map so that they stay visible). Many crosses in one region point to a second lattice, a shadow or ice.
 - **⤓ Save**: PNG (lossless) or JPEG of the current view with the overlays, at 1× (native detector resolution), 0.5×, 0.25× or 2×, for a report.
 
 ## Header information
 
-Below the image the **Frame header** lists what was read from the file: wavelength, distance, pixel size, beam centre, oscillation, detector name; for Eiger files also the count-rate cut-off (XDS OVERLOAD) and the sensor thickness. This is the same information *Generate from images* uses; if a value here is wrong, correct it in `XDS.INP`.
+Below the image the **Frame header** lists the geometry read from the file: wavelength, distance, pixel size, beam centre, image size and detector name. *Generate from images* reads the same values (and, with its own reader, the oscillation and for Eiger files the count-rate cut-off and the sensor thickness); if a value here is wrong, correct it in `XDS.INP`.
 
 ![The frame header panel with the values read from the file.](images/17-03-frame-header.png)
 

@@ -32,7 +32,7 @@ The sidebar has a **Work mode** selector with four levels. A higher level never 
 | Level | Meant for | Adds |
 |---|---|---|
 | **Tutorial** | first contact | the core workflow only, with explanatory hints under every card: project, XDS.INP, run, results, XSCALE, XDSCONV, frame viewer |
-| **Normal** | routine processing | the **AutoPilot** and **Statistics** tabs; FRIEDEL'S_LAW and RESOLUTION_SHELLS in the parameter form; **CORRECT Only** and **GXPARM Re-integrate**; in the results: Matthews calculator, cut-off estimates, ISa, shell charts, ice-ring analysis, anomalous summary, run history and comparison buttons |
+| **Normal** | routine processing | the **AutoPilot** and **Statistics** tabs; FRIEDEL'S_LAW in the parameter form; **CORRECT Only** and **GXPARM Re-integrate**; in the results: Matthews calculator, cut-off estimates, ISa, shell charts, ice-ring analysis, anomalous summary, run history and comparison buttons |
 | **Advanced** | diagnosing problems | the **POINTLESS** and **AIMLESS** tabs; the *Corrections* and *Reporting* parameter groups, MINIMUM_FRACTION_OF_INDEXED_SPOTS; in XSCALE: STRICT_ABSORPTION_CORRECTION and REIDX; IDXREF spot and spindle deviations; correction-factor χ² fit, Wilson analysis, INTEGRATE mosaicity and scale charts, the anomalous shell tables; the frame viewer's XDS diagnostic images |
 | **Expert** | everything | the **ΔCC½** and **gemmi** tabs; XSCALE NBATCH; **Convert with gemmi** in XDSCONV; Wilson distribution moments; the **Full** auto-indexing tier and **Force cell** |
 
@@ -56,7 +56,7 @@ The same parameter form at Tutorial and at Expert:
 
 - **Data Processing, Key Parameters:** MINIMUM_FRACTION_OF_INDEXED_SPOTS (Advanced); the *Corrections* group: CORRECTIONS (DECAY MODULATION ABSORPTION), STRICT_ABSORPTION_CORRECTION, MINIMUM_I/SIGMA, REFLECTIONS/CORRECTION_FACTOR, REFINE(INTEGRATE), the neggia LIB line (Advanced); the *Reporting* group: INCLUDE_RESOLUTION_RANGE, RESOLUTION_SHELLS (Advanced/Normal); FRIEDEL'S_LAW (Normal).
 - **Data Processing, run buttons:** **CORRECT Only** and **GXPARM Re-integrate** (Normal).
-- **Auto-Index card:** the **Full** tier (bisection of SIGNAL_PIXEL) is Expert; Quick, Medium and the **🔒 SG/Cell** lock are available at every level.
+- **Auto-Index card:** the **Full** tier (bisection of SIGNAL_PIXEL) is Expert; the card itself, with Quick, Medium and the **🔒 SG/Cell** lock, appears from Advanced.
 - **IDXREF metrics:** compare and history buttons (Normal); spot position and spindle deviation cards (Advanced).
 - **CORRECT metrics:** compare and history (Normal); ISa, shell charts, resolution cut-off estimates, Matthews calculator, ice-ring analysis, anomalous summary (Normal); correction-factor χ² fit, Wilson B-factor analysis, anomalous per-shell details (Advanced); Wilson distribution moments (Expert). The systematic-absence analysis, the Laue-group table and the anisotropy card are shown at every level.
 - **INTEGRATE metrics:** reflections per frame (Normal); mosaicity/divergence and scale-factor charts (Advanced).

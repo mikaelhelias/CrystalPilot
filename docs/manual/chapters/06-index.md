@@ -44,8 +44,8 @@ The **Auto-Indexing** card sits under the IDXREF metrics (open the LP Viewer, ch
 
 ![The Auto-Indexing card under the IDXREF metrics with the Quick, Medium and Full tiers and the SG/Cell lock.](images/06-06-autoindex.png)
 
-1. Click **Quick** (a few trials, one or two minutes), **Medium** (several wedges), or **Full** (Expert: a systematic search including a bisection of the signal threshold). The **🔒 SG/Cell** lock keeps the cell and space group of `XDS.INP` during the trials instead of letting each trial index freely (🔓 = free indexing).
-2. Each trial reports spots found, indexed fraction, chosen lattice and cell. Select a trial: **Apply to XDS.INP** writes its SIGNAL_PIXEL, SPOT_RANGE and any special parameters (INDEX_ERROR, MIN_PIXELS, INDEX_ORIGIN); **Apply & Re-run IDXREF** does that and runs COLSPOT + IDXREF at once. **⤓ CSV** exports the table, **📋 Report** opens the text report.
+1. Click **Quick** (a few trials, one or two minutes), **Medium** (several wedges), or **Full** (Expert: wider grids, the whole data set, pairs of wedges, more index origins and tolerances). Every tier ends with a bisection of SIGNAL_PIXEL between its two best trials. The **🔒 SG/Cell** lock keeps the cell and space group of `XDS.INP` during the trials instead of letting each trial index freely (🔓 = free indexing).
+2. Each trial reports the spots found and per frame, the indexed fraction, a score (indexed fraction × min(1, indexed spots / 200), so that 20 of 25 spots does not beat 500 of 700) and the spot and spindle deviations; the lattice and cell are in IDXREF.LP once the trial is applied. Select a trial: **Apply to XDS.INP** writes its SIGNAL_PIXEL, SPOT_RANGE and any special parameters (INDEX_ERROR, MIN_PIXELS, INDEX_ORIGIN); **Apply & Re-run IDXREF** does that and runs COLSPOT + IDXREF at once. **⤓ CSV** exports the table, **📋 Report** opens the text report.
 3. If you only applied, run **▶ to IDXREF** again.
 
 ## If it goes wrong
@@ -53,7 +53,7 @@ The **Auto-Indexing** card sits under the IDXREF metrics (open the LP Viewer, ch
 | Message or symptom | Meaning and fix |
 |---|---|
 | `INSUFFICIENT PERCENTAGE OF INDEXED REFLECTIONS` | beam centre, distance, wavelength or oscillation wrong; too thin a spot range; ice or a second lattice. Try the detector centre as ORGX/ORGY, widen SPOT_RANGE, look at the frames (chapter 17), run Auto-Index |
-| Very few spots in COLSPOT | SIGNAL_PIXEL too high or wrong TRUSTED_REGION / untrusted areas; check STRONG_PIXEL and the frames |
+| Very few spots in COLSPOT | SIGNAL_PIXEL too high or wrong TRUSTED_REGION / untrusted areas; check MINIMUM_NUMBER_OF_PIXELS_IN_A_SPOT and the frames |
 | `CANNOT READ IMAGE` / `!!! ERROR !!! CANNOT OPEN` | template path wrong, or for `.h5` data the `LIB=` line or the neggia library missing |
 | XYCORR or INIT fail immediately with `ILLEGAL KEYWORD` | a keyword value is malformed; open the Full Input File and look at the line quoted in the log |
 | The run stops with "another program is already running in this folder" | a run is still active there (perhaps another browser tab): Stop it or wait |

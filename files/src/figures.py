@@ -221,10 +221,9 @@ def _fig_ice_bands(metrics):
     except Exception:
         return bands
     for ring in rings or []:
-        if not (ring.get("detected") and ring.get("in_range")):
-            continue
-        # weak evidence at every candidate spacing reads as noise on a figure
-        if str(ring.get("confidence") or "").lower() not in ("strong", "moderate"):
+        # weak evidence at every candidate spacing reads as noise on a figure:
+        # the same rule AutoPilot uses before it excludes a ring
+        if not LPParser.ice_ring_is_actionable(ring):
             continue
         try:
             lo, hi = float(ring.get("lo")), float(ring.get("hi"))

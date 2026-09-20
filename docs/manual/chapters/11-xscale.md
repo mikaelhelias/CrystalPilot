@@ -36,9 +36,9 @@ XSCALE puts data sets on a common scale, corrects absorption, detector and radia
 
 ## Read the result
 
-![XSCALE.LP parsed: shell table, correlations between data sets, charts.](images/11-03-xscale-lp.png)
+![XSCALE.LP parsed: shell table, ISa per data set, charts.](images/11-03-xscale-lp.png)
 
-- The shell table has the same columns as CORRECT (completeness, R-obs, R-meas, I/σ, CC½, anomalous); for several inputs a correlation table between data sets tells you whether one of them does not belong.
+- The shell table has the same columns as CORRECT (completeness, R-obs, R-meas, I/σ, CC½, anomalous); for several inputs the ISa of each data set is listed. The correlation factors between data sets, which tell you whether one of them does not belong, are in the log itself: search XSCALE.LP for `CORRELATIONS BETWEEN INPUT DATA SETS`.
 - **Resolution cut-off estimates** with the four criteria; each button applies the limit to `XSCALE.INP` (then run again). **Run History** and **Compare…** work here too.
 
 ![Cut-off estimates for the merged data with apply buttons.](images/11-04-xscale-cutoffs.png)

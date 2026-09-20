@@ -152,14 +152,18 @@ def _environment_report():
     # CCP4 (optional)
     ccp4 = CCP4_BIN or _find_ccp4_bin()
     if ccp4:
-        progs = [p for p in ("pointless", "aimless", "ctruncate", "f2mtz", "cad") if (Path(ccp4) / p).exists() or (Path(ccp4) / (p + ".exe")).exists()]
-        miss = [p for p in ("pointless", "aimless", "ctruncate", "f2mtz", "cad") if p not in progs]
+        found = {p: _ccp4_program(p, ccp4) for p in CCP4_PROGRAMS}
+        miss = [p for p in CCP4_PROGRAMS if not found[p][0]]
+        windows = any(found[p][1] == "windows" for p in CCP4_PROGRAMS)
         checks.append({"id": "ccp4", "status": "ok" if not miss else "warn", "title": "CCP4 (optional)",
-                       "detail": ("Found in " + ccp4) + (" - missing: " + ", ".join(miss) if miss else ""),
+                       "detail": ("Found in " + ccp4) + (" (CCP4 for Windows, run through WSL)" if windows else "")
+                                 + ("; not usable: " + "; ".join(found[p][2] for p in miss) if miss else ""),
                        "path": ccp4, "action": "set_ccp4_path"})
     else:
         checks.append({"id": "ccp4", "status": "warn", "title": "CCP4 (optional)",
-                       "detail": "Not found. XDS processing works without it. CCP4 adds POINTLESS, AIMLESS, CTRUNCATE and MTZ export. "
+                       "detail": ("The saved CCP4 folder " + CCP4_BIN_SAVED + " holds no CCP4 programs any more. "
+                                  if CCP4_BIN_SAVED and not _is_ccp4_bin(CCP4_BIN_SAVED) else "") +
+                                 "Not found. XDS processing works without it. CCP4 adds POINTLESS, AIMLESS, CTRUNCATE and MTZ export. "
                                  "It is searched for on PATH, in $CCP4/$CBIN and in the usual folders - if it lives somewhere else "
                                  "(CCP4 9 is unpacked wherever you like), enter its folder here.",
                        "path": "", "action": "set_ccp4_path",
@@ -182,6 +186,47 @@ def _environment_report():
             "log_file": (str(LOG_PATH) if LOG_PATH else ""),
             "report_email": REPORT_EMAIL,
             "all_ok": not any(c["status"] == "missing" for c in checks)}
+
+
+def _table1_rpim_for(result):
+    """Exact R-pim for the log Table 1 is built from, or the reason it is withheld."""
+    primary = result.get("xscale") if (result.get("xscale") or {}).get("statistics_table") else result.get("correct")
+    primary = primary or {}
+    table, source = primary.get("statistics_table"), primary.get("source")
+    if not table or not source:
+        return {"overall": None, "outer": None, "reason": "no statistics table"}
+    ok, info = _check_gemmi()
+    if not ok:
+        return {"overall": None, "outer": None, "reason": "gemmi is not installed"}
+    lp = Path(source)
+    candidates = []
+    if lp.name == "CORRECT.LP":
+        candidates = [lp.parent / "XDS_ASCII.HKL"]
+    elif lp.name == "XSCALE.LP":
+        try:
+            inp = (lp.parent / "XSCALE.INP").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            inp = ""
+        for line in inp.splitlines():
+            line = line.split("!")[0].strip()
+            if line.upper().startswith("OUTPUT_FILE=") and line.split("=", 1)[1].split():
+                candidates.insert(0, lp.parent / line.split("=", 1)[1].split()[0])
+    else:
+        return {"overall": None, "outer": None,
+                "reason": "an earlier log: its reflection file has been overwritten"}
+    reason = "reflection file not found next to %s" % lp.name
+    for cand in candidates:
+        if not cand.is_file():
+            continue
+        try:
+            got = table1_rpim(cand, table)
+        except Exception as exc:
+            reason = "%s could not be read: %s" % (cand.name, exc)
+            continue
+        if got.get("overall") or got.get("outer") or got.get("d_low"):
+            return got
+        reason = got.get("reason") or reason
+    return {"overall": None, "outer": None, "reason": reason}
 
 
 class XDSGUIHandler(BaseHTTPRequestHandler):
@@ -1439,13 +1484,19 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             if not CCP4_BIN:
                 CCP4_BIN = _find_ccp4_bin()
             found = bool(CCP4_BIN)
-            f2mtz_ok = found and (Path(CCP4_BIN) / "f2mtz").exists()
-            cad_ok = found and (Path(CCP4_BIN) / "cad").exists()
-            ptl_ok = found and (Path(CCP4_BIN) / "pointless").exists()
-            aml_ok = found and (Path(CCP4_BIN) / "aimless").exists()
-            ctr_ok = found and (Path(CCP4_BIN) / "ctruncate").exists()
+            progs = {p: _ccp4_program(p) for p in CCP4_PROGRAMS}
+            # why a program cannot run, for the interface to show as it is
+            problems = [progs[p][2] for p in ("f2mtz", "cad") if found and not progs[p][0]]
+            if CCP4_BIN_SAVED and CCP4_BIN_SAVED != CCP4_BIN and not _is_ccp4_bin(CCP4_BIN_SAVED):
+                problems.append("the saved CCP4 folder " + CCP4_BIN_SAVED + " holds no CCP4 programs any more")
             gemmi_ok, gemmi_ver = _check_gemmi()
-            self.send_json({"found": found, "ccp4_bin": CCP4_BIN, "f2mtz": f2mtz_ok, "cad": cad_ok, "pointless": ptl_ok, "aimless": aml_ok, "ctruncate": ctr_ok, "gemmi": gemmi_ok, "gemmi_version": gemmi_ver if gemmi_ok else None})
+            self.send_json({"found": found, "ccp4_bin": CCP4_BIN,
+                            "windows": any(v[1] == "windows" for v in progs.values()),
+                            "problems": problems,
+                            "f2mtz": bool(progs["f2mtz"][0]), "cad": bool(progs["cad"][0]),
+                            "pointless": bool(progs["pointless"][0]), "aimless": bool(progs["aimless"][0]),
+                            "ctruncate": bool(progs["ctruncate"][0]),
+                            "gemmi": gemmi_ok, "gemmi_version": gemmi_ver if gemmi_ok else None})
 
         # LP stats for gemmi comparison: return statistics_table from CORRECT.LP or XSCALE.LP
         elif path == '/api/gemmi/lp-stats':
@@ -3644,6 +3695,11 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         result["correct"]["statistics_table"] = cm["statistics_table"]
                     if cm.get("wilson_line"):
                         result["correct"]["wilson_line"] = cm["wilson_line"]
+                    if cm.get("resolution_range_low"):
+                        result["correct"]["resolution_range_low"] = cm["resolution_range_low"]
+                    if cm.get("mosaicity") is not None:
+                        result["correct"]["mosaicity"] = cm["mosaicity"]
+                    result["correct"]["source"] = str(correct_lp)
                     if cm.get("wilson_moments"):
                         result["correct"]["wilson_moments"] = cm["wilson_moments"]
                     if cm.get("aliens"):
@@ -3666,6 +3722,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             if xm.get("unit_cell"): result["xscale"]["unit_cell"] = xm["unit_cell"]
                             if xm.get("statistics_table"): result["xscale"]["statistics_table"] = xm["statistics_table"]
                             if xm.get("isa_table"): result["xscale"]["isa_table"] = xm["isa_table"]
+                            if xm.get("resolution_range_low"): result["xscale"]["resolution_range_low"] = xm["resolution_range_low"]
                         elif "CORRECT" in fname:
                             cm2 = LPParser.parse_correct(content)
                             result["correct"]["source"] = str(override_path)
@@ -3674,6 +3731,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             if cm2.get("isa"): result["correct"]["isa"] = cm2["isa"]
                             if cm2.get("statistics_table"): result["correct"]["statistics_table"] = cm2["statistics_table"]
                             if cm2.get("wilson_line"): result["correct"]["wilson_line"] = cm2["wilson_line"]
+                            result["correct"]["resolution_range_low"] = cm2.get("resolution_range_low")
+                            result["correct"]["mosaicity"] = cm2.get("mosaicity")
                             # Clear xscale so CORRECT is used as primary
                             result["xscale"] = {}
                     except Exception:
@@ -3705,8 +3764,15 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             result["xscale"]["statistics_table"] = xm["statistics_table"]
                         if xm.get("isa_table"):
                             result["xscale"]["isa_table"] = xm["isa_table"]
+                        if xm.get("resolution_range_low"):
+                            result["xscale"]["resolution_range_low"] = xm["resolution_range_low"]
                     except Exception:
                         pass
+
+            # Exact R-pim from the unmerged reflections (asked for separately:
+            # a 200 MB file on a network share takes a while to read).
+            if qs_t1.get("rpim", [""])[0] == "1":
+                result["rpim"] = _table1_rpim_for(result)
 
             self.send_json(result)
 
@@ -3771,7 +3837,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
 
     def _do_POST(self):
         """Handle POST requests"""
-        global xds_runner, CCP4_BIN, NEGGIA_LIB, XDS_PARALLEL
+        global xds_runner, CCP4_BIN, CCP4_BIN_SAVED, NEGGIA_LIB, XDS_PARALLEL
         
         path = urllib.parse.urlparse(self.path).path
         project_route = self._project_route(path)
@@ -3812,7 +3878,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         return []
 
     def _dispatch_POST(self, path, data):
-        global xds_runner, CCP4_BIN, NEGGIA_LIB, XDS_PARALLEL
+        global xds_runner, CCP4_BIN, CCP4_BIN_SAVED, NEGGIA_LIB, XDS_PARALLEL
         project_route = self._project_route(path)
         # Create project
         if path == "/api/projects":
@@ -3987,13 +4053,16 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     _alt = [str(Path(ccp4) / "bin")]
                     _alt += sorted(_glob_ccp4.glob(str(Path(ccp4) / "[Cc][Cc][Pp]4*" / "bin")), reverse=True)
                     _alt += sorted(_glob_ccp4.glob(str(Path(ccp4) / "[Cc][Cc][Pp]4*" / "*" / "bin")), reverse=True)
+                    _alt += sorted(_glob_ccp4.glob(str(Path(ccp4) / "*" / "bin")), reverse=True)   # CCP4 for Windows: CCP4-9/9.0/bin
                     _hit = next((a for a in _alt if _is_ccp4_bin(a)), "")
                     if not _hit:
-                        self.send_json({"error": "No CCP4 programs in " + ccp4 +
-                                                 ". Give the CCP4 folder or its bin folder (the one with pointless, aimless, ctruncate)."}, 400)
+                        _win = any(Path(d, p + ".exe").is_file() for d in [ccp4] + _alt for p in CCP4_PROGRAMS)
+                        self.send_json({"error": ("The folder " + ccp4 + " holds CCP4 for Windows (.exe programs), which cannot run on Linux. Install the Linux CCP4."
+                                                  if _win else "No CCP4 programs in " + ccp4 +
+                                                 ". Give the CCP4 folder or its bin folder (the one with pointless, aimless, ctruncate).")}, 400)
                         return
                     ccp4 = _hit
-                CCP4_BIN = ccp4
+                CCP4_BIN = CCP4_BIN_SAVED = ccp4
             if neggia is not None:
                 NEGGIA_LIB = neggia
             par = data.get("parallel")

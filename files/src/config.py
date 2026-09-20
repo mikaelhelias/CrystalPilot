@@ -14,7 +14,7 @@ if _sys_early.version_info < (3, 7):
     )
 del _sys_early
 
-VERSION = "0.6.4"
+VERSION = "0.6.6"
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -384,9 +384,11 @@ def _wsl_drives():
     return drives
 
 # CCP4 detection
-CCP4_BIN = str(SETTINGS.get("ccp4_bin") or "")  # from settings, else auto-detected or user-configured
-
 CCP4_PROGRAMS = ("pointless", "aimless", "ctruncate", "f2mtz", "cad")
+
+# A CCP4 for Windows bin folder (pointless.exe ...) can be run from WSL through
+# interop; anywhere else only real Linux programs count.
+_CCP4_EXE_OK = IS_WSL or os.name == "nt"
 
 
 def _is_ccp4_bin(folder):
@@ -396,9 +398,116 @@ def _is_ccp4_bin(folder):
     except Exception:
         return False
     for n in CCP4_PROGRAMS:
-        if (d / n).is_file() or (d / (n + ".exe")).is_file():
+        if (d / n).is_file() or (_CCP4_EXE_OK and (d / (n + ".exe")).is_file()):
             return True
     return False
+
+
+# The folder saved in the settings is checked, not trusted: a CCP4 that was
+# moved, removed or reinstalled elsewhere must not leave a dead path behind
+# that makes every program look missing.  CCP4_BIN_SAVED keeps what was saved
+# so the interface can say why it is not used.
+CCP4_BIN_SAVED = str(SETTINGS.get("ccp4_bin") or "")
+CCP4_BIN = CCP4_BIN_SAVED if CCP4_BIN_SAVED and _is_ccp4_bin(CCP4_BIN_SAVED) else ""
+
+
+def _ccp4_program(name, folder=None):
+    """Find CCP4 program `name` in the CCP4 bin folder.
+
+    Returns (path, kind, problem).  kind is "unix" for a program that runs as
+    it is, "windows" for name.exe of a CCP4 for Windows run through WSL
+    interop, "" when it cannot be run - problem then says why, in words the
+    user can act on.
+    """
+    folder = folder if folder is not None else CCP4_BIN
+    if not folder:
+        return None, "", "CCP4 not found"
+    d = Path(folder)
+    if not d.is_dir():
+        return None, "", "the CCP4 folder " + str(d) + " does not exist"
+    p = d / name
+    if p.is_file():
+        return p, "unix", ""
+    if p.is_symlink():
+        try:
+            target = os.readlink(str(p))
+        except OSError:
+            target = "?"
+        return None, "", (name + " in " + str(d) + " is a broken link (to " + target + "): the CCP4 installation "
+                          "is incomplete - run BINARY.setup in the CCP4 folder, or install CCP4 again")
+    pe = d / (name + ".exe")
+    if pe.is_file():
+        if os.name == "nt":
+            return pe, "unix", ""
+        if IS_WSL:
+            return pe, "windows", ""
+        return None, "", (str(d) + " holds " + name + ".exe, a CCP4 for Windows, which cannot run on Linux - "
+                          "install the Linux CCP4")
+    return None, "", name + " not found in " + str(d)
+
+
+def _wsl_win_path(p):
+    """Windows form of a Linux path for a Windows program (wslpath needs the
+    file to exist, so an output file is translated through its folder)."""
+    try:
+        if os.path.exists(p):
+            return subprocess.run(["wslpath", "-w", p], capture_output=True, text=True,
+                                  timeout=10).stdout.strip() or p
+        d, base = os.path.split(p)
+        if d and os.path.isdir(d):
+            wd = subprocess.run(["wslpath", "-w", d], capture_output=True, text=True, timeout=10).stdout.strip()
+            if wd:
+                return wd.rstrip("\\") + "\\" + base
+    except Exception:
+        pass
+    return p
+
+
+def _ensure_wsl_interop():
+    """Windows programs need the WSLInterop binfmt entry; a runtime where
+    systemd cleared it gets it back (same as the ccp4win-run bridge)."""
+    if os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop") or \
+       os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop-late"):
+        return
+    try:
+        with open("/proc/sys/fs/binfmt_misc/register", "w") as f:
+            f.write(":WSLInterop:M::MZ::/init:PF")
+    except OSError:
+        pass
+
+
+def _ccp4_command(name, args, scratch, env=None):
+    """Command line and environment to run CCP4 program `name` with `args`.
+
+    A Linux CCP4 runs directly with the CCP4 variables filled in where the
+    shell did not set them.  A CCP4 for Windows under WSL runs its .exe
+    through interop: path arguments and the CCP4 variables are handed over in
+    Windows form, as windows/ccp4win-run.sh does for the installer's bridge.
+    Raises RuntimeError with the reason when the program cannot be run.
+    """
+    path, kind, problem = _ccp4_program(name)
+    if path is None:
+        raise RuntimeError(problem)
+    env = dict(os.environ if env is None else env)
+    root = path.parent.parent
+    if kind == "windows":
+        _ensure_wsl_interop()
+        for var, val in (("CCP4", root), ("CBIN", root / "bin"), ("CLIB", root / "lib"),
+                         ("CLIBD", root / "lib" / "data"), ("CINCL", root / "include"),
+                         ("CLIBD_MON", str(root / "lib" / "data" / "monomers") + "/"),
+                         ("MMCIFDIC", root / "lib" / "ccp4" / "cif_mmdic.lib"), ("CCP4_SCR", scratch)):
+            env[var] = str(val)
+        env.setdefault("CCP4_OPEN", "UNKNOWN")
+        env["GFORTRAN_UNBUFFERED_PRECONNECTED"] = "Y"
+        wslenv = "CCP4/p:CBIN/p:CLIB/p:CLIBD/p:CINCL/p:CLIBD_MON/p:MMCIFDIC/p:CCP4_SCR/p:CCP4_OPEN:GFORTRAN_UNBUFFERED_PRECONNECTED"
+        env["WSLENV"] = wslenv + (":" + env["WSLENV"] if env.get("WSLENV") else "")
+        return [str(path)] + [_wsl_win_path(a) if a.startswith("/") else a for a in map(str, args)], env
+    env.setdefault("CCP4", str(root))
+    env.setdefault("CLIBD", str(root / "lib" / "data"))
+    env.setdefault("CCP4_SCR", str(scratch))
+    env.setdefault("CINCL", str(root / "include"))
+    env["PATH"] = str(path.parent) + os.pathsep + env.get("PATH", "")
+    return [str(path)] + [str(a) for a in args], env
 
 
 def _find_ccp4_bin():

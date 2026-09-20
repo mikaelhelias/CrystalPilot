@@ -218,8 +218,8 @@ section("doc-pipeline", "Running XDS",
 )
 
 section("doc-autoindex", "Auto-indexing trials",
-    P("The " + B("Auto-Index") + " card in the Data Processing tab runs a series of COLSPOT + IDXREF trials to find a combination that indexes: different SPOT_RANGE wedges and SIGNAL_PIXEL values, starting from the project's XDS.INP. Tiers: " + B("Quick") + " (a few trials), " + B("Medium") + ", " + B("Full") + " (a bisection of the signal threshold as well). " + "the " + B("&#128274; SG/Cell") + " lock keeps the cell and space group of XDS.INP during the trials (off: every trial indexes freely). "
-      "Each trial reports spots found, indexed fraction, the chosen lattice and cell; for the selected trial " + B("Apply to XDS.INP") + " writes SIGNAL_PIXEL, SPOT_RANGE and any special parameters (INDEX_ERROR, MIN_PIXELS, INDEX_ORIGIN), " + B("Apply &amp; Re-run IDXREF") + " does that and runs COLSPOT + IDXREF at once; " + B("&#10515; CSV") + " exports the table and " + B("&#128203; Report") + " opens the text report. Trials run in their own folders and do not disturb the project's results. Results are cached per project."),
+    P("The " + B("Auto-Index") + " card in the Data Processing tab runs a series of COLSPOT + IDXREF trials to find a combination that indexes: different SPOT_RANGE wedges and SIGNAL_PIXEL values, starting from the project's XDS.INP. Tiers: " + B("Quick") + " (a few trials), " + B("Medium") + ", " + B("Full") + " (wider grids, the whole data set, pairs of wedges, more index origins and tolerances); every tier ends with a bisection of SIGNAL_PIXEL between its two best trials. " + "the " + B("&#128274; SG/Cell") + " lock keeps the cell and space group of XDS.INP during the trials (off: every trial indexes freely). "
+      "Each trial reports the spots found, the indexed fraction, a score (indexed fraction &times; min(1, indexed spots / 200)) and the spot and spindle deviations; for the selected trial " + B("Apply to XDS.INP") + " writes SIGNAL_PIXEL, SPOT_RANGE and any special parameters (INDEX_ERROR, MIN_PIXELS, INDEX_ORIGIN), " + B("Apply &amp; Re-run IDXREF") + " does that and runs COLSPOT + IDXREF at once; " + B("&#10515; CSV") + " exports the table and " + B("&#128203; Report") + " opens the text report. Trials run in their own folders and do not disturb the project's results. Results are cached per project."),
 )
 
 section("doc-lpviewer", "LP viewer, metrics, charts, history",
@@ -268,7 +268,7 @@ section("doc-xscale", "XSCALE",
         B("Save as new XSCALE.INP") + " writes a fresh file from the form.",
         "Both write every keyword into its XSCALE section (global keywords before " + C("OUTPUT_FILE") + ", output keywords after it, per-data-set keywords under each " + C("INPUT_FILE") + "); a file with misplaced keywords is repaired on save. An empty input list defaults to the project's XDS_ASCII.HKL from the last CORRECT run; if a run starts with no input at all, that file is inserted and the log says so."]),
     SUB("Running and results"),
-    P("Run modes: " + B("Overwrite") + " in the project folder, or " + B("Sub-folders") + " " + C("XSCALE_001") + ", " + C("XSCALE_002") + "&hellip; (input paths are rewritten so they still resolve). XSCALE.LP is rotated like CORRECT.LP; the LP viewer shows the shell table, correlation between data sets, and the same four cut-off estimates with apply buttons; Run History and Compare work for XSCALE as well."),
+    P("Run modes: " + B("Overwrite") + " in the project folder, or " + B("Sub-folders") + " " + C("XSCALE_001") + ", " + C("XSCALE_002") + "&hellip; (input paths are rewritten so they still resolve). XSCALE.LP is rotated like CORRECT.LP; the LP viewer shows the shell table, the ISa of each data set, and the same four cut-off estimates with apply buttons; Run History and Compare work for XSCALE as well."),
 )
 
 section("doc-xdsconv", "XDSCONV and MTZ",
@@ -347,7 +347,7 @@ section("doc-autopilot", "AutoPilot",
       + B("Stop") + " stops now: the data set being processed goes back in the queue with the rest, and " + B("Resume") + " processes it again, from a fresh XDS.INP when its XDS.INP was generated. A data set that finished stays finished even when Stop came in its last seconds. A data set that fails does not stop the run. The table shows each data set's status "
       "(with the phase and the attempt while it runs, and the reason when it failed), where its XDS.INP came from, space group, cell, cut-off, and the overall completeness, R-meas, I/&sigma;, CC&#189; and ISa "
       "read from its own CORRECT.LP, plus whether the re-integration was kept. The best value in a column is green; columns sort on a click."),
-    P("Click a data set for its view: the phases (generate or check XDS.INP &rarr; XYCORR to IDXREF with automatic recovery &rarr; DEFPIX to CORRECT &rarr; resolution cut-off &rarr; optional re-integration &rarr; XSCALE &rarr; optional XDSCC12 exclusions &rarr; XDSCONV to an MTZ), "
+    P("Click a data set for its view: the phases (generate or check XDS.INP &rarr; XYCORR to IDXREF with automatic recovery &rarr; DEFPIX to CORRECT &rarr; ice-ring exclusion and resolution cut-off &rarr; optional re-integration, with the optional XDSCC12 exclusions inside it &rarr; XSCALE &rarr; XDSCONV to an MTZ; the cut-off is applied in XSCALE and XDSCONV, not written into XDS.INP; the first integration is always put aside, so a failed re-integration is undone), "
       "the live log, and when it has finished the summary with the before / after statistics, the shell table, the MTZ path, the retries and the diagnoses (stored as " + C("AUTOPILOT_RESULTS.json") + "). "
       + B("Open project") + " opens it in Data Processing. With a project open and no data set chosen, the view shows that project's last AutoPilot result."),
     P("With two or more finished data sets, tick them and " + B("Preview XSCALE.INP") + " or " + B("Merge with XSCALE") + ". Only data sets with the reference's space group "
@@ -376,12 +376,13 @@ section("doc-frameviewer", "Frame Viewer",
         B("Spots") + ": the SPOT.XDS overlay of the current output folder (green indexed, red not indexed), for frames inside SPOT_RANGE.",
         B("Save") + ": PNG (lossless) or JPEG of the current view with the overlays, at 1&times; (native detector resolution), 0.5&times;, 0.25&times; or 2&times;.",
         B("XDS diagnostics") + " (Advanced): loads the diagnostic images XDS writes into the output folder: " + C("SHOW_SPOT.cbf") + " from COLSPOT (the frame at SHOW_IMAGE_NUMBER with the strong pixels marked) and " + C("SHOW_HKL.cbf") + " from INTEGRATE (the predicted integration regions drawn on the frame).",
-        "The header panel lists everything read from the file (wavelength, distance, pixel size, beam centre, oscillation, detector, and for Eiger the count-rate cut-off and sensor thickness).",
+        "The header panel lists the geometry read from the file (wavelength, distance, pixel size, beam centre, image size, detector).",
         "Frames on network shares and, under WSL, on Windows drives are read directly; large Eiger sets are much faster from the projects folder (Linux side)."]),
 )
 
 section("doc-table1", "Statistics Table 1",
-    P("Assembles a publication Table 1: collection parameters from XDS.INP (detector, wavelength, oscillation, distance, frames, total rotation), and statistics from " + B("XSCALE.LP") + " when present, otherwise " + B("CORRECT.LP") + ": space group, cell, resolution range, completeness, multiplicity, R-merge / R-meas / R-pim, I/&sigma;, CC&frac12;, ISa, anomalous figures, shown as overall (highest shell). Choose the source with the buttons above the table."),
+    P("Assembles a publication Table 1: collection parameters from XDS.INP (detector, wavelength, oscillation, distance, frames, total rotation), and statistics from " + B("XSCALE.LP") + " when present, otherwise " + B("CORRECT.LP") + ": space group, cell, resolution range, completeness, multiplicity, R-merge / R-meas, I/&sigma;, CC&frac12;, CC*, ISa, CC(anom) and SigAno for anomalous data, Wilson B and mosaicity (from CORRECT.LP), shown as overall (highest shell). The resolution range starts at the lowest-resolution reflection of the data, and the highest shell is given as a range. Another run is chosen in Run History (Use for Table 1)."),
+    P(B("R-pim") + " is not printed by XDS and R-meas/&radic;multiplicity is only an approximation: it is computed with gemmi from the unmerged reflections of the same shells, and shown only when the R-meas computed the same way agrees with the log. Otherwise the row is left out and the status line gives the reason."),
     P("Export: " + B("Copy TSV") + " (Excel, Word, Sheets), " + B("Copy LaTeX") + " (a complete table environment with escaped symbols), " + B("&#10515; Export .csv") + " (a two-column parameter / value file for a spreadsheet); " + B("&#10227; Refresh") + " rebuilds the table after new processing."),
 )
 

@@ -97,7 +97,7 @@ const STEPS = [
   S("15-01-gemmi", { action: "switchMainTab('gemmi'); gmInit()", wait: 2500, highlight: ["#btn-gm-all"], crop: "viewport" }),
   S("15-02-gemmi-results", { action: "await gmRunAll()", wait: 6000, highlight: [], crop: "#gm-results", cropPad: 20, maxHeight: 1400 }),
   // 16 table 1
-  S("16-01-table1", { action: "switchMainTab('table1'); await t1Load()", wait: 3000, highlight: ["#t1-source-btns", "button[onclick='t1CopyTSV()']", "button[onclick='t1CopyLatex()']", "button[onclick='t1ExportXlsx()']"], crop: "viewport" }),
+  S("16-01-table1", { action: "switchMainTab('table1'); await t1Load()", wait: 9000, highlight: ["button[onclick='t1CopyTSV()']", "button[onclick='t1CopyLatex()']", "button[onclick='t1ExportXlsx()']"], crop: "#main-tab-table1 .card", cropPad: 16, maxHeight: 1500 }),
   // 17 frame viewer
   S("17-01-frame-load", { action: "switchMainTab('fv'); document.getElementById('fv-file-path').value = MASTER; await fvLoadFrame()", wait: 12000, highlight: ["#fv-file-path", "button[onclick='fvLoadFromINP()']", "#fv-recent-btn"], crop: "viewport" }),
   S("17-02-frame-rings", { action: "try { fvToggleRings(); } catch (e) {}; try { _iceToggleFrameViewer(); } catch (e) {}; try { fvSetZoom(0.24); } catch (e) {}", wait: 2500, highlight: ["#fv-rings-btn", "#fv-ice-btn", "#fv-spots-btn", "#fv-save-btn"], crop: "document.getElementById('fv-rings-btn').closest('.card') || document.getElementById('fv-img-wrap').parentElement", cropPad: 10, maxHeight: 940 }),

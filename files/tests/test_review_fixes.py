@@ -262,12 +262,19 @@ class ReviewRegressions(unittest.TestCase):
         self.assertIn('CRYSTAL_NAME= A',sections[2]);self.assertNotIn('CRYSTAL_NAME',sections[3])
 
     def test_saved_ccp4_setting_survives_module_startup(self):
-        settings=self.p/'settings.json';settings.write_text('{"ccp4_bin":"/custom/ccp4/bin"}')
+        custom=self.p/'custom'/'ccp4'/'bin';custom.mkdir(parents=True);(custom/'pointless').write_text('')
+        settings=self.p/'settings.json';settings.write_text(json.dumps({"ccp4_bin":str(custom)}))
         env=dict(os.environ,XDS_GUI_SETTINGS=str(settings),XDS_GUI_PROJECTS=str(self.p/'isolated'))
-        code='import runpy; m=runpy.run_path('+repr(str(build))+'); print("CCP4_SAVED="+m["CCP4_BIN"])'
+        code='import runpy; m=runpy.run_path('+repr(str(build))+'); print("CCP4_SAVED="+m["CCP4_BIN"]); print("KEPT="+m["CCP4_BIN_SAVED"])'
         result=subprocess.run([sys.executable,'-c',code],env=env,capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('CCP4_SAVED=/custom/ccp4/bin',result.stdout)
+        self.assertIn('CCP4_SAVED='+str(custom),result.stdout)
+        # a saved folder that no longer holds CCP4 is not used, but kept so the interface can say why
+        gone=str(self.p/'gone'/'bin');settings.write_text(json.dumps({"ccp4_bin":gone}))
+        result=subprocess.run([sys.executable,'-c',code],env=env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('CCP4_SAVED='+gone,result.stdout)
+        self.assertIn('KEPT='+gone,result.stdout)
 
     def test_build_verify_rejects_body_and_value_changes(self):
         spec=importlib.util.spec_from_file_location('builder',HERE.parent/'build.py');b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
