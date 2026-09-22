@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -131,6 +132,53 @@ def browser():
     return next((c for c in cands if c and Path(c).exists()), None) or shutil.which("msedge") or shutil.which("google-chrome") or shutil.which("chromium")
 
 
+def headless(exe, output_flag, url, out, min_size, timeout, extra=(), grace=60):
+    """Have the browser write `out` headless; (True, "") once it has, else (False, why).
+
+    Two things made the old check wrong, in both directions:
+    - Edge's msedge.exe returns before the file exists.  Measured on Windows
+      with no other Edge running: the process returned 0.1 s after starting,
+      the PDF appeared about 4 s later, and a profile of its own
+      (--user-data-dir) changed neither.  So a correct PDF was reported as
+      "PDF failed".  The file is now waited for, up to `grace` seconds after
+      the process returns (15 times what was measured), and judged once its
+      size has held still for a second.
+    - The check only asked whether `out` existed and was big enough, and the
+      previous build's file always was - the cover picture is even committed -
+      so a render that never happened could be reported as done.  The browser
+      now writes to a .part file, and `out` is replaced only when that is
+      complete; a failure leaves the previous file exactly as it was.
+    """
+    part = out.with_name(out.stem + ".part" + out.suffix)
+    try:
+        part.unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        r = subprocess.run([exe, "--headless=new", "--disable-gpu"] + list(extra) + [output_flag + str(part), url],
+                           capture_output=True, text=True, timeout=timeout)
+        said = (r.stderr or r.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        said = "the browser did not finish in %d s" % timeout
+    size, seen, steady, deadline = -1, -1, 0, time.time() + grace
+    while time.time() < deadline:
+        time.sleep(0.5)
+        size = part.stat().st_size if part.exists() else -1
+        steady = steady + 1 if (size >= min_size and size == seen) else 0
+        seen = size
+        if steady >= 2:
+            break
+    if steady < 2:
+        try:
+            part.unlink()
+        except FileNotFoundError:
+            pass
+        why = "no file was written within %d s" % grace if size < 0 else "the file is only %d bytes" % size
+        return False, why + (": " + said[-200:] if said else "")
+    os.replace(part, out)
+    return True, ""
+
+
 def splash_texts():
     """Name, subtitle and credit line exactly as the loading screen shows them (windows/splash.html)."""
     src = SPLASH.read_text(encoding="utf-8") if SPLASH.exists() else ""
@@ -147,10 +195,10 @@ def render_cover(ver):
     if not exe or not SPLASH.exists():
         print("cover: browser or splash.html not found, keeping the existing picture" if COVER_PNG.exists() else "cover: no picture"); return COVER_PNG.exists()
     url = SPLASH.resolve().as_uri() + "?demo=" + ver
-    r = subprocess.run([exe, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--window-size=1400,820", "--virtual-time-budget=1500",
-                        "--screenshot=" + str(COVER_PNG), url], capture_output=True, text=True, timeout=120)
-    ok = COVER_PNG.exists() and COVER_PNG.stat().st_size > 20000
-    print("cover: rendered the loading screen (version %s) -> %s" % (ver, COVER_PNG.name) if ok else "cover: rendering failed: " + (r.stderr or r.stdout)[-200:])
+    ok, why = headless(exe, "--screenshot=", url, COVER_PNG, 20000, 120,
+                       extra=("--hide-scrollbars", "--window-size=1400,820", "--virtual-time-budget=1500"))
+    print("cover: rendered the loading screen (version %s) -> %s" % (ver, COVER_PNG.name) if ok
+          else "cover: rendering failed, keeping the existing picture: " + why)
     return ok
 
 
@@ -313,9 +361,9 @@ def build_pdf():
     if not exe:
         print("no Edge/Chrome found: PDF skipped (set CP_BROWSER)"); return False
     url = OUT_HTML.resolve().as_uri()
-    r = subprocess.run([exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf=" + str(OUT_PDF), url], capture_output=True, text=True, timeout=300)
-    ok = OUT_PDF.exists() and OUT_PDF.stat().st_size > 10000
-    print("wrote %s (%.1f MB)" % (OUT_PDF.name, OUT_PDF.stat().st_size / 1e6) if ok else "PDF failed: " + (r.stderr or r.stdout)[-300:])
+    ok, why = headless(exe, "--print-to-pdf=", url, OUT_PDF, 10000, 300, extra=("--no-pdf-header-footer",))
+    print("wrote %s (%.1f MB)" % (OUT_PDF.name, OUT_PDF.stat().st_size / 1e6) if ok
+          else "PDF failed, the previous PDF is unchanged: " + why)
     return ok
 
 
