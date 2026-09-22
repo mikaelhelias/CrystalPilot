@@ -30,8 +30,9 @@ folder, double-click `windows\CrystalPilot-Setup.bat` instead.
    picked up by itself - the line turns green. CCP4 is preselected (a CCP4 for
    Windows already installed, the Linux tarball in Downloads, or not now).
 4. **Installation** with a live log. If WSL itself has to be enabled, Windows
-   asks for administrator approval and may need one restart; the installer
-   continues by itself after you log in again.
+   asks for administrator approval and may need one restart; afterwards, open
+   **Continue CrystalPilot Setup** from the Start menu and it picks up where it
+   stopped.
 5. **Finish**: summary, a **CrystalPilot** shortcut on the desktop and in the
    Start menu, an entry in *Apps & features*.
 

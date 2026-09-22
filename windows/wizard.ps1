@@ -30,7 +30,8 @@ param(
     [string]$Config = "",
     [string]$Preview = "",
     [switch]$NoLaunch,
-    [string]$EnableWsl = ""      # internal: the elevated helper that only enables WSL, result written to this file
+    [string]$EnableWsl = "",     # internal: the elevated helper that only enables WSL, result written to this file
+    [switch]$StartedHidden       # internal: Setup.exe started this with a hidden start-up mode (see Add_Shown below)
 )
 $ErrorActionPreference = "Stop"
 $env:WSL_UTF8 = "1"
@@ -53,6 +54,19 @@ $Ccp4Url = "https://www.ccp4.ac.uk/download/"
 # ══════════════════════════════════════════════════════════════════════════════
 function Test-Admin {
     return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Get-ScriptPolicy {
+    # The execution policy for the PowerShell windows this wizard starts itself.
+    # RemoteSigned whenever it is enough: Setup.exe writes its files itself, so
+    # they carry no download mark and RemoteSigned runs them.  Only files unpacked
+    # from a downloaded zip keep Windows' "from the internet" mark, which
+    # RemoteSigned refuses for an unsigned script - there Bypass is still needed.
+    # "-ExecutionPolicy Bypass" on every command line is one of the things
+    # antivirus heuristics score an installer on.
+    try {
+        if (Get-Item -LiteralPath $PSCommandPath -Stream Zone.Identifier -ErrorAction Stop) { return "Bypass" }
+    } catch {}
+    return "RemoteSigned"
 }
 function Invoke-WslLines {
     # Run wsl.exe and return its output lines (empty array on failure); never throws
@@ -696,7 +710,8 @@ function Invoke-Install {
             $vm = [regex]::Match((Get-Content $appDest -Raw), 'VERSION\s*=\s*"([^"]+)"'); if ($vm.Success) { $ver = $vm.Groups[1].Value }
             $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CrystalPilot"
             New-Item -Path $key -Force | Out-Null
-            $un = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "' + (Join-Path $wHere "CrystalPilot-Uninstall.ps1") + '"'
+            # the installed copy keeps whatever download mark this one has, so the same policy rule holds for it
+            $un = 'powershell.exe -NoProfile -ExecutionPolicy ' + (Get-ScriptPolicy) + ' -STA -File "' + (Join-Path $wHere "CrystalPilot-Uninstall.ps1") + '"'
             Set-ItemProperty -Path $key -Name DisplayName -Value "CrystalPilot"
             Set-ItemProperty -Path $key -Name DisplayVersion -Value $ver
             Set-ItemProperty -Path $key -Name Publisher -Value "Mikael Elias"
@@ -728,9 +743,25 @@ function Get-ProjectsWinPath($state) {
 }
 function Get-UsedDriveLetters { return @((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpper() }) + @((Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | ForEach-Object { $_.DeviceID.TrimEnd(':').ToUpper() }))) | Sort-Object -Unique }
 function Get-FreeDriveLetters { $used = Get-UsedDriveLetters; return @([char[]]([char]'D'..[char]'Z') | ForEach-Object { [string]$_ } | Where-Object { $used -notcontains $_ }) }
+# After the restart WSL may need, setup is continued from a Start-menu entry the
+# user opens, not started by itself at log-in: a RunOnce key that relaunches a
+# hidden PowerShell is exactly how malware survives a reboot, and antivirus
+# heuristics weigh an installer that writes one accordingly.
+function Get-ResumeShortcutPath { return (Join-Path ([Environment]::GetFolderPath("Programs")) "Continue CrystalPilot Setup.lnk") }
 function Register-Resume($statePath) {
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File `"$PSCommandPath`" -Resume `"$statePath`""
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "CrystalPilotSetup" -Value $cmd -PropertyType String -Force | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut((Get-ResumeShortcutPath))
+    $lnk.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $lnk.Arguments = "-NoProfile -ExecutionPolicy " + (Get-ScriptPolicy) + " -STA -WindowStyle Hidden -File `"$PSCommandPath`" -Resume `"$statePath`""
+    $lnk.WorkingDirectory = $Here
+    $lnk.IconLocation = "%SystemRoot%\System32\imageres.dll,144"
+    $lnk.Description = "Finish installing CrystalPilot after the restart"
+    $lnk.Save()
+}
+function Unregister-Resume {
+    Remove-Item -LiteralPath (Get-ResumeShortcutPath) -Force -ErrorAction SilentlyContinue
+    # the entry an earlier version of this installer left behind
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "CrystalPilotSetup" -ErrorAction SilentlyContinue
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -797,14 +828,13 @@ $FontH2    = New-Object System.Drawing.Font("Segoe UI Semibold", 10.5)
 $FontMono  = New-Object System.Drawing.Font("Consolas", 9)
 $FontBrand = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
 
-# artwork for the sidebar: reuse the image embedded in splash.html (no extra file)
+# artwork for the sidebar: a plain image file next to this script.  (It used to
+# be decoded out of splash.html's base64 text, and decoding base64 into bytes is
+# one more thing an antivirus heuristic scores a script on.)
 $Artwork = $null
 try {
-    $sp = Join-Path $Here "splash.html"
-    if (Test-Path $sp) {
-        $m = [regex]::Match((Get-Content $sp -Raw), 'base64,([A-Za-z0-9+/=]+)')
-        if ($m.Success) { $ms = New-Object System.IO.MemoryStream(,[Convert]::FromBase64String($m.Groups[1].Value)); $Artwork = [System.Drawing.Image]::FromStream($ms) }
-    }
+    $art = Join-Path $Here "wizard-art.jpg"
+    if (Test-Path $art) { $Artwork = [System.Drawing.Image]::FromFile($art) }
 } catch { $Artwork = $null }
 
 # ── form ─────────────────────────────────────────────────────────────────────
@@ -1215,7 +1245,7 @@ function Start-Installation {
         $statusFile = Join-Path (Split-Path $StatePath) "enable-wsl.txt"
         Remove-Item $statusFile -Force -ErrorAction SilentlyContinue
         $proc = $null
-        try { $proc = Start-Process powershell.exe -Verb RunAs -PassThru -ArgumentList (ConvertTo-ArgString @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "-EnableWsl", $statusFile)) } catch { $proc = $null }
+        try { $proc = Start-Process powershell.exe -Verb RunAs -PassThru -ArgumentList (ConvertTo-ArgString @("-NoProfile", "-ExecutionPolicy", (Get-ScriptPolicy), "-File", $PSCommandPath, "-EnableWsl", $statusFile)) } catch { $proc = $null }
         if (-not $proc) {
             $r = @{ ok = $false; reboot = $false; warnings = @(); message = "Administrator approval was refused, so WSL could not be enabled. Click Try again and accept the Windows prompt (an administrator of this computer has to confirm it)." }
         } else {
@@ -1234,10 +1264,10 @@ function Start-Installation {
     $marquee.Stop(); $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Width = $PW; $progBar.BackColor = $(if ($r.ok) { $C.ok } else { $C.warn })
     if ($r.reboot) {
         Register-Resume $StatePath
-        & $log "Windows needs to restart. The installer continues by itself after you log in again."
+        & $log "Windows needs to restart. Afterwards, open 'Continue CrystalPilot Setup' from the Start menu."
         $titles["finish"] = @("Restart needed", "Windows has to restart once to finish enabling WSL")
         $lblDone.ForeColor = $C.text; $lblDone.Font = $FontUI
-        $lblDone.Text = "WSL has been enabled. Windows must restart before the Linux runtime can be created.`r`n`r`nAfter the restart, log in again: this installer opens by itself and continues where it stopped. Nothing else to do."
+        $lblDone.Text = "WSL has been enabled. Windows must restart before the Linux runtime can be created.`r`n`r`nAfter the restart, open the Start menu and click 'Continue CrystalPilot Setup'. The installer picks up where it stopped; your choices are kept."
         $bStart.Text = "Restart now"; $bStart.Enabled = $true
         $bOpenProjects.Text = "Restart later"; $bOpenProjects.Enabled = $true
         $lblFinishHint.Text = "Save your work in other programs before restarting."
@@ -1246,6 +1276,9 @@ function Start-Installation {
         return
     }
     try { if (Test-Path (Join-Path $state.installDir "windows")) { Copy-Item $LogPath (Join-Path $state.installDir "windows\install-log.txt") -Force } } catch {}
+    # finished: the Start-menu entry that continues setup has done its job.  On a
+    # failure it stays, so closing the wizard does not lose the way back in.
+    if ($r.ok) { Unregister-Resume }
     Show-Finish $r
 }
 $bStart.Add_Click({
@@ -1324,9 +1357,14 @@ if ($Preview) {
 }
 
 # Setup.exe starts PowerShell with a hidden console; Windows hands that start-up
-# mode to the first window, which then opened minimized (only a taskbar button)
+# mode to this form as well.  From the old IExpress setup it arrived as
+# "minimized" (only a taskbar button); from the Inno Setup one, which hides the
+# console itself (runhidden), it arrives as "hidden" and the form would open
+# invisible.  Minimizing and restoring makes Windows show it - measured: without
+# this the form stays invisible, and a throwaway first window does not help.
 $form.Add_Shown({
-    if ($form.WindowState -ne "Normal") { $form.WindowState = "Normal" }
+    if ($StartedHidden) { $form.WindowState = "Minimized"; $form.WindowState = "Normal" }
+    elseif ($form.WindowState -ne "Normal") { $form.WindowState = "Normal" }
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
 })
 if ($Resume -and $state.stage -eq "start") {

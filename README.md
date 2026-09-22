@@ -110,7 +110,7 @@ XDS only exists for Linux, so CrystalPilot runs inside WSL2 (built into Windows)
 2. Double-click it. The installer is not code-signed, so Windows shows an *unknown publisher* notice the first time: click **More info**, then **Run anyway**.
 3. **Welcome:** check the settings it has chosen (install folder `C:\CrystalPilot`, projects folder shown as `P:\Projects`, port 8000), then click **Continue**. Click **Customize…** instead to change them.
 4. **Components:** XDS, neggia and CCP4 turn green when they are found in Downloads. Otherwise click **Get it** to open the download page, or **Choose file**.
-5. **Installation:** follow the live log. If WSL has to be enabled, Windows asks for administrator approval and may restart once; setup then continues by itself after you log in.
+5. **Installation:** follow the live log. If WSL has to be enabled, Windows asks for administrator approval and may restart once; after the restart, open **Continue CrystalPilot Setup** from the Start menu and it picks up where it stopped.
 6. **Finish:** start CrystalPilot from the desktop or Start-menu shortcut. It opens in your browser.
 
 To update, run the new installer; your projects and settings are kept. To uninstall, use **Settings → Apps → CrystalPilot**.

@@ -105,6 +105,9 @@ if ($dropRuntime) {
 Remove-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CrystalPilot" -Recurse -Force -ErrorAction SilentlyContinue
 $stateDir = Join-Path $env:LOCALAPPDATA "CrystalPilot"
 if (Test-Path $stateDir) { Remove-Item -Recurse -Force $stateDir -ErrorAction SilentlyContinue }
+# the Start-menu entry that continues setup after a restart, and the RunOnce
+# entry earlier installers used for the same job
+Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath("Programs")) "Continue CrystalPilot Setup.lnk") -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "CrystalPilotSetup" -ErrorAction SilentlyContinue
 
 $kept = if ($distro -and -not $dropRuntime) { "`n`nThe Linux runtime '" + $distro + "' and the projects in it were kept" + $(if ($projWin) { " (" + $projWin + ")" } else { "" }) + "." } else { "" }

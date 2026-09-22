@@ -14,7 +14,7 @@ XDS exists only for Linux, so on Windows CrystalPilot runs inside the *Windows S
 | CCP4, optional | an installed *CCP4 for Windows*, or the Linux `ccp4-*-linux64.tar.gz` in Downloads | POINTLESS, AIMLESS, CTRUNCATE, f2mtz/cad |
 | About 2.5 GB of free disk (12 GB more with the Linux CCP4) | | the Linux runtime and the Python packages |
 
-> Administrator approval is asked once if WSL has to be enabled, and Windows may need one restart. The installer continues by itself after you log in again.
+> Administrator approval is asked once if WSL has to be enabled, and Windows may need one restart. After the restart, open **Continue CrystalPilot Setup** from the Start menu; the installer picks up where it stopped, with your choices kept.
 
 ## Step by step
 
