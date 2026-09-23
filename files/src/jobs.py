@@ -362,18 +362,31 @@ def _resource_info():
             'wsl': bool(globals().get('IS_WSL'))}
 
 
-def _write_cpu_keywords(program, cwd):
-    """Put the core count into the XDS.INP / XSCALE.INP the program is about to read."""
-    name = Path(str(program)).name.lower()
-    if name in ('xds', 'xds_par'):
-        path, xds = Path(cwd) / 'XDS.INP', True
-    elif name in ('xscale', 'xscale_par'):
-        path, xds = Path(cwd) / 'XSCALE.INP', False
-    else:
-        return
-    if not path.is_file():
-        return
-    text = _read_text_lenient(path)
+def _with_cpu_keywords(text, kind):
+    """The text of an XDS.INP (kind 'xds') or XSCALE.INP ('xscale') carrying the
+    CPU cores of the XDS Config panel.
+
+    XDS: MAXIMUM_NUMBER_OF_PROCESSORS= N and MAXIMUM_NUMBER_OF_JOBS= 1 - without
+    them xds_par chooses both itself, and COLSPOT / INTEGRATE run JOBS jobs of
+    PROCESSORS cores each.  They go right after JOB=.
+    XSCALE: MAXIMUM_NUMBER_OF_PROCESSORS= N, a general parameter, so it goes
+    before the first OUTPUT_FILE (default: every CPU).
+    Values given elsewhere in the file (a beamline's) are replaced; a file that
+    already has exactly these values is returned unchanged.
+    """
+    text = str(text or '')
+    want = {'MAXIMUM_NUMBER_OF_PROCESSORS': str(CPU_CORES)}
+    if kind == 'xds':
+        want['MAXIMUM_NUMBER_OF_JOBS'] = '1'
+    found = {}
+    for line in text.splitlines():
+        if line.lstrip().startswith('!') or '=' not in line:
+            continue
+        for k, v in XDSINPEditor._split_pairs(line)[0]:
+            if k.upper() in _CPU_KEYS:
+                found.setdefault(k.upper(), []).append(v.strip())
+    if all(found.get(k) == [v] for k, v in want.items()) and set(found) <= set(want):
+        return text
     out = []
     for line in text.splitlines():
         if line.lstrip().startswith('!') or '=' not in line:
@@ -385,14 +398,75 @@ def _write_cpu_keywords(program, cwd):
             out.append(line)
         elif kept:
             out.append(XDSINPEditor._join_pairs(kept, comment))
-    ours = ['MAXIMUM_NUMBER_OF_PROCESSORS= %d  ! CrystalPilot: CPU cores (XDS Config panel)' % CPU_CORES]
-    if xds:
-        out += ours + ['MAXIMUM_NUMBER_OF_JOBS= 1']
-    else:
-        out = ours + out          # XSCALE: a global keyword, before the first OUTPUT_FILE
-    new = '\n'.join(out) + '\n'
-    if new != text:
-        path.write_text(new, encoding='utf-8')
+    ours = ['MAXIMUM_NUMBER_OF_PROCESSORS= %d  ! CPU cores: XDS Config panel of CrystalPilot' % CPU_CORES]
+    if kind == 'xds':
+        ours.append('MAXIMUM_NUMBER_OF_JOBS= 1')
+    at = None
+    for i, line in enumerate(out):
+        s = line.strip()
+        if not s or s.startswith('!'):
+            continue
+        if kind == 'xds' and s.upper().startswith('JOB') and s.upper().replace(' ', '').startswith('JOB='):
+            at = i + 1
+            break
+        if at is None:
+            at = i                # first keyword line: before it if there is no JOB=
+            if kind != 'xds':
+                break
+    if at is None:
+        at = len(out)
+    out[at:at] = ours
+    return '\n'.join(out) + '\n'
+
+
+def _inp_kind(path):
+    name = Path(str(path)).name.upper()
+    return 'xds' if name == 'XDS.INP' else 'xscale' if name == 'XSCALE.INP' else ''
+
+
+def _write_inp(path, text):
+    """Write an input file; XDS.INP and XSCALE.INP get the CPU cores setting."""
+    kind = _inp_kind(path)
+    Path(path).write_text(_with_cpu_keywords(text, kind) if kind else text, encoding='utf-8')
+
+
+def _sync_cpu_keywords(path):
+    """Bring the CPU keywords of an existing XDS.INP / XSCALE.INP up to date; True if it changed."""
+    path = Path(path)
+    kind = _inp_kind(path)
+    if not kind or not path.is_file():
+        return False
+    text = _read_text_lenient(path)
+    new = _with_cpu_keywords(text, kind)
+    if new == text:
+        return False
+    path.write_text(new, encoding='utf-8')
+    return True
+
+
+def _sync_cpu_keywords_all_projects():
+    """After a change of the CPU cores: every project's XDS.INP and XSCALE.INP."""
+    changed = 0
+    try:
+        dirs = [d for d in PROJECTS_DIR.iterdir() if d.is_dir()]
+    except OSError:
+        return 0
+    for d in dirs:
+        for name in ('XDS.INP', 'XSCALE.INP'):
+            try:
+                changed += _sync_cpu_keywords(d / name)
+            except OSError:
+                pass
+    return changed
+
+
+def _write_cpu_keywords(program, cwd):
+    """Last check before XDS / XSCALE start: the file they read has the CPU cores."""
+    name = Path(str(program)).name.lower()
+    if name in ('xds', 'xds_par'):
+        _sync_cpu_keywords(Path(cwd) / 'XDS.INP')
+    elif name in ('xscale', 'xscale_par'):
+        _sync_cpu_keywords(Path(cwd) / 'XSCALE.INP')
 
 
 def _limited_cmd(cmd, env):

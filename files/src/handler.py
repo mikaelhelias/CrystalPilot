@@ -1439,6 +1439,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             xds_inp = _pdir(name) / "XDS.INP"
             try:
                 if xds_inp.exists():
+                    _sync_cpu_keywords(xds_inp)
                     self.send_json({"content": _read_text_lenient(xds_inp)})
                 else:
                     self.send_json({"content": ""})
@@ -3114,6 +3115,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             xscale_inp = _pdir(name) / "XSCALE.INP"
             if xscale_inp.exists():
                 try:
+                    _sync_cpu_keywords(xscale_inp)
                     self.send_json({"content": xscale_inp.read_text(encoding="utf-8", errors='replace')})
                 except Exception as e:
                     self.send_json({"error": f"Failed to read XSCALE.INP: {e}"}, 500)
@@ -3998,7 +4000,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         relback = os.path.relpath(str(project_dir), str(run_dir))
                         dest_inp = run_dir / "XSCALE.INP"
                         inp_text = dest_inp.read_text(encoding="utf-8", errors='replace')
-                        dest_inp.write_text(_xscale_inputs_from_subfolder(inp_text, relback), encoding="utf-8")
+                        _write_inp(dest_inp, _xscale_inputs_from_subfolder(inp_text, relback))
                     except Exception:
                         pass  # If rewrite fails, keep the copied file as-is
                 self.send_json({"message": f"Created {folder_name}", "path": str(run_dir), "folder_name": folder_name})
@@ -4090,6 +4092,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 return
             if (cores is not None or ram is not None) and _ram_limit_mode()[0] == 'cgroup':
                 _apply_cgroup_limits()          # running programs follow at once
+            if cores is not None:
+                _sync_cpu_keywords_all_projects()   # XDS.INP / XSCALE.INP of every project
             # The Environment screen's "Don't show this again": kept per
             # machine, so it also holds when the page is opened in another
             # browser (on Linux the launcher may not reuse the same one).
@@ -4449,7 +4453,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             try:
                 content2 = _read_text_lenient(xds_inp) if xds_inp.exists() else ""
                 content2 = XDSINPEditor.apply_params(content2, params)
-                xds_inp.write_text(content2, encoding="utf-8")
+                _write_inp(xds_inp, content2)
                 self.send_json({"message": "Parameters saved"})
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
@@ -4459,8 +4463,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             name = _url_project_name(path.split("/")[3])
             xds_inp = _pdir(name) / "XDS.INP"
             try:
-                xds_inp.write_text(data["content"], encoding="utf-8")
-                self.send_json({"message": "XDS.INP saved"})
+                _write_inp(xds_inp, data["content"])
+                self.send_json({"message": "XDS.INP saved", "content": _read_text_lenient(xds_inp)})
             except Exception as e:
                 self.send_json({"error": f"Failed to save XDS.INP: {e}"}, 500)
 
@@ -4483,7 +4487,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     else:
                         params.pop("INPUT_FILE")
                 content2 = _xscale_apply_params(content2, params)
-                xscale_inp.write_text(content2, encoding="utf-8")
+                _write_inp(xscale_inp, content2)
                 self.send_json({"message": "Parameters updated in XSCALE.INP"})
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
@@ -4493,8 +4497,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             name = _url_project_name(path.split("/")[3])
             xscale_inp = _pdir(name) / "XSCALE.INP"
             try:
-                xscale_inp.write_text(data["content"], encoding="utf-8")
-                self.send_json({"message": "XSCALE.INP saved"})
+                _write_inp(xscale_inp, data["content"])
+                self.send_json({"message": "XSCALE.INP saved", "content": _read_text_lenient(xscale_inp)})
             except Exception as e:
                 self.send_json({"error": f"Failed to save XSCALE.INP: {e}"}, 500)
 

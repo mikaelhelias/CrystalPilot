@@ -632,7 +632,7 @@ def stream_autoindex(project_name, tier, write_fn, force_cell=False):
                 inp_lines.insert(2, "INDEX_ORIGIN= " + str(io[0]) + " " + str(io[1]) + " " + str(io[2]))
 
             trial_inp = trial_dir / "XDS.INP"
-            trial_inp.write_text("\n".join(inp_lines) + "\n", encoding="utf-8")
+            _write_inp(trial_inp, "\n".join(inp_lines) + "\n")
 
             # Run XDS (COLSPOT+IDXREF)
             t0 = _time.time()
@@ -1380,7 +1380,7 @@ def stream_xscale(project_name, write_fn, run_folder=None):
             try:
                 relback = os.path.relpath(str(project_dir), str(work_dir))
                 inp_text = work_inp.read_text(encoding="utf-8", errors='replace')
-                work_inp.write_text(_xscale_inputs_from_subfolder(inp_text, relback), encoding="utf-8")
+                _write_inp(work_inp, _xscale_inputs_from_subfolder(inp_text, relback))
             except Exception:
                 pass  # If rewrite fails, keep the copied file as-is
     else:
@@ -1401,7 +1401,7 @@ def stream_xscale(project_name, write_fn, run_folder=None):
             # last XDS run) rather than failing.
             _hkl = _pfile(project_dir, "XDS_ASCII.HKL")
             if _hkl.exists():
-                xscale_inp.write_text(_xscale_apply_params(_inp_text, {"INPUT_FILE": [str(_hkl)]}), encoding="utf-8")
+                _write_inp(xscale_inp, _xscale_apply_params(_inp_text, {"INPUT_FILE": [str(_hkl)]}))
                 send("log", {"text": ">>> XSCALE.INP had no INPUT_FILE= line - using " + str(_hkl)})
             else:
                 send("error_msg", {"message": "XSCALE.INP has no INPUT_FILE= line and no XDS_ASCII.HKL was found for this project (" + str(_hkl) + "). Run CORRECT first, or add the file(s) in the XSCALE tab and save."})
@@ -3107,7 +3107,7 @@ def _ap_build_xscale_inp(work_dir, resolution, friedel, shells=None):
     lines.append("")
 
     xscale_inp = work_dir / "XSCALE.INP"
-    xscale_inp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_inp(xscale_inp, "\n".join(lines) + "\n")
     return str(xscale_inp)
 
 
@@ -3308,7 +3308,7 @@ def _ap_generate_xdsinp(project_dir, send, template=None, neggia_lib=''):
 
     # ── Step 7: Write XDS.INP ───────────────────────────────────────
     xds_inp_path = project_dir / "XDS.INP"
-    xds_inp_path.write_text(content, encoding="utf-8")
+    _write_inp(xds_inp_path, content)
 
     for w in warnings:
         send("ap_log", {"text": ">>> Warning: " + w})

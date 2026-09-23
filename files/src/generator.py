@@ -241,7 +241,7 @@ class XDSINPGenerator:
         lines.append("FRIEDEL'S_LAW= TRUE")
         lines.append('')
 
-        return '\n'.join(lines), warnings
+        return _with_cpu_keywords('\n'.join(lines), 'xds'), warnings
 
 
 # XSCALE.INP is hierarchical.  A keyword in the wrong level makes XSCALE stop

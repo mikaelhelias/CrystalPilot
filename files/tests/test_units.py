@@ -1309,6 +1309,50 @@ def define_checks(m, scratch):
         finally:
             m.CPU_CORES = was
 
+    @check("resources: XDS.INP / XSCALE.INP carry the CPU cores by default and follow a change of the setting")
+    def _():
+        was, was_dir = m.CPU_CORES, m.PROJECTS_DIR
+        try:
+            m.CPU_CORES = 4
+            # a generated XDS.INP has both keywords right after JOB=
+            text, _w = m.XDSINPGenerator.generate("/data/x_??????.cbf", {"nx": 2463, "ny": 2527, "pixel_size": 0.172,
+                                                   "distance": 200, "wavelength": 1.0, "oscillation": 0.1,
+                                                   "beam_x": 1200, "beam_y": 1300, "detector": "PILATUS"})
+            lines = [l.strip() for l in text.splitlines()]
+            j = next(i for i, l in enumerate(lines) if l.startswith("JOB="))
+            assert lines[j + 1].startswith("MAXIMUM_NUMBER_OF_PROCESSORS= 4"), lines[j:j + 3]
+            assert lines[j + 2] == "MAXIMUM_NUMBER_OF_JOBS= 1", lines[j:j + 3]
+            # a fresh XSCALE.INP from the parameter form: before OUTPUT_FILE, layout valid
+            x = m._with_cpu_keywords(m._xscale_apply_params("", {"OUTPUT_FILE": "XSCALE.HKL", "INPUT_FILE": ["../XDS_ASCII.HKL"]}), "xscale")
+            xl = [l.strip() for l in x.splitlines() if l.strip()]
+            assert xl.index(next(l for l in xl if l.startswith("MAXIMUM_NUMBER_OF_PROCESSORS= 4"))) < \
+                   xl.index(next(l for l in xl if l.startswith("OUTPUT_FILE"))), x
+            assert not xscale_layout_errors(x), xscale_layout_errors(x)
+            # unchanged when already right (no churn), replaced when different
+            assert m._with_cpu_keywords(text, "xds") == text
+            # a change of the setting reaches every project's files
+            root = scratch / "cpu_projects"
+            for p in ("p1", "p2"):
+                (root / p).mkdir(parents=True, exist_ok=True)
+                (root / p / "XDS.INP").write_text(text)
+                (root / p / "XSCALE.INP").write_text(x)
+            m.PROJECTS_DIR = root
+            m.CPU_CORES = 6
+            assert m._sync_cpu_keywords_all_projects() == 4
+            for p in ("p1", "p2"):
+                v = m._parse_xdsinp_params((root / p / "XDS.INP").read_text())
+                assert v["MAXIMUM_NUMBER_OF_PROCESSORS"] == "6" and v["MAXIMUM_NUMBER_OF_JOBS"] == "1"
+                xs = (root / p / "XSCALE.INP").read_text()
+                assert "MAXIMUM_NUMBER_OF_PROCESSORS= 6" in xs and "= 4" not in xs, xs
+                assert not xscale_layout_errors(xs), xscale_layout_errors(xs)
+            assert m._sync_cpu_keywords_all_projects() == 0, "a second pass changed the files again"
+            # a save through _write_inp adds them to a file that has none
+            m._write_inp(root / "p1" / "XDS.INP", "JOB= CORRECT\nNX= 100\n")
+            v = m._parse_xdsinp_params((root / "p1" / "XDS.INP").read_text())
+            assert v.get("MAXIMUM_NUMBER_OF_PROCESSORS") == "6" and v.get("MAXIMUM_NUMBER_OF_JOBS") == "1", v
+        finally:
+            m.CPU_CORES, m.PROJECTS_DIR = was, was_dir
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 def main():

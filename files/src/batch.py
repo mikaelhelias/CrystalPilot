@@ -965,7 +965,7 @@ def _batch_prepare_xdsinp(item, neggia, log):
         _batch_log(log, ">>> XDS.INP: written from the image header (no beamline XDS.INP chosen)")
         return None
     text, notes = import_xdsinp(item["xdsinp"], item, neggia)
-    (_pdir(item["project"]) / "XDS.INP").write_text(text, encoding="utf-8")
+    _write_inp(_pdir(item["project"]) / "XDS.INP", text)
     _batch_log(log, ">>> XDS.INP imported from " + item["xdsinp"])
     for note in notes:
         _batch_log(log, "    " + note)
@@ -1075,7 +1075,7 @@ def _batch_worker_run(batch_id):
                             _batch_log(log, "")
                             _batch_log(log, "=== Attempt %s ===" % item["attempt"])
                         if attempt.get("xdsinp") is not None:
-                            (_pdir(project) / "XDS.INP").write_text(attempt["xdsinp"], encoding="utf-8")
+                            _write_inp(_pdir(project) / "XDS.INP", attempt["xdsinp"])
                         item["error"] = ""
                         write_fn, final = _batch_event_reader(item, state, log)
                         stream_autopilot(project, write_fn, template=None if item.get("existing") else run_item["template"],
@@ -1308,7 +1308,7 @@ def batch_merge(batch_id, projects, reference=None, friedel=None):
             os.symlink(row["hkl"], str(folder / local))
         except (OSError, NotImplementedError, AttributeError):
             shutil.copy2(row["hkl"], str(folder / local))
-    (folder / "XSCALE.INP").write_text(merge_xscale_inp(plan, friedel, names), encoding="utf-8")
+    _write_inp(folder / "XSCALE.INP", merge_xscale_inp(plan, friedel, names))
     record = {"id": stamp, "folder": str(folder), "status": "running", "friedel": friedel,
               "reference": plan["reference"], "inputs": [r["project"] for r in plan["inputs"]],
               "excluded": plan["excluded"], "stats": {}, "error": ""}
