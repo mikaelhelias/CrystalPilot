@@ -796,6 +796,19 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# Preview pictures go into the published manual: they show an example machine,
+# never the drives, folders and programs of the computer that renders them.
+if ($Preview) {
+    function Get-FixedDrives { return @([pscustomobject]@{ Letter = "C:"; FreeGB = 212; SizeGB = 476; Label = "" }, [pscustomobject]@{ Letter = "D:"; FreeGB = 1650; SizeGB = 1863; Label = "" }) }
+    function Get-UsedDriveLetters { return @("C", "D") }
+    function Get-Distros { return @("Ubuntu") }
+    function Get-InstalledConfig { return $null }
+    function Find-XdsTar { return "C:\Downloads\XDS-gfortran_Linux_x86_64.tar.gz" }
+    function Find-Neggia { return "C:\Downloads\dectris-neggia.so" }
+    function Find-WindowsCcp4 { return "C:\CCP4-9\9.0" }
+    function Find-Ccp4Tar { return "" }
+}
+function Test-Present([string]$p) { if ($Preview) { return [bool]$p }; return [bool]($p -and (Test-Path $p)) }
 $state = $null
 if ($Resume -and (Test-Path $Resume)) { $state = Load-State $Resume } else { $state = New-DefaultState }
 if (-not $Resume -and $Config -and (Test-Path $Config)) {
@@ -1084,9 +1097,9 @@ switch ($state.ccp4Mode) { "windows" { $rbCcp4Win.Checked = $true } "linux" { $r
 if (-not $state.ccp4Win) { $rbCcp4Win.Enabled = $false }
 
 $updateCompLabels = {
-    if ($txtXds.Text -and (Test-Path $txtXds.Text)) { $rowXds.status.Text = "Found: " + $txtXds.Text; $rowXds.status.ForeColor = $C.ok; Set-Dot $rowXds.dot $C.ok; $bXdsWeb.Visible = $false }
+    if (Test-Present $txtXds.Text) { $rowXds.status.Text = "Found: " + $txtXds.Text; $rowXds.status.ForeColor = $C.ok; Set-Dot $rowXds.dot $C.ok; $bXdsWeb.Visible = $false }
     else { $rowXds.status.Text = "Not found yet. Click Get it and save XDS-gfortran_Linux_x86_64.tar.gz to Downloads - this line turns green by itself. CrystalPilot also installs without it (add XDS later)."; $rowXds.status.ForeColor = $C.warn; Set-Dot $rowXds.dot $C.warn; $bXdsWeb.Visible = $true }
-    if ($txtNeggia.Text -and (Test-Path $txtNeggia.Text)) { $rowNeg.status.Text = "Found: " + $txtNeggia.Text; $rowNeg.status.ForeColor = $C.ok; Set-Dot $rowNeg.dot $C.ok; $bNegWeb.Visible = $false }
+    if (Test-Present $txtNeggia.Text) { $rowNeg.status.Text = "Found: " + $txtNeggia.Text; $rowNeg.status.ForeColor = $C.ok; Set-Dot $rowNeg.dot $C.ok; $bNegWeb.Visible = $false }
     else { $rowNeg.status.Text = "Not found - skip it unless your detector is an Eiger. Save dectris-neggia.so to Downloads and this line turns green."; $rowNeg.status.ForeColor = $C.dim; Set-Dot $rowNeg.dot $C.dim; $bNegWeb.Visible = $true }
     if ($rbCcp4Win.Checked) { $rowCcp4.status.Text = "Your CCP4 for Windows will be used through the runtime."; $rowCcp4.status.ForeColor = $C.ok; Set-Dot $rowCcp4.dot $C.ok }
     elseif ($rbCcp4Lin.Checked) { $rowCcp4.status.Text = "The Linux package will be installed inside the runtime (about 10 GB of disk)."; $rowCcp4.status.ForeColor = $C.ok; Set-Dot $rowCcp4.dot $C.ok }
