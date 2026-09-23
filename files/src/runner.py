@@ -3009,6 +3009,71 @@ def _ap_set_job(xds_inp_path, job_str):
     xds_inp_path.write_text("".join(new_lines), encoding="utf-8")
 
 
+def _sg_from_absences_choice(correct_data):
+    """The space group CrystalPilot's absence analysis of CORRECT.LP points to when it
+    differs from XDS's choice.  Returns (suggestion, [enantiomorph names]) or
+    (None, why not)."""
+    cur = correct_data.get('space_group')
+    sugg = correct_data.get('sg_suggestions') or []
+    if not cur or not sugg:
+        return None, 'no axial reflections to judge them by'
+    if cur in [s.get('sg_number') for s in sugg]:
+        return None, 'the absences agree with ' + str(correct_data.get('current_sg_name') or cur)
+    # enantiomorphs have the same screw periods: absences cannot tell them apart
+    if len({tuple(sorted((s.get('screws') or {}).items())) for s in sugg}) != 1:
+        return None, 'the absences allow ' + ', '.join(str(s.get('name')) for s in sugg)
+    return sugg[0], [str(s.get('name')) for s in sugg[1:]]
+
+
+def _ap_sg_from_absences(work_dir, xds_inp_path, xds_exe, correct_data, send):
+    """XDS's space group never has screw axes (C222 for C222₁).  When the axial
+    reflections in CORRECT.LP show them, CORRECT runs again in the matching space
+    group with the refined cell - seconds, no re-integration.
+    Returns (new CORRECT data or None, note for the summary, stopped)."""
+    given = str(_parse_xdsinp_params(_read_text_lenient(xds_inp_path)).get('SPACE_GROUP_NUMBER', '')).strip()
+    if given and given != '0':
+        send("ap_log", {"text": ">>> Screw axes: space group " + given + " is given in XDS.INP - kept"})
+        return None, '', False
+    choice, other = _sg_from_absences_choice(correct_data)
+    if not choice:
+        send("ap_log", {"text": ">>> Screw axes: " + other + " - space group kept"})
+        return None, '', False
+    uc = correct_data.get('unit_cell') or {}
+    keys = ('a', 'b', 'c', 'alpha', 'beta', 'gamma')
+    if not all(k in uc for k in keys):
+        send("ap_log", {"text": ">>> Screw axes: no refined cell in CORRECT.LP - space group kept"})
+        return None, '', False
+    axes = {'h00': 'h,0,0', '0k0': '0,k,0', '00l': '0,0,l'}
+    seen = ', '.join('%s only every %s%s present' % (axes.get(ax, ax), per, 'nd' if per == 2 else 'th')
+                     for ax, per in sorted((choice.get('screws') or {}).items()))
+    xds_name = '%s (#%s)' % (correct_data.get('current_sg_name') or '', correct_data.get('space_group'))
+    new_name = '%s (#%s)' % (choice.get('name'), choice.get('sg_number'))
+    send("ap_log", {"text": ">>> Screw axes from the systematic absences: " + seen})
+    send("ap_log", {"text": "    -> " + new_name + ", not " + xds_name + " as XDS chose; CORRECT runs again in " + str(choice.get('name'))})
+    before = _read_text_lenient(xds_inp_path)
+    _ap_apply_xdsinp_fix(xds_inp_path, {'SPACE_GROUP_NUMBER': str(choice['sg_number']),
+                                        'UNIT_CELL_CONSTANTS': ' '.join('%.3f' % float(uc[k]) for k in keys)}, send)
+    _ap_set_job(xds_inp_path, "CORRECT")
+    rc, stopped = _ap_run_xds(work_dir, xds_exe, send, label="CORRECT (space group from the screw axes)")
+    if stopped:
+        return None, '', True
+    lp, err, errline = _ap_check_lp(work_dir, "CORRECT")
+    data = LPParser.parse_correct(lp) if lp and not err else None
+    if not data or data.get('space_group') != choice.get('sg_number'):
+        # back to what XDS chose, and its CORRECT output
+        send("ap_log", {"text": ">>> CORRECT in " + str(choice.get('name')) + " did not work (" + str(errline or 'no result')
+                                + ") - back to " + xds_name})
+        xds_inp_path.write_text(before, encoding="utf-8")
+        _ap_set_job(xds_inp_path, "CORRECT")
+        rc, stopped = _ap_run_xds(work_dir, xds_exe, send, label="CORRECT (back to XDS's space group)")
+        return None, '', stopped
+    note = new_name + ' from the screw axes (XDS chose ' + xds_name + ')'
+    if other:
+        note += '; or its enantiomorph ' + ', '.join(other) + ' - absences cannot tell them apart'
+    send("ap_log", {"text": ">>> Space group: " + note})
+    return data, note, False
+
+
 def _ap_run_xds(work_dir, xds_exe, send, label="XDS", timeout=7200):
     """Run XDS in work_dir, streaming output. Returns (returncode, was_stopped).
 
@@ -3320,7 +3385,7 @@ def _ap_generate_xdsinp(project_dir, send, template=None, neggia_lib=''):
 @_processing_job("autopilot")
 def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE', template=None, optimize=True, dcc_half=True, neggia_lib='',
                      autoindex_tier='medium', exclude_ice=True, space_group=None, unit_cell=None,
-                     resolution_range=None, optimize_metric='isa'):
+                     resolution_range=None, optimize_metric='isa', sg_from_absences=True):
     """AutoPilot: fully automated XDS processing pipeline with error recovery.
 
     Streams progress via SSE write_fn.
@@ -3890,6 +3955,24 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                 if cor_lp2:
                     correct_data = LPParser.parse_correct(cor_lp2)
                     stats_table = correct_data.get('statistics_table', [])
+
+    # Screw axes: XDS's space group never has them (C222 for C222₁); the axial
+    # reflections in CORRECT.LP decide, and CORRECT runs again in that group.
+    if sg_from_absences and not space_group:
+        sg_data, sg_note, stopped = _ap_sg_from_absences(project_dir, xds_inp_path, xds_exe, correct_data, send)
+        if stopped:
+            summary['status'] = 'stopped'
+            send("ap_done", {"status": "stopped", "summary": summary})
+            return
+        if sg_data:
+            correct_data = sg_data
+            stats_table = correct_data.get('statistics_table', [])
+            summary['retries'] += 1
+            sg = summary['space_group'] = correct_data.get('space_group') or sg
+            uc = correct_data.get('unit_cell') or uc
+            if uc:
+                summary['unit_cell'] = uc
+            summary['sg_note'] = sg_note
 
     # Determine resolution cutoff
     cutoff_result = LPParser.determine_resolution_cutoff(stats_table, criterion)
@@ -4607,6 +4690,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
     send("ap_log", {"text": "============================================"})
     if summary.get('space_group'):
         send("ap_log", {"text": "  Space group:   " + str(summary['space_group'])})
+        if summary.get('sg_note'):
+            send("ap_log", {"text": "                 " + summary['sg_note']})
     if summary.get('resolution'):
         send("ap_log", {"text": "  Resolution:    " + str(round(summary['resolution'], 2)) + " A"})
     km = summary.get('key_metrics', {})

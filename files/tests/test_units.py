@@ -1309,6 +1309,35 @@ def define_checks(m, scratch):
         finally:
             m.CPU_CORES = was
 
+    @check("AutoPilot screw axes: the absences' space group replaces XDS's screw-less choice; enantiomorphs and ambiguity handled")
+    def _():
+        # XDS chose C222 (#21); 0,0,l shows a 2-fold screw: C222(1) (#20) is the only consistent group
+        sug20 = {"sg_number": 20, "name": "C222₁", "screws": {"00l": 2}}
+        choice, other = m._sg_from_absences_choice({"space_group": 21, "sg_suggestions": [sug20]})
+        assert choice and choice["sg_number"] == 20 and other == [], (choice, other)
+        # absences agree with XDS: nothing to do
+        choice, why = m._sg_from_absences_choice({"space_group": 20, "current_sg_name": "C222₁", "sg_suggestions": [sug20]})
+        assert choice is None and "agree" in why, why
+        # enantiomorphs (same screws) cannot be told apart: the first is taken, the other named
+        p41 = {"sg_number": 76, "name": "P4₁", "screws": {"00l": 4}}
+        p43 = {"sg_number": 78, "name": "P4₃", "screws": {"00l": 4}}
+        choice, other = m._sg_from_absences_choice({"space_group": 75, "sg_suggestions": [p41, p43]})
+        assert choice["sg_number"] == 76 and other == ["P4₃"], (choice, other)
+        # different screw patterns possible (suggestive detections): XDS's choice is kept
+        choice, why = m._sg_from_absences_choice({"space_group": 16, "sg_suggestions": [
+            {"sg_number": 17, "name": "P222₁", "screws": {"00l": 2}},
+            {"sg_number": 18, "name": "P2₁2₁2", "screws": {"h00": 2, "0k0": 2}}]})
+        assert choice is None and "allow" in why, why
+        # no axial reflections: kept
+        assert m._sg_from_absences_choice({"space_group": 21})[0] is None
+        # the wizard option: ticked by default, only when the space group is determined per data set
+        opt = next(o for o in m.STRATEGY_OPTIONS if o["key"] == "sg_absences")
+        assert opt["default"] == "on" and opt["input"] == "checkbox" and opt["depends"] == {"sg_mode": "auto"}
+        assert m.strategy_autopilot_kwargs({})["sg_from_absences"] is True
+        assert m.strategy_autopilot_kwargs({"sg_absences": "off"})["sg_from_absences"] is False
+        import inspect
+        assert inspect.signature(m.stream_autopilot).parameters["sg_from_absences"].default is True
+
     @check("resources: XDS.INP / XSCALE.INP carry the CPU cores by default and follow a change of the setting")
     def _():
         was, was_dir = m.CPU_CORES, m.PROJECTS_DIR

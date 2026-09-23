@@ -4149,7 +4149,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Choose an XDS.INP of this data set"}, 400); return
             neggia = NEGGIA_LIB if str(dataset["template"]).lower().endswith((".h5", ".hdf5")) else ""
             text, notes = import_xdsinp(source, dataset, neggia)
-            self.send_json({"content": text, "notes": notes, "original": _read_text_lenient(source)})
+            # the preview is the file as it will be written, CPU cores included
+            self.send_json({"content": _with_cpu_keywords(text, "xds"), "notes": notes, "original": _read_text_lenient(source)})
 
         elif path == "/api/batch/create":
             for d in (data.get("datasets") or []):
@@ -4173,7 +4174,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             strategy = normalize_strategy(state.get("strategy"))
             plan = merge_plan(data.get("projects") or [], strategy["criterion"], data.get("reference") or None)
             # the preview names the inputs exactly as the merge will, so it can be read as the real file
-            preview = (merge_xscale_inp(plan, data.get("friedel") or strategy["friedel"], merge_input_names(plan))
+            preview = (_with_cpu_keywords(merge_xscale_inp(plan, data.get("friedel") or strategy["friedel"], merge_input_names(plan)), "xscale")
                        if len(plan["inputs"]) >= 1 else "")
             self.send_json({"plan": plan, "xscale_inp": preview})
 

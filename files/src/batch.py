@@ -78,6 +78,13 @@ STRATEGY_OPTIONS = [
      "choices": [["without_first", "process without it; if that fails, with it; if that fails too, auto-index"],
                  ["use", "use it"], ["ignore", "ignore it"]],
      "help": "Only for data sets whose imported XDS.INP has a space group. Data sets with a generated XDS.INP have none."},
+    {"key": "sg_absences", "step": "indexing", "label": "Screw axes", "default": "on", "input": "checkbox",
+     "depends": {"sg_mode": "auto"},
+     "choices": [["on", "set the space group from the systematic absences"], ["off", "keep the space group XDS chose"]],
+     "help": "XDS chooses the space group without screw axes (C222 for C222₁, P222 for P2₁2₁2₁). Ticked: the axial "
+             "reflections in CORRECT.LP are checked, and when they show screw axes CORRECT runs again in the matching "
+             "space group - seconds, no re-integration. Enantiomorphs (P4₁/P4₃, P3₁/P3₂ …) look the same; one is kept "
+             "and the log says so. A space group given in the XDS.INP is left alone."},
     {"key": "autoindex_tier", "step": "indexing", "label": "If indexing fails", "default": "medium",
      "choices": [["off", "give up on that data set"], ["quick", "auto-index, quick"],
                  ["medium", "auto-index, medium"], ["full", "auto-index, full search"]],
@@ -137,6 +144,7 @@ def strategy_autopilot_kwargs(strategy):
         "optimize_metric": s["optimize_metric"],
         "dcc_half": s["dcc_half"] == "on",
         "exclude_ice": s["exclude_ice"] == "yes",
+        "sg_from_absences": s["sg_absences"] == "on",
     }
     if s["sg_mode"] == "fixed":
         kwargs["space_group"] = s["space_group"]
