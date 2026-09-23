@@ -337,12 +337,15 @@ async function main() {
       return r.result.value;
     };
     const ask = await evalJs(`(async () => { const b = document.getElementById('askbar-in'); if (!b) return { missing: true };
-      b.value = 'xscale cut-off'; cpAskRender('xscale cut-off'); await new Promise(r => setTimeout(r, 500));
+      window.scrollTo(0, 0); b.value = 'xscale cut-off'; cpAskRender('xscale cut-off'); await new Promise(r => setTimeout(r, 500));
       const pop = document.getElementById('askbar-pop'), rows = Array.from(pop.querySelectorAll('a.ds-hit'));
-      return { shown: pop.style.display !== 'none', rows: rows.length, marks: pop.querySelectorAll('mark').length,
+      // the first rows must be on top of the page, not cut off by the header (0.6.6c showed one and a half)
+      const clickable = rows.slice(0, 3).filter(r => { const q = r.getBoundingClientRect();
+        const e = document.elementFromPoint(q.left + q.width / 2, q.top + Math.min(q.height / 2, 20)); return q.height > 0 && e && r.contains(e); }).length;
+      return { shown: pop.style.display !== 'none', rows: rows.length, marks: pop.querySelectorAll('mark').length, clickable,
                top: (rows[0] || {}).textContent || '', snippets: rows.filter(r => r.querySelector('.ds-snip')).length }; })()`);
     check("Ask bar: the header search ranks the documentation and shows the matching sentence",
-      !ask.missing && ask.shown && ask.rows >= 3 && ask.marks >= 2 && /XSCALE/i.test(ask.top) && ask.snippets === ask.rows,
+      !ask.missing && ask.shown && ask.rows >= 3 && ask.marks >= 2 && /XSCALE/i.test(ask.top) && ask.snippets === ask.rows && ask.clickable === 3,
       JSON.stringify(ask).slice(0, 300));
     // one window per gesture is all a browser grants, so ask twice
     const docWin = await evalGesture(`(() => {
