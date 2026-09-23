@@ -14,7 +14,7 @@ if _sys_early.version_info < (3, 7):
     )
 del _sys_early
 
-VERSION = "0.6.6d"
+VERSION = "0.6.6h"
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -297,7 +297,7 @@ if "--projects-dir" not in sys.argv:
         print(f"Warning: cannot create projects folder {PROJECTS_DIR}: {_e}")
 # ── Persistent per-machine settings ──────────────────────────────────────────
 # ~/.crystalpilot/settings.json holds what the user set in the interface:
-# xds_path, neggia_lib, ccp4_bin, parallel.  Precedence at start-up:
+# xds_path, neggia_lib, ccp4_bin, parallel, cpu_cores, ram_gb.  Precedence at start-up:
 # command line > settings file > environment variable > built-in default.
 SETTINGS_FILE = Path(os.environ.get("XDS_GUI_SETTINGS", str(Path.home() / ".crystalpilot" / "settings.json")))
 
@@ -337,7 +337,55 @@ try:
     XDS_STEP_TIMEOUT = int(float(SETTINGS.get("step_timeout", os.environ.get("XDS_GUI_STEP_TIMEOUT", "14400"))))
 except (TypeError, ValueError):
     XDS_STEP_TIMEOUT = 14400
-PORT = int(os.environ.get("XDS_GUI_PORT", "8000"))
+
+# Resources for processing: how many CPU cores and how much RAM XDS and the
+# other programs may use, all runs together, so the computer stays usable
+# while they work.  Set in the XDS Config panel; enforced in jobs.py
+# (_limited_cmd).  RAM 0 = no limit.
+def _cpus_allowed():
+    """The CPUs this process may run on (the whole machine unless restricted)."""
+    try:
+        return sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return list(range(os.cpu_count() or 1))
+
+def _ram_total_gb():
+    """RAM of this (virtual) machine in GB; under WSL the memory WSL may use."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1048576.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
+
+CPU_CORES_DEFAULT = 4
+
+def _ram_default_gb():
+    """16 GB, but never more than three quarters of the machine."""
+    total = _ram_total_gb()
+    return float(min(16, max(1, int(total * 0.75)))) if total else 0.0
+
+def _clamp_cpu_cores(n):
+    return max(1, min(int(n), len(_cpus_allowed())))
+
+def _clamp_ram_gb(g):
+    g = float(g)
+    total = _ram_total_gb()
+    if g <= 0:
+        return 0.0
+    return round(max(1.0, min(g, total)) if total else g, 1)
+
+try:
+    CPU_CORES = _clamp_cpu_cores(SETTINGS.get("cpu_cores", os.environ.get("XDS_GUI_CPU_CORES", CPU_CORES_DEFAULT)))
+except (TypeError, ValueError):
+    CPU_CORES = _clamp_cpu_cores(CPU_CORES_DEFAULT)
+try:
+    RAM_LIMIT_GB = _clamp_ram_gb(SETTINGS.get("ram_gb", os.environ.get("XDS_GUI_RAM_GB", _ram_default_gb())))
+except (TypeError, ValueError):
+    RAM_LIMIT_GB = _ram_default_gb()
+PORT =int(os.environ.get("XDS_GUI_PORT", "8000"))
 # Listen on this computer only unless asked otherwise (--host 0.0.0.0 for the LAN).
 HOST = os.environ.get("XDS_GUI_HOST", "127.0.0.1")
 # Per-launch API token.  The page sets it as a SameSite cookie when served, so

@@ -1273,6 +1273,42 @@ def define_checks(m, scratch):
         assert "filter(Boolean).pop()" in html, "the drive button label is not taken from the mount point"
         assert "d.problem" in html, "the browser does not show why a drive could not be reached"
 
+    @check("resources: 4 CPU cores by default, clamped to the machine; RAM 0 = no limit")
+    def _():
+        assert m.CPU_CORES_DEFAULT == 4
+        assert m._clamp_cpu_cores(0) == 1 and m._clamp_cpu_cores(10 ** 6) == len(m._cpus_allowed())
+        assert m._clamp_ram_gb(0) == 0.0 and m._clamp_ram_gb(-3) == 0.0
+        info = m._resource_info()
+        for k in ("cpu_cores", "cpu_available", "ram_gb", "ram_total_gb", "ram_mode", "ram_note"):
+            assert k in info, k
+
+    @check("resources: the core count replaces the beamline's in XDS.INP and goes first in XSCALE.INP")
+    def _():
+        d = scratch / "cpu_keywords"
+        d.mkdir(exist_ok=True)
+        was = m.CPU_CORES
+        try:
+            m.CPU_CORES = 3
+            (d / "XDS.INP").write_text("JOB= XYCORR\nMAXIMUM_NUMBER_OF_JOBS=4 MAXIMUM_NUMBER_OF_PROCESSORS=16 SECONDS=0 ! bl\nNX= 100\n")
+            m._write_cpu_keywords("/opt/xds/xds_par", d)
+            t = (d / "XDS.INP").read_text()
+            v = m._parse_xdsinp_params(t)
+            assert v.get("MAXIMUM_NUMBER_OF_PROCESSORS") == "3" and v.get("MAXIMUM_NUMBER_OF_JOBS") == "1", t
+            assert v.get("SECONDS") == "0" and v.get("NX") == "100", t
+            assert t.count("MAXIMUM_NUMBER_OF_PROCESSORS") == 1, t
+            m._write_cpu_keywords("/opt/xds/xds_par", d)
+            assert (d / "XDS.INP").read_text() == t, "a second run changed the file again"
+            (d / "XSCALE.INP").write_text("OUTPUT_FILE= a.ahkl\nINPUT_FILE= ../XDS_ASCII.HKL\n")
+            m._write_cpu_keywords("xscale_par", d)
+            x = (d / "XSCALE.INP").read_text()
+            assert x.splitlines()[0].startswith("MAXIMUM_NUMBER_OF_PROCESSORS= 3"), x
+            assert not xscale_layout_errors(x), xscale_layout_errors(x)
+            (d / "XDS.INP").write_text("JOB= XYCORR\n")
+            m._write_cpu_keywords("pointless", d)
+            assert (d / "XDS.INP").read_text() == "JOB= XYCORR\n", "a non-XDS program touched XDS.INP"
+        finally:
+            m.CPU_CORES = was
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 def main():

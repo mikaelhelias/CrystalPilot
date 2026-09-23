@@ -252,6 +252,173 @@ def _output_stamp(path):
         return None
 
 
+# ── CPU and RAM limits for the programs ───────────────────────────────────────
+# XDS takes every core it sees and Linux fills the free RAM with the frames it
+# reads; under WSL that starves Windows.  Every program run by _run_streaming
+# is therefore held to CPU_CORES cores and RAM_LIMIT_GB of memory, all runs
+# together:
+#   CPU  XDS / XSCALE are told the number (MAXIMUM_NUMBER_OF_PROCESSORS,
+#        OMP_NUM_THREADS) and pinned to that many cores (taskset / affinity).
+#   RAM  a cgroup: one of our own when we may create it (root, as under WSL),
+#        else a systemd user scope per run.  At the limit Linux first drops the
+#        frames it keeps cached, then stops a run that really needs more (no
+#        memory.high: it throttles a run to a crawl instead of stopping it; no
+#        swap inside the limit: swapping would slow the whole computer).
+_CG_ROOT = Path('/sys/fs/cgroup')
+_CG_DIR = _CG_ROOT / 'crystalpilot-jobs'
+_ram_mode_cache = []            # [(mode, note)] once probed
+_CPU_KEYS = ('MAXIMUM_NUMBER_OF_PROCESSORS', 'MAXIMUM_NUMBER_OF_JOBS')
+
+
+def _ram_limit_mode():
+    """('cgroup' | 'systemd' | '', why not) - how a RAM limit is enforced here."""
+    if _ram_mode_cache:
+        return _ram_mode_cache[0]
+    mode, note = '', ''
+    if not sys.platform.startswith('linux'):
+        note = 'RAM limits need Linux'
+    elif not (_CG_ROOT / 'cgroup.controllers').is_file():
+        note = 'this Linux has no cgroup v2, which RAM limits need'
+    else:
+        if os.geteuid() == 0:
+            try:
+                ctl = (_CG_ROOT / 'cgroup.subtree_control').read_text().split()
+                for c in ('memory', 'cpu'):
+                    if c not in ctl:
+                        try:
+                            (_CG_ROOT / 'cgroup.subtree_control').write_text('+' + c)
+                        except OSError:
+                            pass
+                _CG_DIR.mkdir(exist_ok=True)
+                if (_CG_DIR / 'memory.max').is_file():
+                    mode = 'cgroup'
+                else:
+                    note = 'the memory controller cannot be enabled'
+            except OSError as e:
+                note = 'cannot create a cgroup: ' + str(e)
+        if not mode and shutil.which('systemd-run') and os.path.isdir('/run/systemd/system'):
+            uid = os.getuid()
+            deleg = _CG_ROOT / ('user.slice/user-%d.slice/user@%d.service/cgroup.controllers' % (uid, uid))
+            try:
+                delegated = 'memory' in deleg.read_text().split()
+            except OSError:
+                delegated = False
+            if delegated:
+                try:
+                    probe = subprocess.run(['systemd-run', '--user', '--scope', '--quiet', '--collect',
+                                            '-p', 'MemoryMax=1G', 'true'],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                    if probe.returncode == 0:
+                        mode, note = 'systemd', ''
+                    else:
+                        note = 'systemd-run --user does not work in this session'
+                except (OSError, subprocess.SubprocessError) as e:
+                    note = 'systemd-run failed: ' + str(e)
+            elif not note:
+                note = 'systemd does not hand the memory controller to this user'
+        elif not mode and not note:
+            note = 'needs root or a systemd user session'
+    _ram_mode_cache.append((mode, note))
+    return mode, note
+
+
+def _apply_cgroup_limits():
+    """Write the current limits into our cgroup (mode 'cgroup')."""
+    try:
+        if RAM_LIMIT_GB > 0:
+            top = int(RAM_LIMIT_GB * 1024 ** 3)
+            (_CG_DIR / 'memory.high').write_text('max')
+            (_CG_DIR / 'memory.max').write_text(str(top))
+            if (_CG_DIR / 'memory.swap.max').is_file():
+                (_CG_DIR / 'memory.swap.max').write_text('0')   # swapping would slow the whole computer
+        else:
+            (_CG_DIR / 'memory.high').write_text('max')
+            (_CG_DIR / 'memory.max').write_text('max')
+            if (_CG_DIR / 'memory.swap.max').is_file():
+                (_CG_DIR / 'memory.swap.max').write_text('max')
+        if (_CG_DIR / 'cpu.max').is_file():
+            (_CG_DIR / 'cpu.max').write_text('%d 100000' % (CPU_CORES * 100000))
+        return True
+    except OSError:
+        return False
+
+
+def _cgroup_oom_kills():
+    try:
+        for line in (_CG_DIR / 'memory.events').read_text().splitlines():
+            if line.startswith('oom_kill '):
+                return int(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def _resource_info():
+    """What the XDS Config panel shows about the limits."""
+    mode, note = _ram_limit_mode() if os.name != 'nt' else ('', 'RAM limits need Linux')
+    return {'cpu_cores': CPU_CORES, 'cpu_available': len(_cpus_allowed()), 'cpu_default': CPU_CORES_DEFAULT,
+            'ram_gb': RAM_LIMIT_GB, 'ram_total_gb': round(_ram_total_gb(), 1),
+            'ram_default_gb': _ram_default_gb(), 'ram_mode': mode, 'ram_note': note,
+            'wsl': bool(globals().get('IS_WSL'))}
+
+
+def _write_cpu_keywords(program, cwd):
+    """Put the core count into the XDS.INP / XSCALE.INP the program is about to read."""
+    name = Path(str(program)).name.lower()
+    if name in ('xds', 'xds_par'):
+        path, xds = Path(cwd) / 'XDS.INP', True
+    elif name in ('xscale', 'xscale_par'):
+        path, xds = Path(cwd) / 'XSCALE.INP', False
+    else:
+        return
+    if not path.is_file():
+        return
+    text = _read_text_lenient(path)
+    out = []
+    for line in text.splitlines():
+        if line.lstrip().startswith('!') or '=' not in line:
+            out.append(line)
+            continue
+        pairs, comment = XDSINPEditor._split_pairs(line)
+        kept = [p for p in pairs if p[0].upper() not in _CPU_KEYS]
+        if len(kept) == len(pairs):
+            out.append(line)
+        elif kept:
+            out.append(XDSINPEditor._join_pairs(kept, comment))
+    ours = ['MAXIMUM_NUMBER_OF_PROCESSORS= %d  ! CrystalPilot: CPU cores (XDS Config panel)' % CPU_CORES]
+    if xds:
+        out += ours + ['MAXIMUM_NUMBER_OF_JOBS= 1']
+    else:
+        out = ours + out          # XSCALE: a global keyword, before the first OUTPUT_FILE
+    new = '\n'.join(out) + '\n'
+    if new != text:
+        path.write_text(new, encoding='utf-8')
+
+
+def _limited_cmd(cmd, env):
+    """cmd and env with the CPU and RAM limits applied; also returns the CPUs to pin to."""
+    if os.name == 'nt':
+        return cmd, env, None
+    env = dict(os.environ if env is None else env)
+    env['OMP_NUM_THREADS'] = str(CPU_CORES)
+    allowed = _cpus_allowed()
+    cpus = allowed[:CPU_CORES] if CPU_CORES < len(allowed) else None
+    pre = []
+    mode = _ram_limit_mode()[0]
+    if mode == 'systemd' and RAM_LIMIT_GB > 0:
+        mb = int(RAM_LIMIT_GB * 1024)
+        pre += ['systemd-run', '--user', '--scope', '--quiet', '--collect',
+                '-p', 'MemoryMax=%dM' % mb, '-p', 'MemorySwapMax=0', '--']
+    taskset = shutil.which('taskset')
+    if cpus and taskset:
+        pre += [taskset, '-c', ','.join(str(c) for c in cpus)]
+        cpus = None
+    if mode == 'cgroup' and _apply_cgroup_limits():
+        # the shell joins the cgroup, then becomes the program (same process)
+        pre = ['/bin/sh', '-c', 'echo $$ > "$0" 2>/dev/null; exec "$@"', str(_CG_DIR / 'cgroup.procs')] + pre
+    return pre + [str(c) for c in cmd], env, cpus
+
+
 def _xds_expected_outputs(work_dir):
     params = _parse_xdsinp_params(_read_text_lenient(Path(work_dir) / 'XDS.INP'))
     return [step + '.LP' for step in params.get('JOB', '').split() if step in XDS_PIPELINE]
@@ -286,6 +453,14 @@ def _run_streaming(cmd, cwd, on_line, timeout=None, env=None, stdin_text=None, s
     except Exception as e:
         _release_dir(cwd)
         return result(-1, 'error: cannot prepare outputs: ' + str(e))
+    try:
+        _write_cpu_keywords(cmd[0], cwd)
+    except Exception as e:
+        _release_dir(cwd)
+        return result(-1, 'error: cannot set the CPU cores in the input file: ' + str(e))
+    cmd, env, pin_cpus = _limited_cmd(cmd, env)
+    ram_mode = _ram_limit_mode()[0] if os.name != 'nt' else ''
+    oom_before = _cgroup_oom_kills() if ram_mode == 'cgroup' else 0
     kw = dict(cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
               text=True, bufsize=1, env=env, errors='replace')
     if os.name != 'nt':
@@ -299,6 +474,11 @@ def _run_streaming(cmd, cwd, on_line, timeout=None, env=None, stdin_text=None, s
     except Exception as e:
         _release_dir(cwd)
         return result(-1, 'error: ' + str(e))
+    if pin_cpus:                # no taskset: pin from here, children inherit it
+        try:
+            os.sched_setaffinity(proc.pid, pin_cpus)
+        except (AttributeError, OSError):
+            pass
     # Trials remain registered as part of their owning job even when legacy
     # callers ask not to expose a standalone helper in the process registry.
     registration = _set_proc(proc, key) if register or job else None
@@ -348,6 +528,10 @@ def _run_streaming(cmd, cwd, on_line, timeout=None, env=None, stdin_text=None, s
     if state['outcome'] == 'ok':
         if (job and job.cancelled.is_set()) or (registration and registration['cancelled'].is_set()):
             state['outcome'] = 'stopped'
+        elif rc in (-9, 137) and RAM_LIMIT_GB > 0 and (
+                (ram_mode == 'cgroup' and _cgroup_oom_kills() > oom_before) or ram_mode == 'systemd'):
+            state['outcome'] = ('error: stopped by the RAM limit - it needed more than %g GB. '
+                                'Raise RAM in the XDS Config panel (sidebar) and run it again' % RAM_LIMIT_GB)
         elif rc != 0:
             state['outcome'] = 'error: process exited with code ' + str(rc)
         else:

@@ -1462,7 +1462,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 NEGGIA_LIB = _find_neggia()
             self.send_json({"xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN, "neggia_lib": NEGGIA_LIB, "script_dir": str(Path(__file__).parent.resolve()), "projects_dir": str(PROJECTS_DIR.resolve()), "is_wsl": IS_WSL, "wsl_drives": _wsl_drives(), "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE),
                             "wsl_distro": os.environ.get("WSL_DISTRO_NAME", ""), "projects_drive": os.environ.get("CRYSTALPILOT_DRIVE", "").strip(),
-                            "projects_win": _windows_view(str(PROJECTS_DIR))})
+                            "projects_win": _windows_view(str(PROJECTS_DIR)), "resources": _resource_info()})
 
         # List XSCALE subfolders (for XDSCONV workdir selection)
         elif project_route == '/xscale-subfolders':
@@ -3884,7 +3884,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         return []
 
     def _dispatch_POST(self, path, data):
-        global xds_runner, CCP4_BIN, CCP4_BIN_SAVED, NEGGIA_LIB, XDS_PARALLEL
+        global xds_runner, CCP4_BIN, CCP4_BIN_SAVED, NEGGIA_LIB, XDS_PARALLEL, CPU_CORES, RAM_LIMIT_GB
         project_route = self._project_route(path)
         # Create project
         if path == "/api/projects":
@@ -4078,6 +4078,18 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             par = data.get("parallel")
             if par is not None:
                 XDS_PARALLEL = bool(par)
+            # CPU cores and RAM for the programs; the next run uses them
+            cores, ram = data.get("cpu_cores"), data.get("ram_gb")
+            try:
+                if cores is not None:
+                    CPU_CORES = _clamp_cpu_cores(cores)
+                if ram is not None:
+                    RAM_LIMIT_GB = _clamp_ram_gb(ram)
+            except (TypeError, ValueError):
+                self.send_json({"error": "CPU cores and RAM must be numbers"}, 400)
+                return
+            if (cores is not None or ram is not None) and _ram_limit_mode()[0] == 'cgroup':
+                _apply_cgroup_limits()          # running programs follow at once
             # The Environment screen's "Don't show this again": kept per
             # machine, so it also holds when the page is opened in another
             # browser (on Linux the launcher may not reuse the same one).
@@ -4085,9 +4097,12 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             # Remember these choices for the next start (per machine)
             _save_settings(xds_path=str(xds_runner.xds_path) if new_path else None,
                            ccp4_bin=ccp4, neggia_lib=neggia, env_seen=env_seen,
-                           parallel=(bool(par) if par is not None else None))
+                           parallel=(bool(par) if par is not None else None),
+                           cpu_cores=(CPU_CORES if cores is not None else None),
+                           ram_gb=(RAM_LIMIT_GB if ram is not None else None))
             self.send_json({"message": "Config updated", "xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN,
-                            "neggia_lib": NEGGIA_LIB, "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE)})
+                            "neggia_lib": NEGGIA_LIB, "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE),
+                            "resources": _resource_info()})
 
         # Gemmi analysis: merging stats, completeness, lattice symmetry
         elif path == "/api/batch/discover":
