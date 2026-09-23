@@ -31,17 +31,27 @@ param(
     [string]$Preview = "",
     [switch]$NoLaunch,
     [string]$EnableWsl = "",     # internal: the elevated helper that only enables WSL, result written to this file
-    [switch]$StartedHidden       # internal: Setup.exe started this with a hidden start-up mode (see Add_Shown below)
+    [switch]$StartedHidden,      # internal: Setup.exe started this with a hidden start-up mode (see Add_Shown below)
+    [string]$Probe = ""          # internal: look at this computer (WSL, disks, an installed CrystalPilot), write the default choices to this file, exit
 )
 $ErrorActionPreference = "Stop"
 $env:WSL_UTF8 = "1"
+$ScriptClock = [Diagnostics.Stopwatch]::StartNew()      # how long the first windows take (written to setup-start.txt)
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $Here = $PSScriptRoot
 if (-not $Here) { $Here = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Root = Split-Path -Parent $Here
-$WizardVersion = "1.1"
+$WizardVersion = "1.2"
+# CP_SETUP_TEST=1: a test installation (a throwaway runtime) that must not touch this
+# computer's CrystalPilot: no shortcuts, no Apps & features entry, no drive letter,
+# no Start-menu entry, its own state and log files.
+$TestMode = ($env:CP_SETUP_TEST -eq "1")
+$SetupDataDir = Join-Path $env:LOCALAPPDATA $(if ($TestMode) { "CrystalPilot-test" } else { "CrystalPilot" })
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+# a proxy that asks for the Windows login (common at universities): BITS, used
+# before 0.6.6e, sent it by itself; WebClient and HttpWebRequest only when told
+try { $wp = [Net.WebRequest]::GetSystemWebProxy(); $wp.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials; [Net.WebRequest]::DefaultWebProxy = $wp } catch {}
 $script:Pump = {}              # the wizard sets this to DoEvents so long programs do not freeze the window
 $RootfsUrl = "https://cloud-images.ubuntu.com/wsl/releases/24.04/current/ubuntu-noble-wsl-amd64-24.04lts.rootfs.tar.gz"
 $RootfsName = "ubuntu-24.04-wsl-rootfs.tar.gz"
@@ -69,12 +79,25 @@ function Get-ScriptPolicy {
     return "RemoteSigned"
 }
 function Invoke-WslLines {
-    # Run wsl.exe and return its output lines (empty array on failure); never throws
+    # Run wsl.exe and return its output lines (empty array on failure); never throws.
+    # The window keeps painting while it waits: the first call can take many seconds
+    # (the runtime starts), and a plain call froze the wizard for that long.
     param([string[]]$WslArgs)
-    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    try { $out = & wsl.exe @WslArgs 2>$null; $rc = $LASTEXITCODE } catch { $out = @(); $rc = 1 } finally { $ErrorActionPreference = $prev }
-    if ($rc -ne 0) { return @() }
-    return @($out | Where-Object { $_ -ne $null -and $_.ToString().Trim() -ne "" } | ForEach-Object { $_.ToString().Trim() })
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "wsl.exe"; $psi.Arguments = ConvertTo-ArgString $WslArgs
+        $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $psi.EnvironmentVariables["WSL_UTF8"] = "1"
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $out = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
+        while (-not $p.WaitForExit(50)) { & $script:Pump }
+        $p.WaitForExit()
+        if ($p.ExitCode -ne 0) { return @() }
+        $text = [string]$out.Result
+    } catch { return @() }
+    return @(($text -replace "`0", "") -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object { $_.Trim() })
 }
 function ConvertTo-ArgString([string[]]$list) {
     # one Windows command line from separate arguments (paths with blanks, quotes)
@@ -234,10 +257,26 @@ function Find-XdsTar   { return (Find-Newest $SearchDirs "XDS-*Linux_x86_64.tar.
 function Find-Neggia   { return (Find-Newest $SearchDirs "dectris-neggia.so") }
 function Find-Ccp4Tar  { $t = Find-Newest $SearchDirs "ccp4-*linux*.tar.gz"; if (-not $t) { $t = Find-Newest $SearchDirs "ccp4-*.tar.gz" }; if ($t -and $t -match 'win') { $t = "" }; return $t }
 
+function Get-ShortcutFolders {
+    # the folders the CrystalPilot shortcuts start from (...\windows): an installation
+    # is found there wherever it was put, also when an older setup did not register it
+    $dirs = @()
+    try {
+        $sh = New-Object -ComObject WScript.Shell
+        foreach ($l in @((Join-Path ([Environment]::GetFolderPath("Desktop")) "CrystalPilot.lnk"),
+                         (Join-Path ([Environment]::GetFolderPath("Programs")) "CrystalPilot.lnk"),
+                         (Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "CrystalPilot.lnk"))) {
+            if (Test-Path $l) { $t = [string]$sh.CreateShortcut($l).TargetPath; if ($t -match 'CrystalPilot\.bat$') { $dirs += (Split-Path $t -Parent) } }
+        }
+    } catch {}
+    return @($dirs | Select-Object -Unique)
+}
 function Get-InstalledConfig {
-    # A re-run from an installed copy keeps its settings: the launcher's
-    # crystalpilot.cfg next to this script (or in the default install folder)
-    # says where everything is.
+    # A re-run keeps the settings of the installed copy: the launcher's
+    # crystalpilot.cfg says where everything is.  Looked for next to this script,
+    # at the folder Apps & features knows, behind the CrystalPilot shortcuts
+    # (setups before 0.6.6e did not always register themselves), and in the
+    # default install folder.
     $sysDrive = $env:SystemDrive; if (-not $sysDrive) { $sysDrive = "C:" }
     $places = @((Join-Path $Here "crystalpilot.cfg"))
     try {
@@ -245,15 +284,82 @@ function Get-InstalledConfig {
         $reg = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CrystalPilot" -ErrorAction Stop
         if ($reg.InstallLocation) { $places += (Join-Path ([string]$reg.InstallLocation) "windows\crystalpilot.cfg") }
     } catch {}
+    foreach ($d in (Get-ShortcutFolders)) { $places += (Join-Path $d "crystalpilot.cfg") }
     $places += (Join-Path $sysDrive "CrystalPilot\windows\crystalpilot.cfg")
     foreach ($p in $places) {
         if (Test-Path $p) {
             $cfg = @{}
             foreach ($line in (Get-Content $p)) { if ($line -match '^([A-Z_]+)=(.*)$') { $cfg[$matches[1]] = $matches[2].Trim() } }
-            if ($cfg.DISTRO) { return $cfg }
+            if ($cfg.DISTRO) { $cfg.SOURCE = $p; return $cfg }
         }
     }
     return $null
+}
+function Get-WslInstall([string]$distro) {
+    # CrystalPilot as installed inside a Linux distribution: version, port, projects
+    # folder - or $null when that distribution has no CrystalPilot
+    $script = 'f=/root/.crystalpilot/crystalpilot.py; [ -f "$f" ] || exit 3; grep -m1 "^VERSION" "$f"; [ -f /root/.crystalpilot/config.env ] && . /root/.crystalpilot/config.env; echo "PORT=${PORT:-}"; echo "PROJECTS=${PROJECTS_DIR:-}"'
+    $lines = @(Invoke-WslLines @("-d", $distro, "-u", "root", "-e", "sh", "-c", $script))
+    if ($lines.Count -eq 0) { return $null }
+    $r = @{ VERSION = ""; PORT = ""; PROJECTS = "" }
+    foreach ($l in $lines) {
+        if ($l -match '^VERSION\s*=\s*"([^"]+)"') { $r.VERSION = $matches[1] }
+        elseif ($l -match '^(PORT|PROJECTS)=(.*)$') { $r[$matches[1]] = $matches[2].Trim() }
+    }
+    return $r
+}
+function Get-AppVersion([string]$path) {
+    if (-not $path -or -not (Test-Path $path)) { return "" }
+    try { $m = [regex]::Match((Get-Content $path -TotalCount 60) -join "`n", 'VERSION\s*=\s*"([^"]+)"'); if ($m.Success) { return $m.Groups[1].Value } } catch {}
+    return ""
+}
+function Format-Elapsed($ts) { return ("{0}:{1:00}" -f [int][math]::Floor($ts.TotalMinutes), $ts.Seconds) }
+function Save-Download {
+    # Downloads $Url to $Dest while the window stays responsive: MB, speed and time
+    # left on the progress line, a note in the log when no data arrives for a
+    # minute, and a clear error after five.  (Replaces BITS: its job reports an
+    # unknown size as 18 million terabytes, which drew the bar at 0 % - the
+    # "progress bar does not work" of 0.6.6d - and it waited in its own queue.)
+    param([string]$Url, [string]$Dest, [scriptblock]$Log, [scriptblock]$Progress, [string]$What)
+    $total = [long]0
+    try {
+        $rq = [System.Net.HttpWebRequest]::Create($Url); $rq.Method = "HEAD"; $rq.Timeout = 20000
+        $rs = $rq.GetResponse(); $total = [long]$rs.ContentLength; $rs.Close()
+    } catch { $total = 0 }
+    $tmp = $Dest + ".part"
+    if (Test-Path $tmp) { Remove-Item $tmp -Force }
+    $wc = New-Object System.Net.WebClient
+    $task = $wc.DownloadFileTaskAsync($Url, $tmp)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $lastSize = [long]-1; $lastChange = [long]0; $lastShow = [long]-1000; $warned = $false
+    while (-not $task.IsCompleted) {
+        & $script:Pump
+        Start-Sleep -Milliseconds 50
+        $ms = [long]$sw.ElapsedMilliseconds
+        if ($ms - $lastShow -lt 500) { continue }
+        $lastShow = $ms
+        $have = [long]0; try { $fi = New-Object IO.FileInfo $tmp; if ($fi.Exists) { $have = [long]$fi.Length } } catch {}
+        if ($have -ne $lastSize) {
+            $lastSize = $have; $lastChange = $ms
+            if ($warned) { & $Log "    data is arriving again"; $warned = $false }
+        }
+        $idle = ($ms - $lastChange) / 1000
+        if ($idle -ge 60 -and -not $warned) { & $Log "    no data for a minute - still trying (check the internet connection)"; $warned = $true }
+        if ($idle -ge 300) { $wc.CancelAsync(); throw "The download of $What stopped: no data for five minutes. Check the internet connection (or proxy) and run the installer again." }
+        $mb = [math]::Round($have / 1MB)
+        $rate = 0.0; if ($ms -gt 1000) { $rate = ($have / 1MB) / ($ms / 1000.0) }
+        if ($total -gt 0) {
+            $eta = ""
+            if ($rate -gt 0.05) { $left = (($total - $have) / 1MB) / $rate; $eta = if ($left -ge 90) { ", about " + [math]::Ceiling($left / 60) + " min left" } elseif ($left -ge 1) { ", about 1 min left" } else { "" } }
+            & $Progress ([int][math]::Min(100, 100 * $have / $total)) ("Downloading {0}: {1} of {2} MB ({3:0.0} MB/s{4})" -f $What, $mb, [math]::Round($total / 1MB), $rate, $eta)
+        } else {
+            & $Progress -1 ("Downloading {0}: {1} MB ({2:0.0} MB/s)" -f $What, $mb, $rate)
+        }
+    }
+    if ($task.IsFaulted) { throw ("Downloading $What failed: " + $task.Exception.GetBaseException().Message + " (check the internet connection or proxy, then run the installer again)") }
+    if ($task.IsCanceled) { throw "The download of $What was cancelled." }
+    Move-Item -Force $tmp $Dest
+    & $Log ("    downloaded {0} MB in {1}" -f [math]::Round((Get-Item $Dest).Length / 1MB), (Format-Elapsed $sw.Elapsed))
 }
 function Get-BestDrive {
     # the fixed disk with the most free space: where the Linux runtime (2 to 13 GB) goes
@@ -271,7 +377,25 @@ function New-DefaultState {
     $installDir = (Join-Path $sysDrive "CrystalPilot")
     $runtimeDir = (Join-Path (Get-BestDrive) "CrystalPilot\runtime")
     $projects = "/root/crystalpilot_projects"; $port = 8000
-    $cfg = Get-InstalledConfig
+    if ($TestMode) {
+        # a test installation next to the real one: its own folder, runtime and port
+        $installDir = Join-Path $SetupDataDir "app"; $newName = "CPTest"
+        $runtimeDir = (Join-Path (Get-BestDrive) "CPTest\runtime"); $port = 8097
+    }
+    # a test installation (CP_SETUP_TEST) must never pick up the real one:
+    # only runtimes named CPTest* count as installed there
+    $cfg = if ($TestMode) { $null } else { Get-InstalledConfig }
+    if ($TestMode) { $distros = @($distros | Where-Object { $_ -like "CPTest*" }) }
+    $wslInst = $null
+    if ($cfg -and ($distros -contains $cfg.DISTRO)) { $wslInst = Get-WslInstall ([string]$cfg.DISTRO) }
+    elseif (-not $cfg) {
+        # no launcher settings found: an installation inside a distribution is still an installation
+        foreach ($d in ($distros | Select-Object -First 6)) {
+            $i = Get-WslInstall ([string]$d)
+            if ($i) { $wslInst = $i; $cfg = @{ DISTRO = [string]$d; PORT = $i.PORT; PROJECTS = $i.PROJECTS; SOURCE = "wsl:$d" }; break }
+        }
+    }
+    $mapDrive = $true; $driveLetter = "P"; $update = $false
     if ($cfg) {
         # updating an installation: same folders, same runtime, same port
         if ($cfg.INSTALL_DIR) { $installDir = $cfg.INSTALL_DIR }
@@ -280,27 +404,45 @@ function New-DefaultState {
         if ($cfg.PROJECTS) { $projects = $cfg.PROJECTS }
         if ($distros -contains $cfg.DISTRO) { $newName = $cfg.DISTRO }
     }
+    if ($cfg -and ($distros -contains $cfg.DISTRO)) {
+        # the runtime it lives in is there: update it in place - no new runtime,
+        # no download, the drive letter as it was (none if there was none)
+        $update = $true
+        $mapDrive = [bool]([string]$cfg.DRIVE)
+        if ([string]$cfg.DRIVE) { $driveLetter = ([string]$cfg.DRIVE).Substring(0, 1) }
+    }
     $existing = ""; if ($distros.Count -gt 0) { $existing = [string]$distros[0] }
+    if ($update) { $existing = [string]$cfg.DISTRO }
     $winCcp4 = Find-WindowsCcp4
     $ccp4Tar = Find-Ccp4Tar
     $ccp4Mode = "skip"; if ($ccp4Tar) { $ccp4Mode = "linux" } elseif ($winCcp4) { $ccp4Mode = "windows" }
+    # an update keeps the CCP4 it has (wsl-install.sh reads it from config.env);
+    # a Linux CCP4 tarball still in Downloads would otherwise be unpacked again (10 GB)
+    if ($update) { $ccp4Mode = "skip" }
+    $app = Find-App
     return @{
         installDir   = $installDir
-        runtimeMode  = "dedicated"                 # existing | dedicated
+        runtimeMode  = $(if ($update) { "existing" } else { "dedicated" })   # existing | dedicated
+        update       = $update                     # an installed CrystalPilot is updated in place
+        installedVersion = $(if ($wslInst) { [string]$wslInst.VERSION } else { "" })
+        installedFrom = $(if ($cfg) { [string]$cfg.SOURCE } else { "" })
+        newVersion   = (Get-AppVersion $app)
+        distros      = @($distros)
+        vpNote       = (Get-VirtualizationProblem)
         distro       = $existing                   # existing distribution name (Customize)
         newDistro    = $newName                    # name of the dedicated runtime
         runtimeDir   = $runtimeDir
         projects     = $projects
         port         = $port
-        app          = (Find-App)
+        app          = $app
         xdsTar       = (Find-XdsTar)
         neggia       = (Find-Neggia)
         ccp4Mode     = $ccp4Mode                   # windows | linux | skip
         ccp4Win      = $winCcp4
         ccp4Tar      = $ccp4Tar
         launch       = (-not $NoLaunch)
-        mapDrive     = $true                       # show the projects folder as a Windows drive
-        driveLetter  = "P"
+        mapDrive     = $mapDrive                   # show the projects folder as a Windows drive
+        driveLetter  = $driveLetter
         wslState     = $wslState
         acknowledged = $false
         runtimeCreated = ($cfg -ne $null -and $cfg.RUNTIME_CREATED -eq "1")   # the uninstaller may remove a runtime we made
@@ -313,6 +455,17 @@ function Load-State([string]$path) {
     $s = @{}; foreach ($p in $j.PSObject.Properties) { $s[$p.Name] = $p.Value }
     return $s
 }
+$UpdateText = @"
+CrystalPilot is already installed on this computer. This updates it in place:
+
+   - the new program files are copied to the program folder
+   - CrystalPilot is updated inside the Linux distribution it already uses (its Python packages are checked; XDS, neggia and CCP4 stay as they are)
+   - your projects, the port, the drive letter and the shortcuts stay the same
+
+No new Linux runtime is created and nothing large is downloaded. The update takes about 5 minutes; the progress bar and a clock keep moving while it works.
+
+To install into a different Linux runtime or folder instead, click Customize.
+"@
 $DisclosureText = @"
 CrystalPilot drives XDS, which exists only as a Linux program. To run it on Windows, this installer will enable the Windows Subsystem for Linux (a Microsoft component of Windows) and use a Linux runtime (Ubuntu) that runs invisibly in the background. You will not need to use Linux yourself.
 
@@ -323,6 +476,8 @@ Approximate disk space:
    - CrystalPilot and its Python components:             about 0.5 GB
    - XDS and the Eiger reader:                            under 0.1 GB
    - CCP4 (optional: POINTLESS, AIMLESS, CTRUNCATE):      about 10 GB
+
+Time: 15 to 30 minutes on a new computer (a 340 MB download, then the Linux runtime is set up); the progress bar and a clock keep moving while it works.
 
 Downloads: about 1 GB, plus 4 GB if CCP4 is installed from the Linux package. Your data and results live in the projects folder you choose and are not counted here.
 
@@ -493,36 +648,12 @@ function Invoke-Install {
                     if ($local -and (Get-Item $local).Length -gt 100MB) { & $Log "Using the runtime image found at $local"; $tar = $local }
                 }
                 if (-not (Test-Path $tar) -or (Get-Item $tar).Length -lt 100MB) {
-                    & $Log "Downloading the Ubuntu 24.04 runtime image (about 340 MB) to $rdir ..."
-                    $tmp = $tar + ".part"
-                    if (Test-Path $tmp) { Remove-Item $tmp -Force }
-                    $done = $false
-                    try {
-                        Import-Module BitsTransfer -ErrorAction Stop
-                        $job = Start-BitsTransfer -Source $RootfsUrl -Destination $tmp -Asynchronous -DisplayName "CrystalPilot runtime"
-                        while ($job.JobState -in @("Connecting", "Transferring", "Queued", "TransientError")) {
-                            Start-Sleep -Milliseconds 700
-                            if ($job.BytesTotal -gt 0) { & $Progress ([int](100 * $job.BytesTransferred / $job.BytesTotal)) ("Downloading runtime image: {0} of {1} MB" -f [math]::Round($job.BytesTransferred / 1MB), [math]::Round($job.BytesTotal / 1MB)) }
-                        }
-                        if ($job.JobState -eq "Transferred") { Complete-BitsTransfer -BitsJob $job; $done = $true } else { Remove-BitsTransfer -BitsJob $job -ErrorAction SilentlyContinue }
-                    } catch { & $Log ("    (BITS unavailable: " + $_.Exception.Message + " - using a direct download)") }
-                    if (-not $done) {
-                        if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
-                        $wc = New-Object System.Net.WebClient
-                        $dl = $wc.DownloadFileTaskAsync($RootfsUrl, $tmp)
-                        while (-not $dl.IsCompleted) {
-                            Start-Sleep -Milliseconds 400
-                            $have = 0; if (Test-Path $tmp) { $have = (Get-Item $tmp).Length }
-                            & $Progress -1 ("Downloading runtime image: {0} MB" -f [math]::Round($have / 1MB))
-                        }
-                        if ($dl.IsFaulted) { throw ("Downloading the Ubuntu runtime image failed: " + $dl.Exception.GetBaseException().Message + " (check the internet connection or proxy, then run the installer again)") }
-                        $done = $true
-                    }
-                    if (-not (Test-Path $tmp) -or (Get-Item $tmp).Length -lt 100MB) { throw "The Ubuntu runtime image did not download completely. Check the internet connection and run the installer again." }
-                    Move-Item -Force $tmp $tar
-                    & $Progress 100 "Runtime image downloaded"
+                    & $Log "Downloading the Ubuntu 24.04 runtime image (about 340 MB) to $rdir - a few minutes on a normal connection ..."
+                    Save-Download -Url $RootfsUrl -Dest $tar -Log $Log -Progress $Progress -What "the Ubuntu runtime image"
+                    if ((Get-Item $tar).Length -lt 100MB) { Remove-Item $tar -Force -ErrorAction SilentlyContinue; throw "The Ubuntu runtime image did not download completely. Check the internet connection and run the installer again." }
+                    & $Progress -1 "Runtime image downloaded"
                 }
-                & $Log "Creating the Linux runtime '$distro' in $rdir ..."
+                & $Log "Creating the Linux runtime '$distro' in $rdir (1 to 3 minutes) ..."
                 $imp = Invoke-Live "wsl.exe" @("--import", $distro, $rdir, $tar, "--version", "2") $Log
                 if ($imp.rc -ne 0 -and $imp.text -match 'kernel|wsl.exe --update|WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED|update') {
                     & $Log "Updating WSL and trying again ..."
@@ -575,7 +706,11 @@ function Invoke-Install {
         $wHere = Join-Path $inst "windows"
 
         # ── 4. Linux side ──────────────────────────────────────────────────
-        & $Log "Installing inside the Linux runtime (Python packages, XDS, neggia, CCP4) - this takes a few minutes ..."
+        # A CrystalPilot still running in this runtime would keep serving the old
+        # version after the update (the launcher only reopens a running server).
+        $stopped = @(Invoke-WslLines @("-d", $distro, "-u", "root", "-e", "sh", "-c", "[ -x /usr/local/bin/crystalpilot ] && /usr/local/bin/crystalpilot stop"))
+        if (($stopped -join " ") -match "stopped") { & $Log "Stopped the running CrystalPilot (it restarts with the new version at the end)." }
+        & $Log $(if ([bool]$state.update -and $state.runtimeMode -eq "existing") { "Updating CrystalPilot inside '$distro' (Python packages are checked, XDS and CCP4 kept) - about 5 minutes ..." } else { "Installing inside the Linux runtime (Python packages, XDS, neggia, CCP4) - 5 to 15 minutes; the computer is busy while the Linux packages are unpacked ..." })
         $wa = @("-d", $distro, "-e", "bash", (ConvertTo-WslPath (Join-Path $wHere "wsl-install.sh") $distro),
                 "--app", (ConvertTo-WslPath $appDest $distro),
                 "--wrapper", (ConvertTo-WslPath (Join-Path $wHere "crystalpilot-wsl.sh") $distro),
@@ -609,7 +744,8 @@ function Invoke-Install {
         $projWin = Get-ProjectsWinPath $state
         $driveLine = ""
         # Projects folder reachable from Explorer: desktop shortcut, Quick Access, optional drive letter
-        try {
+        if ($TestMode) { & $Log "(test installation: no shortcuts, no Quick Access pin, no drive letter, no Apps & features entry)" }
+        if (-not $TestMode) { try {
             $desktop = [Environment]::GetFolderPath("Desktop")
             $shell = New-Object -ComObject WScript.Shell
             $lnk = $shell.CreateShortcut((Join-Path $desktop "CrystalPilot.lnk"))
@@ -631,13 +767,13 @@ function Invoke-Install {
             $lnk4.TargetPath = $lnk.TargetPath; $lnk4.WorkingDirectory = $wHere; $lnk4.Description = $lnk.Description; $lnk4.IconLocation = $lnk.IconLocation
             $lnk4.Save()
             & $Log "Shortcuts created (desktop: CrystalPilot, CrystalPilot Projects; Start menu: CrystalPilot; $inst\CrystalPilot)."
-        } catch { & $Log ("Could not create the shortcuts: " + $_.Exception.Message) }
-        try {
+        } catch { & $Log ("Could not create the shortcuts: " + $_.Exception.Message) } }
+        if (-not $TestMode) { try {
             $sh = New-Object -ComObject Shell.Application
             $ns = $sh.Namespace($projWin)
             if ($ns) { $ns.Self.InvokeVerb("pintohome"); & $Log "Projects folder pinned to Quick Access in Explorer." }
-        } catch { & $Log ("Could not pin the projects folder to Quick Access: " + $_.Exception.Message) }
-        if ([bool]$state.mapDrive) {
+        } catch { & $Log ("Could not pin the projects folder to Quick Access: " + $_.Exception.Message) } }
+        if ([bool]$state.mapDrive -and -not $TestMode) {
             $letter = ([string]$state.driveLetter).Trim().TrimEnd(':').ToUpper()
             if (-not $letter) { $letter = "P" }
             # Windows can map a drive letter to the runtime's root share (\\wsl.localhost\<distro>)
@@ -705,7 +841,7 @@ function Invoke-Install {
           "RUNTIME_DIR=$([string]$state.runtimeDir)", "RUNTIME_CREATED=$created") | Set-Content -Path (Join-Path $wHere "crystalpilot.cfg") -Encoding ASCII
         $state.driveMapped = $driveLine
         # Apps & features: name, version, and the uninstaller next to the launcher
-        try {
+        if (-not $TestMode) { try {
             $ver = "0"
             $vm = [regex]::Match((Get-Content $appDest -Raw), 'VERSION\s*=\s*"([^"]+)"'); if ($vm.Success) { $ver = $vm.Groups[1].Value }
             $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CrystalPilot"
@@ -722,7 +858,7 @@ function Invoke-Install {
             Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord
             Set-ItemProperty -Path $key -Name EstimatedSize -Value 2500000 -Type DWord
             & $Log "Registered in Apps & features (version $ver) with an uninstaller."
-        } catch { & $Log ("Could not register the uninstaller: " + $_.Exception.Message) }
+        } catch { & $Log ("Could not register the uninstaller: " + $_.Exception.Message) } }
         if ($result.message) {
             & $Log ("ERROR: " + $result.message)
         } else {
@@ -741,7 +877,15 @@ function Get-ProjectsWinPath($state) {
     $d = Get-DistroName $state
     return "\\wsl.localhost\$d" + (([string]$state.projects) -replace '/', '\')
 }
-function Get-UsedDriveLetters { return @((Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpper() }) + @((Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | ForEach-Object { $_.DeviceID.TrimEnd(':').ToUpper() }))) | Sort-Object -Unique }
+function Get-UsedDriveLetters {
+    # The letters Windows has handed out, plus remembered network mappings that are
+    # not connected right now.  Only the letters are read: Get-PSDrive (used before
+    # 0.6.6e) asked every network drive about itself and took 24 s on a PC with
+    # a slow share - the setup window waited for it.
+    $l = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpper() })
+    try { $l += @(Get-ChildItem "HKCU:\Network" -ErrorAction Stop | ForEach-Object { $_.PSChildName.Substring(0, 1).ToUpper() }) } catch {}
+    return @($l | Sort-Object -Unique)
+}
 function Get-FreeDriveLetters { $used = Get-UsedDriveLetters; return @([char[]]([char]'D'..[char]'Z') | ForEach-Object { [string]$_ } | Where-Object { $used -notcontains $_ }) }
 # After the restart WSL may need, setup is continued from a Start-menu entry the
 # user opens, not started by itself at log-in: a RunOnce key that relaunches a
@@ -749,6 +893,7 @@ function Get-FreeDriveLetters { $used = Get-UsedDriveLetters; return @([char[]](
 # heuristics weigh an installer that writes one accordingly.
 function Get-ResumeShortcutPath { return (Join-Path ([Environment]::GetFolderPath("Programs")) "Continue CrystalPilot Setup.lnk") }
 function Register-Resume($statePath) {
+    if ($TestMode) { return }
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut((Get-ResumeShortcutPath))
     $lnk.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -759,6 +904,7 @@ function Register-Resume($statePath) {
     $lnk.Save()
 }
 function Unregister-Resume {
+    if ($TestMode) { return }
     Remove-Item -LiteralPath (Get-ResumeShortcutPath) -Force -ErrorAction SilentlyContinue
     # the entry an earlier version of this installer left behind
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "CrystalPilotSetup" -ErrorAction SilentlyContinue
@@ -788,12 +934,29 @@ if ($Unattended) {
     exit 0
 }
 
+if ($Probe) {
+    # run by the wizard in the background while its first window says what is going on
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $s = New-DefaultState
+    $s.probeSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    Save-State $s $Probe
+    exit 0
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Wizard (WinForms) - modern dark layout: artwork sidebar with the step list,
 #  card-based pages, flat accent buttons.  All installation logic is above.
 # ══════════════════════════════════════════════════════════════════════════════
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# Setup.exe starts this hidden: an error nobody catches must not end it without a word.
+trap {
+    $err = $_
+    $errFile = Join-Path $SetupDataDir "setup-error.txt"
+    try { New-Item -ItemType Directory -Force -Path $SetupDataDir | Out-Null; Add-Content -Path $errFile -Encoding UTF8 -Value ((Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  wizard " + $WizardVersion + ": " + $err.Exception.Message + "`r`n" + $err.InvocationInfo.PositionMessage + "`r`n" + $err.ScriptStackTrace) } catch {}
+    try { [System.Windows.Forms.MessageBox]::Show("CrystalPilot Setup stopped because of an unexpected error:`n`n" + $err.Exception.Message + "`n`nThe details are in $errFile", "CrystalPilot Setup", "OK", "Error") | Out-Null } catch {}
+    exit 1
+}
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 # Preview pictures go into the published manual: they show an example machine,
@@ -803,19 +966,81 @@ if ($Preview) {
     function Get-UsedDriveLetters { return @("C", "D") }
     function Get-Distros { return @("Ubuntu") }
     function Get-InstalledConfig { return $null }
+    function Get-WslInstall([string]$distro) { return $null }
+    function Get-ShortcutFolders { return @() }
     function Find-XdsTar { return "C:\Downloads\XDS-gfortran_Linux_x86_64.tar.gz" }
     function Find-Neggia { return "C:\Downloads\dectris-neggia.so" }
     function Find-WindowsCcp4 { return "C:\CCP4-9\9.0" }
     function Find-Ccp4Tar { return "" }
 }
 function Test-Present([string]$p) { if ($Preview) { return [bool]$p }; return [bool]($p -and (Test-Path $p)) }
+
+# First window, at once: looking at WSL, the disks and an installed CrystalPilot
+# takes from a few seconds to a minute, and 0.6.6d showed nothing at all meanwhile.
+# The looking is done by a second copy of this script (-Probe); this window keeps
+# moving until it is done.
+$splash = $null
+function Show-Splash {
+    $f = New-Object System.Windows.Forms.Form
+    $f.FormBorderStyle = "None"; $f.StartPosition = "CenterScreen"; $f.ClientSize = New-Object System.Drawing.Size(480, 176)
+    $f.BackColor = [System.Drawing.Color]::FromArgb(10, 16, 30); $f.ShowInTaskbar = $true; $f.Text = "CrystalPilot Setup"
+    $t = New-Object System.Windows.Forms.Label; $t.Text = "CrystalPilot Setup"; $t.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 15)
+    $t.ForeColor = [System.Drawing.Color]::FromArgb(110, 168, 255); $t.Location = New-Object System.Drawing.Point(24, 20); $t.Size = New-Object System.Drawing.Size(430, 32); $f.Controls.Add($t)
+    $m = New-Object System.Windows.Forms.Label
+    $m.Text = "Checking this computer: WSL, the disks and an installed CrystalPilot.`r`nThis can take up to a minute - the setup window opens by itself."
+    $m.Font = New-Object System.Drawing.Font("Segoe UI", 9.75); $m.ForeColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+    $m.Location = New-Object System.Drawing.Point(24, 62); $m.Size = New-Object System.Drawing.Size(440, 44); $f.Controls.Add($m)
+    $pb = New-Object System.Windows.Forms.ProgressBar; $pb.Style = "Marquee"; $pb.MarqueeAnimationSpeed = 25
+    $pb.Location = New-Object System.Drawing.Point(24, 118); $pb.Size = New-Object System.Drawing.Size(432, 14); $f.Controls.Add($pb)
+    $c = New-Object System.Windows.Forms.Label; $c.Name = "clock"; $c.Text = ""; $c.Font = New-Object System.Drawing.Font("Segoe UI", 8.75)
+    $c.ForeColor = [System.Drawing.Color]::FromArgb(143, 163, 199); $c.Location = New-Object System.Drawing.Point(24, 142); $c.Size = New-Object System.Drawing.Size(432, 20); $f.Controls.Add($c)
+    $f.Add_Shown({ if ($StartedHidden) { $this.WindowState = "Minimized"; $this.WindowState = "Normal" }; $this.TopMost = $true; $this.Activate() })
+    $f.Show(); [System.Windows.Forms.Application]::DoEvents()
+    return $f
+}
 $state = $null
-if ($Resume -and (Test-Path $Resume)) { $state = Load-State $Resume } else { $state = New-DefaultState }
+if ($Resume -and (Test-Path $Resume)) { $state = Load-State $Resume }
+elseif ($Preview) { $state = New-DefaultState }
+else {
+    $splash = Show-Splash
+    $probeFile = Join-Path $env:TEMP ("cp-setup-probe-" + [guid]::NewGuid().ToString("N") + ".json")
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $pa = @("-NoProfile", "-ExecutionPolicy", (Get-ScriptPolicy), "-File", $PSCommandPath, "-Probe", $probeFile); if ($NoLaunch) { $pa += "-NoLaunch" }
+    $psi.Arguments = ConvertTo-ArgString $pa
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $pp = [System.Diagnostics.Process]::Start($psi)
+        $clock = $splash.Controls["clock"]
+        while (-not $pp.HasExited -and $sw.Elapsed.TotalSeconds -lt 240) {
+            [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 40
+            $clock.Text = "Checking ... " + (Format-Elapsed $sw.Elapsed)
+        }
+        if (-not $pp.HasExited) { try { $pp.Kill() } catch {} }
+    } catch {}
+    if (Test-Path $probeFile) {
+        try { $state = Load-State $probeFile } catch { $state = $null }
+        Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+    }
+    $script:ProbeSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    if (-not $state -and $sw.Elapsed.TotalSeconds -ge 240) {
+        # WSL (or a disk) did not answer for 4 minutes; asking it again here would
+        # hang this window with nothing on the screen but a frozen splash
+        $splash.Close()
+        [void][System.Windows.Forms.MessageBox]::Show("CrystalPilot Setup could not examine this computer: the Windows Subsystem for Linux did not answer within 4 minutes.`n`nRestart Windows (a pending WSL update often causes this), then run the setup again.", "CrystalPilot Setup", "OK", "Warning")
+        exit 1
+    }
+    if (-not $state) { $splash.Controls["clock"].Text = "Checking ... (second try)"; [System.Windows.Forms.Application]::DoEvents(); $state = New-DefaultState }
+    $splash.Controls["clock"].Text = "Opening the setup window ..."; [System.Windows.Forms.Application]::DoEvents()
+}
+if (-not $state.ContainsKey("update")) { $state.update = $false }
+$IsUpdate = [bool]$state.update
 if (-not $Resume -and $Config -and (Test-Path $Config)) {
     # wizard.ps1 -Config choices.json: the pages open with these choices filled in
     $pre = Load-State $Config; foreach ($k in $pre.Keys) { $state[$k] = $pre[$k] }
 }
-$StatePath = Join-Path $env:LOCALAPPDATA "CrystalPilot\setup-state.json"
+$StatePath = Join-Path $SetupDataDir "setup-state.json"
 New-Item -ItemType Directory -Force -Path (Split-Path $StatePath) | Out-Null
 
 # ── palette ──────────────────────────────────────────────────────────────────
@@ -860,7 +1085,7 @@ $form.FormBorderStyle = "FixedSingle"; $form.MaximizeBox = $false
 $form.BackColor = $C.bg; $form.ForeColor = $C.text; $form.Font = $FontUI
 
 $order  = @("welcome", "choices", "components", "install", "finish")
-$titles = @{ welcome = @("Install CrystalPilot", "Sensible settings are chosen for you; Customize if you want to change them"); choices = @("Options", "Folders, Linux runtime, port and drive letter"); components = @("Components", "XDS, the Eiger reader and CCP4 - found by themselves when possible"); install = @("Installing", "This can take several minutes"); finish = @("All set", "CrystalPilot is ready") }
+$titles = @{ welcome = $(if ($IsUpdate) { @("Update CrystalPilot", "The installed CrystalPilot is updated in place; your projects and settings are kept") } else { @("Install CrystalPilot", "Sensible settings are chosen for you; Customize if you want to change them") }); choices = @("Options", "Folders, Linux runtime, port and drive letter"); components = @("Components", "XDS, the Eiger reader and CCP4 - found by themselves when possible"); install = @("Installing", "This can take several minutes"); finish = @("All set", "CrystalPilot is ready") }
 $stepNames = @("Welcome", "Options", "Components", "Install", "Finish")
 $script:express = $true      # the Options page is skipped until Customize... is clicked
 $script:page = 0
@@ -981,13 +1206,13 @@ function Pick-File([string]$filter) {
 
 # ── Page 1: welcome (express) ────────────────────────────────────────────────
 $p1 = $pages["welcome"]
-$card = New-Card $p1 0 0 $PW 186 "What this installer does"
+$card = New-Card $p1 0 0 $PW 186 $(if ($IsUpdate) { "What this update does" } else { "What this installer does" })
 $tb = New-Object System.Windows.Forms.TextBox
-$tb.Multiline = $true; $tb.ReadOnly = $true; $tb.ScrollBars = "Vertical"; $tb.BorderStyle = "None"; $tb.Text = $DisclosureText.Replace("`n", "`r`n")
+$tb.Multiline = $true; $tb.ReadOnly = $true; $tb.ScrollBars = "Vertical"; $tb.BorderStyle = "None"; $tb.Text = $(if ($IsUpdate) { $UpdateText } else { $DisclosureText }).Replace("`n", "`r`n")
 $tb.Location = New-Object System.Drawing.Point(14, 34); $tb.Size = New-Object System.Drawing.Size(($PW - 28), 142); $tb.BackColor = $C.card; $tb.ForeColor = $C.text; $tb.Font = $FontSmall
 $tb.TabStop = $false          # otherwise it takes the focus and opens with all its text selected
 $card.Controls.Add($tb)
-$ecard = New-Card $p1 0 196 $PW 176 "Ready to install with these settings"
+$ecard = New-Card $p1 0 196 $PW 176 $(if ($IsUpdate) { "Ready to update with these settings" } else { "Ready to install with these settings" })
 $lblExpress = New-Lbl "" 14 36 ($PW - 156) 132 $C.text $FontMono; $ecard.Controls.Add($lblExpress)
 $bCustomize = New-Small "Customize..." ($PW - 130) 32 116; $ecard.Controls.Add($bCustomize)
 $lblDisks = New-Lbl "" 2 382 $PW 18 $C.dim $FontSmall; $p1.Controls.Add($lblDisks)
@@ -997,7 +1222,11 @@ $wslNote = switch ($state.wslState) {
     "nodistro" { "WSL is enabled but no Linux runtime exists yet. A dedicated CrystalPilot runtime will be created." }
     default    { "WSL is enabled. A dedicated CrystalPilot runtime is created so nothing is changed in your other Linux distributions (Customize to reuse one)." }
 }
-$vpNote = Get-VirtualizationProblem
+if ($IsUpdate) {
+    $from = if ([string]$state.installedVersion) { "CrystalPilot " + $state.installedVersion } else { "CrystalPilot" }
+    $wslNote = $from + " is installed in '" + $state.distro + "'. It is updated to " + $(if ($state.newVersion) { $state.newVersion } else { "this version" }) + " in place - no new Linux runtime, no large download. About 5 minutes."
+}
+$vpNote = if ($state.ContainsKey("vpNote")) { [string]$state.vpNote } else { Get-VirtualizationProblem }
 if ($vpNote) { $wslNote = $vpNote }
 $p1.Controls.Add((New-Lbl $wslNote 2 404 $PW 36 $(if ($vpNote) { $C.err } else { $C.accent }) $FontSmall))
 
@@ -1012,7 +1241,7 @@ $c2 = New-Card $p2 0 86 $PW 158 "Linux runtime (where Ubuntu, XDS and your proje
 $rbExisting = New-Radio "Use an existing Linux distribution:" 14 36 250; $c2.Controls.Add($rbExisting)
 $cmbDistro = New-Object System.Windows.Forms.ComboBox; $cmbDistro.Location = New-Object System.Drawing.Point(270, 36); $cmbDistro.Size = New-Object System.Drawing.Size(220, 26); $cmbDistro.DropDownStyle = "DropDownList"; $cmbDistro.FlatStyle = "Flat"; $cmbDistro.BackColor = $C.field; $cmbDistro.ForeColor = $C.text
 $c2.Controls.Add($cmbDistro)
-$distros = @(); if ($state.wslState -eq "ok") { $distros = @(Get-Distros) }
+$distros = @(); if ($state.wslState -eq "ok") { $distros = @($state.distros | Where-Object { $_ }); if ($distros.Count -eq 0) { $distros = @(Get-Distros) } }
 foreach ($d in $distros) { [void]$cmbDistro.Items.Add($d) }
 if ($distros.Count -gt 0) { $cmbDistro.SelectedIndex = 0 } else { $rbExisting.Enabled = $false; $cmbDistro.Enabled = $false }
 if ($state.distro -and ($distros -contains $state.distro)) { $cmbDistro.SelectedItem = $state.distro }
@@ -1036,6 +1265,9 @@ $chkDrive.Checked = [bool]$state.mapDrive; $c5.Controls.Add($chkDrive)
 $cmbDrive = New-Object System.Windows.Forms.ComboBox; $cmbDrive.Location = New-Object System.Drawing.Point(268, 29); $cmbDrive.Size = New-Object System.Drawing.Size(56, 26); $cmbDrive.DropDownStyle = "DropDownList"; $cmbDrive.FlatStyle = "Flat"; $cmbDrive.BackColor = $C.field; $cmbDrive.ForeColor = $C.text
 foreach ($L in (Get-FreeDriveLetters)) { [void]$cmbDrive.Items.Add($L + ":") }
 $pref = ([string]$state.driveLetter).TrimEnd(':').ToUpper() + ":"
+# an update keeps its letter: it is "in use" by the installation itself (the
+# install step keeps the mapping when it points at the same runtime)
+if ($IsUpdate -and [bool]$state.mapDrive -and $pref -match '^[D-Z]:$' -and -not $cmbDrive.Items.Contains($pref)) { $cmbDrive.Items.Insert(0, $pref) }
 if ($cmbDrive.Items.Contains($pref)) { $cmbDrive.SelectedItem = $pref } elseif ($cmbDrive.Items.Count -gt 0) { $cmbDrive.SelectedIndex = 0 }
 $c5.Controls.Add($cmbDrive)
 $chkDrive.Add_CheckedChanged({ $cmbDrive.Enabled = $chkDrive.Checked })
@@ -1091,18 +1323,21 @@ $bCcp4Win = New-Small "Browse" ($PW - 106) 86 92; $k3.Controls.Add($bCcp4Win); $
 $rbCcp4Lin = New-Radio "Linux CCP4 package (about 10 GB):" 30 116 250; $k3.Controls.Add($rbCcp4Lin)
 $txtCcp4Tar = New-Field $state.ccp4Tar 286 114 ($PW - 400); $k3.Controls.Add($txtCcp4Tar.Wrap)
 $bCcp4Tar = New-Small "Browse" ($PW - 106) 114 92; $k3.Controls.Add($bCcp4Tar); $bCcp4Tar.Add_Click({ $f = Pick-File "CCP4 Linux package (*.tar.gz)|*.tar.gz"; if ($f) { $txtCcp4Tar.Text = $f } })
-$rbCcp4Skip = New-Radio "Not now (can be added later)" 30 144 250; $k3.Controls.Add($rbCcp4Skip)
+$rbCcp4Skip = New-Radio $(if ($IsUpdate) { "Keep the installed CCP4 (or none)" } else { "Not now (can be added later)" }) 30 144 250; $k3.Controls.Add($rbCcp4Skip)
 $bCcp4Web = New-Small "Get it (download page)" ($PW - 186) 142 172; $k3.Controls.Add($bCcp4Web); $bCcp4Web.Add_Click({ Start-Process $Ccp4Url })
 switch ($state.ccp4Mode) { "windows" { $rbCcp4Win.Checked = $true } "linux" { $rbCcp4Lin.Checked = $true } default { $rbCcp4Skip.Checked = $true } }
 if (-not $state.ccp4Win) { $rbCcp4Win.Enabled = $false }
 
 $updateCompLabels = {
     if (Test-Present $txtXds.Text) { $rowXds.status.Text = "Found: " + $txtXds.Text; $rowXds.status.ForeColor = $C.ok; Set-Dot $rowXds.dot $C.ok; $bXdsWeb.Visible = $false }
+    elseif ($IsUpdate -and $state.runtimeMode -eq "existing") { $rowXds.status.Text = "The installed XDS is kept. Choose a file only to replace it with a newer XDS."; $rowXds.status.ForeColor = $C.ok; Set-Dot $rowXds.dot $C.ok; $bXdsWeb.Visible = $true }
     else { $rowXds.status.Text = "Not found yet. Click Get it and save XDS-gfortran_Linux_x86_64.tar.gz to Downloads - this line turns green by itself. CrystalPilot also installs without it (add XDS later)."; $rowXds.status.ForeColor = $C.warn; Set-Dot $rowXds.dot $C.warn; $bXdsWeb.Visible = $true }
     if (Test-Present $txtNeggia.Text) { $rowNeg.status.Text = "Found: " + $txtNeggia.Text; $rowNeg.status.ForeColor = $C.ok; Set-Dot $rowNeg.dot $C.ok; $bNegWeb.Visible = $false }
+    elseif ($IsUpdate -and $state.runtimeMode -eq "existing") { $rowNeg.status.Text = "The installed Eiger reader (if any) is kept. Choose a file only to replace it."; $rowNeg.status.ForeColor = $C.dim; Set-Dot $rowNeg.dot $C.dim; $bNegWeb.Visible = $true }
     else { $rowNeg.status.Text = "Not found - skip it unless your detector is an Eiger. Save dectris-neggia.so to Downloads and this line turns green."; $rowNeg.status.ForeColor = $C.dim; Set-Dot $rowNeg.dot $C.dim; $bNegWeb.Visible = $true }
     if ($rbCcp4Win.Checked) { $rowCcp4.status.Text = "Your CCP4 for Windows will be used through the runtime."; $rowCcp4.status.ForeColor = $C.ok; Set-Dot $rowCcp4.dot $C.ok }
     elseif ($rbCcp4Lin.Checked) { $rowCcp4.status.Text = "The Linux package will be installed inside the runtime (about 10 GB of disk)."; $rowCcp4.status.ForeColor = $C.ok; Set-Dot $rowCcp4.dot $C.ok }
+    elseif ($IsUpdate -and $state.runtimeMode -eq "existing") { $rowCcp4.status.Text = "The CCP4 CrystalPilot uses now (if any) is kept."; $rowCcp4.status.ForeColor = $C.dim; Set-Dot $rowCcp4.dot $C.dim }
     else { $rowCcp4.status.Text = "Not installed now. Save the Linux package (ccp4-*-linux64.tar.gz) to Downloads and it is picked up; or run this installer again later."; $rowCcp4.status.ForeColor = $C.dim; Set-Dot $rowCcp4.dot $C.dim }
 }
 & $updateCompLabels
@@ -1119,12 +1354,17 @@ $watch.Start()
 
 # ── Page 4: install ──────────────────────────────────────────────────────────
 $p4 = $pages["install"]
-$lblStep = New-Lbl "Ready to install." 0 0 $PW 22 $C.text $FontH2; $p4.Controls.Add($lblStep)
+$lblStep = New-Lbl "Ready to install." 0 0 ($PW - 120) 22 $C.text $FontH2; $p4.Controls.Add($lblStep)
+$lblClock = New-Lbl "" ($PW - 120) 2 120 20 $C.dim $FontSmall; $lblClock.TextAlign = "TopRight"; $p4.Controls.Add($lblClock)
+$script:installWatch = $null
 $progWrap = New-Object System.Windows.Forms.Panel; $progWrap.Location = New-Object System.Drawing.Point(0, 30); $progWrap.Size = New-Object System.Drawing.Size($PW, 6); $progWrap.BackColor = $C.border; $p4.Controls.Add($progWrap)
 $progBar = New-Object System.Windows.Forms.Panel; $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Size = New-Object System.Drawing.Size(0, 6); $progBar.BackColor = $C.accent; $progWrap.Controls.Add($progBar)
 $script:progPct = -1; $script:marqueeX = 0
 $marquee = New-Object System.Windows.Forms.Timer; $marquee.Interval = 40
-$marquee.Add_Tick({ if ($script:progPct -lt 0) { $script:marqueeX = ($script:marqueeX + 8) % ($PW + 160); $progBar.Location = New-Object System.Drawing.Point(($script:marqueeX - 160), 0); $progBar.Width = 160 } })
+$marquee.Add_Tick({
+    if ($script:progPct -lt 0) { $script:marqueeX = ($script:marqueeX + 8) % ($PW + 160); $progBar.Location = New-Object System.Drawing.Point(($script:marqueeX - 160), 0); $progBar.Width = 160 }
+    if ($script:installWatch) { $lblClock.Text = "working  " + (Format-Elapsed $script:installWatch.Elapsed) }
+})
 $logCard = New-Card $p4 0 46 $PW ($PH - 46) ""
 $logBox = New-Object System.Windows.Forms.TextBox; $logBox.Multiline = $true; $logBox.ReadOnly = $true; $logBox.ScrollBars = "Vertical"; $logBox.WordWrap = $false; $logBox.BorderStyle = "None"
 $logBox.Location = New-Object System.Drawing.Point(10, 10); $logBox.Size = New-Object System.Drawing.Size(($PW - 20), ($PH - 66)); $logBox.BackColor = $C.card; $logBox.ForeColor = $C.text; $logBox.Font = $FontMono
@@ -1140,7 +1380,7 @@ $bShowLog = New-Btn "Show the install log" 444 274 ($PW - 444) 36 $false; $p5.Co
 $lblFinishHint = New-Lbl "" 0 322 $PW 52 $C.dim $FontSmall; $p5.Controls.Add($lblFinishHint)
 $script:outcome = "ok"          # ok | warn | fail - decides the finish page's title and buttons
 $script:installing = $false
-$LogPath = Join-Path $env:LOCALAPPDATA "CrystalPilot\install-log.txt"
+$LogPath = Join-Path $SetupDataDir "install-log.txt"
 
 # ── Navigation ───────────────────────────────────────────────────────────────
 # The express summary on the welcome page is what the Options page currently says.
@@ -1149,8 +1389,11 @@ $updateExpress = {
     $rt = if ($state.runtimeMode -eq "dedicated") { "'" + $state.newDistro + "' (new Ubuntu 24.04 runtime) in " + $state.runtimeDir } else { "existing distribution '" + $state.distro + "'" }
     if ($state.runtimeMode -eq "dedicated" -and (@(Get-Distros) -contains [string]$state.newDistro)) { $rt = "'" + $state.newDistro + "' (already present - will be updated)" }
     $pv = if ([bool]$state.mapDrive) { [string]$state.driveLetter + ":\Projects\   (" + (Get-ProjectsWinPath $state) + ")" } else { Get-ProjectsWinPath $state }
-    $cc = switch ([string]$state.ccp4Mode) { "windows" { "CCP4 for Windows at " + $state.ccp4Win } "linux" { "Linux package, about 10 GB" } default { "not now (can be added later)" } }
+    $cc = switch ([string]$state.ccp4Mode) { "windows" { "CCP4 for Windows at " + $state.ccp4Win } "linux" { "Linux package, about 10 GB" } default { if ($IsUpdate -and $state.runtimeMode -eq "existing") { "kept as installed" } else { "not now (can be added later)" } } }
     $lblExpress.Text = ("Program folder   {0}`r`nLinux runtime    {1}`r`nProjects         {2}`r`nInterface        http://localhost:{3}`r`nCCP4             {4}" -f $state.installDir, $rt, $pv, $state.port, $cc)
+    if ($IsUpdate -and $state.runtimeMode -eq "existing" -and [string]$cmbDistro.SelectedItem -eq [string]$state.distro) {
+        $lblExpress.Text += ("`r`nVersion          {0}  ->  {1}" -f $(if ($state.installedVersion) { $state.installedVersion } else { "installed" }), $state.newVersion)
+    }
     $free = Get-FreeGB ([string]$state.runtimeDir); $need = 3; if ($state.ccp4Mode -eq "linux") { $need = 13 }
     $parts = @(); foreach ($d in (Get-FixedDrives)) { $parts += ("{0} {1} GB free" -f $d.Letter, $d.FreeGB) }
     $short = ($free -ne $null -and $free -lt $need)
@@ -1169,7 +1412,7 @@ function Show-Page([int]$i) {
     $btnBack.Visible = $showBack; $btnBack.Enabled = $showBack
     $btnNext.Visible = $showNext; $btnNext.Enabled = $showNext
     $btnCancel.Visible = $showCancel; $btnCancel.Enabled = $showCancel
-    $btnNext.Text = if ($i -eq 0) { "Continue" } elseif ($i -eq 2) { "Install" } elseif ($i -ge 3) { "Close" } else { "Next" }
+    $btnNext.Text = if ($i -eq 0) { "Continue" } elseif ($i -eq 2) { if ($IsUpdate -and $state.runtimeMode -eq "existing") { "Update" } else { "Install" } } elseif ($i -ge 3) { "Close" } else { "Next" }
     $side.Invalidate()
 }
 function Read-Choices {
@@ -1213,7 +1456,7 @@ function Show-Finish($r) {
             $summary += "Install log: $LogPath"
         }
         default {
-            $titles["finish"] = if ($script:outcome -eq "ok") { @("All set", "CrystalPilot is installed and ready") } else { @("Installed, with notes", "CrystalPilot starts; some optional parts are missing") }
+            $titles["finish"] = if ($script:outcome -eq "ok") { if ($IsUpdate -and $state.runtimeMode -eq "existing") { @("Updated", ("CrystalPilot " + $state.newVersion + " is installed and ready; projects and settings are as they were")) } else { @("All set", "CrystalPilot is installed and ready") } } else { @("Installed, with notes", "CrystalPilot starts; some optional parts are missing") }
             $summary += "Program folder    " + $inst
             $summary += "Start with        'CrystalPilot' on the desktop, Start menu or program folder"
             $summary += "Linux runtime     " + (Get-DistroName $state) + $(if ($state.runtimeMode -eq "dedicated") { "  (" + $state.runtimeDir + ")" } else { "" })
@@ -1241,6 +1484,11 @@ function Start-Installation {
     if (-not $Resume -and -not (Test-Choices)) { Show-Page 2; return }
     Save-State $state $StatePath
     $watch.Stop()
+    $est = if ($state.runtimeMode -eq "existing" -and $IsUpdate) { "about 5 minutes" }
+           elseif ($state.runtimeMode -eq "existing" -or (@(Get-Distros) -contains [string]$state.newDistro)) { "about 10 minutes" }
+           else { "15 to 30 minutes (a 340 MB download, then the Linux runtime is set up)" }
+    $titles["install"] = @($(if ($IsUpdate -and $state.runtimeMode -eq "existing") { "Updating" } else { "Installing" }), ("This takes " + $est + " - the bar and the clock keep moving while it works"))
+    $script:installWatch = [Diagnostics.Stopwatch]::StartNew()
     Show-Page 3
     $script:installing = $true
     $script:progPct = -1; $marquee.Start(); $progBar.BackColor = $C.accent
@@ -1248,7 +1496,8 @@ function Start-Installation {
     try { Set-Content -Path $LogPath -Value ("CrystalPilot setup log  " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  (wizard " + $WizardVersion + ", " + [Environment]::OSVersion.VersionString + ")") -Encoding UTF8 } catch {}
     $script:Pump = { [System.Windows.Forms.Application]::DoEvents() }
     $log = { param($m) $line = ($m -replace "`r", ""); $logBox.AppendText($line + "`r`n"); try { Add-Content -Path $LogPath -Value $line -Encoding UTF8 } catch {}; $t = ($line -replace '^\s+', ''); if ($t) { $lblStep.Text = $t.Substring(0, [Math]::Min(100, $t.Length)) }; [System.Windows.Forms.Application]::DoEvents() }
-    $progress = { param($pct, $m) if ($pct -ge 0 -and $pct -le 100) { $script:progPct = $pct; $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Width = [int]($PW * $pct / 100) }; $lblStep.Text = $m; [System.Windows.Forms.Application]::DoEvents() }
+    # a percentage fills the bar; -1 (a step of unknown length) makes it run back and forth again
+    $progress = { param($pct, $m) if ($pct -ge 0 -and $pct -le 100) { $script:progPct = $pct; $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Width = [Math]::Max(6, [int]($PW * $pct / 100)) } else { $script:progPct = -1 }; if ($m) { $lblStep.Text = $m }; [System.Windows.Forms.Application]::DoEvents() }
     $r = Invoke-Install -state $state -Log $log -Progress $progress
     if ($r.message -eq "elevate") {
         # Only enabling WSL runs as administrator, in a separate small window;
@@ -1274,7 +1523,7 @@ function Start-Installation {
         }
     }
     $script:installing = $false
-    $marquee.Stop(); $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Width = $PW; $progBar.BackColor = $(if ($r.ok) { $C.ok } else { $C.warn })
+    $marquee.Stop(); if ($script:installWatch) { $script:installWatch.Stop(); $lblClock.Text = "took " + (Format-Elapsed $script:installWatch.Elapsed) }; $progBar.Location = New-Object System.Drawing.Point(0, 0); $progBar.Width = $PW; $progBar.BackColor = $(if ($r.ok) { $C.ok } else { $C.warn })
     if ($r.reboot) {
         Register-Resume $StatePath
         & $log "Windows needs to restart. Afterwards, open 'Continue CrystalPilot Setup' from the Start menu."
@@ -1335,7 +1584,8 @@ $btnNext.Add_Click({
             Show-Page 2
         }
         2 {
-            if (-not ($txtXds.Text -and (Test-Path $txtXds.Text))) {
+            # an update in place keeps the XDS it has (wsl-install.sh replaces it only when given a package)
+            if (-not ($txtXds.Text -and (Test-Path $txtXds.Text)) -and -not ($IsUpdate -and $state.runtimeMode -eq "existing")) {
                 $a = [System.Windows.Forms.MessageBox]::Show("No XDS package selected. CrystalPilot will install without XDS; you can add it later on the Environment screen.`n`nContinue anyway?", "CrystalPilot Setup", "YesNo", "Warning")
                 if ($a -ne "Yes") { return }
             }
@@ -1353,7 +1603,12 @@ if ($Preview) {
     $i = 0
     foreach ($n in $order) {
         Show-Page $i; [System.Windows.Forms.Application]::DoEvents()
-        if ($n -eq "install") { $logBox.Text = "Checking the Windows Subsystem for Linux ...`r`nWSL is available.`r`nUsing the existing Linux distribution 'Ubuntu'.`r`nCopying CrystalPilot files to C:\CrystalPilot ...`r`nInstalling inside the Linux runtime (Python packages, XDS, neggia, CCP4) - this takes a few minutes ...`r`n    ==> System packages (apt)`r`n    [ok] python3, python3-venv, libgfortran5, libgomp1, curl installed`r`n    ==> Python environment (/root/.crystalpilot/venv)"; $lblStep.Text = "Installing inside the Linux runtime ..."; $progBar.Width = [int]($PW * 0.45) }
+        if ($n -eq "install") {
+            $titles["install"] = @("Installing", "This takes 15 to 30 minutes (a 340 MB download, then the Linux runtime is set up) - the bar and the clock keep moving while it works")
+            $header.Text = $titles["install"][0]; $sub.Text = $titles["install"][1]
+            $logBox.Text = "Checking the Windows Subsystem for Linux ...`r`n    state: ok`r`nWSL is available.`r`nDownloading the Ubuntu 24.04 runtime image (about 340 MB) to D:\CrystalPilot\runtime - a few minutes on a normal connection ..."
+            $lblStep.Text = "Downloading the Ubuntu runtime image: 212 of 340 MB (6.1 MB/s, about 1 min left)"; $progBar.Width = [int]($PW * 0.62); $lblClock.Text = "working  1:04"
+        }
         if ($n -eq "finish") { Show-Finish @{ ok = $true; warnings = @(); message = "done" } }
         $bmp = New-Object System.Drawing.Bitmap($form.Width, $form.Height)
         $form.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle(0, 0, $form.Width, $form.Height)))
@@ -1376,6 +1631,11 @@ if ($Preview) {
 # invisible.  Minimizing and restoring makes Windows show it - measured: without
 # this the form stays invisible, and a throwaway first window does not help.
 $form.Add_Shown({
+    if ($splash) { try { $splash.Close(); $splash.Dispose() } catch {}; $script:splash = $null }
+    try {
+        Set-Content -Path (Join-Path $SetupDataDir "setup-start.txt") -Encoding UTF8 -Value ("{0}  wizard {1}: setup window shown after {2:0.0} s (looking at this computer {3} s, of which the check itself {4} s); update: {5}" -f
+            (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $WizardVersion, $ScriptClock.Elapsed.TotalSeconds, $script:ProbeSeconds, $state.probeSeconds, $IsUpdate)
+    } catch {}
     if ($StartedHidden) { $form.WindowState = "Minimized"; $form.WindowState = "Normal" }
     elseif ($form.WindowState -ne "Normal") { $form.WindowState = "Normal" }
     $form.TopMost = $true; $form.Activate(); $form.TopMost = $false
@@ -1386,5 +1646,8 @@ if ($Resume -and $state.stage -eq "start") {
 } else {
     Show-Page 0
 }
-[void]$form.ShowDialog()
+# ShowDialog() makes the active window its owner - the splash - and closing the
+# splash in Add_Shown then closed this form too, 0.2 s after it appeared (0.6.6e).
+# An owner without a handle means no owner at all.
+[void]$form.ShowDialog((New-Object System.Windows.Forms.NativeWindow))
 exit 0

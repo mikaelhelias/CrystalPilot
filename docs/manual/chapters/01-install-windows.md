@@ -18,8 +18,8 @@ XDS exists only for Linux, so on Windows CrystalPilot runs inside the *Windows S
 
 ## Step by step
 
-1. Double-click **CrystalPilot-Setup-\<version\>.exe**. Windows shows its *unknown publisher* notice the first time (More info → Run anyway): the installer is not signed. The package unpacks itself and the wizard opens. (From the package folder, double-click `windows\CrystalPilot-Setup.bat` instead.)
-2. **Welcome** page: read what will be done, look at the settings the installer has chosen — program folder, a dedicated Linux runtime on the disk with the most free space, the projects folder shown as `P:\Projects\`, the port, what happens with CCP4 — and click **Continue**. Only if you want something else, click **Customize…**: that opens the *Options* page, which is otherwise skipped.
+1. Double-click **CrystalPilot-Setup-\<version\>.exe**. Windows shows its *unknown publisher* notice the first time (More info → Run anyway): the installer is not signed. The package unpacks itself; a small **CrystalPilot Setup** window then says that the computer is being checked (WSL, the disks, an installed CrystalPilot), and the wizard opens by itself — a few seconds, up to a minute on a busy computer. (From the package folder, double-click `windows\CrystalPilot-Setup.bat` instead.)
+2. **Welcome** page: read what will be done, look at the settings the installer has chosen — program folder, a dedicated Linux runtime on the disk with the most free space, the projects folder shown as `P:\Projects\`, the port, what happens with CCP4 — and click **Continue**. Only if you want something else, click **Customize…**: that opens the *Options* page, which is otherwise skipped. When CrystalPilot is already installed, the page is called **Update CrystalPilot** instead (see *Updating* below).
 
 ![The Welcome page: the notice, the settings the express install will use, and the Customize button.](images/wizard/wizard_1_welcome.png)
 
@@ -36,13 +36,17 @@ XDS exists only for Linux, so on Windows CrystalPilot runs inside the *Windows S
 
 ![The Components page: XDS, the Eiger reader and CCP4 as a checklist, each with what was found.](images/wizard/wizard_3_components.png)
 
-5. **Install** page: wait. The log shows every step (WSL check, runtime creation, Python packages, XDS unpacking, neggia, CCP4, shortcuts, drive letter). Five to fifteen minutes depending on the download speed.
+5. **Install** page: wait. The heading says how long it takes (15 to 30 minutes on a new computer, about 5 for an update). The log shows every step (WSL check, runtime download and creation, Python packages, XDS unpacking, neggia, CCP4, shortcuts, drive letter); the progress bar keeps moving and a clock counts the time, so a slow step is never mistaken for a frozen window. During the download the line above the bar shows the megabytes, the speed and the time left.
 
 ![The Install page with the live log.](images/wizard/wizard_4_install.png)
 
 6. **Finish** page: the summary shows the program folder, the runtime, the projects folder with its Windows path and drive letter, and the interface address. Click **Start CrystalPilot now** or close the installer with **Finish**; it is not needed while CrystalPilot runs.
 
 ![The Finish page with the summary and the start button.](images/wizard/wizard_5_finish.png)
+
+## Updating an installed CrystalPilot
+
+Run the new **CrystalPilot-Setup-\<version\>.exe**. The installer finds the installed copy by itself — through the CrystalPilot shortcuts, *Apps & features*, or the CrystalPilot inside a Linux distribution — and the first page becomes **Update CrystalPilot**: it names the installed version and the new one, and keeps the Linux distribution, program folder, port, projects folder and drive letter as they are. No new Linux runtime is created and nothing large is downloaded; the update takes about five minutes. **Customize…** is still there if you want to install somewhere else instead.
 
 ## Starting and stopping
 

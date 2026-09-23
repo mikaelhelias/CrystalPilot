@@ -100,6 +100,11 @@ function Show-AlreadyRunning([string]$u) {
     exit 0
 }
 
+Write-Host ""
+Write-Host "  Starting CrystalPilot ..." -ForegroundColor White
+Write-Host "  The first start after Windows boots takes up to a minute (the Linux runtime starts);" -ForegroundColor DarkGray
+Write-Host "  later starts take a few seconds. The browser opens a loading page meanwhile." -ForegroundColor DarkGray
+
 # ── Is it installed? ─────────────────────────────────────────────────────────
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { Fail "WSL is not installed. Run CrystalPilot-Setup.bat first." }
 $info = Get-WslOutput @("-e", "/usr/local/bin/crystalpilot", "info")
@@ -115,27 +120,61 @@ $url = "http://localhost:$Port"
 # ("info" already checked for a running server; a second wsl call would only add seconds)
 if ($cfg["RUNNING"] -eq "yes") { Show-AlreadyRunning $url }
 
+# ── Open the browser right away on the loading screen ────────────────────────
+# splash.html shows the program name, version and credits, polls the server
+# and switches to the interface as soon as it answers.
+$job = $null
+if (-not $NoBrowser) {
+    $splash = Join-Path $Here "splash.html"
+    if (Test-Path $splash) {
+        $splashUrl = "file:///" + ($splash -replace '\\', '/') + "?url=" + [uri]::EscapeDataString($url)
+        try { Start-Process $splashUrl } catch { }
+    } else {
+        $job = Start-Job -ArgumentList $url -ScriptBlock {
+            param($u)
+            for ($i = 0; $i -lt 120; $i++) {
+                try {
+                    $r = Invoke-WebRequest -UseBasicParsing -Uri ($u + "/health") -TimeoutSec 2
+                    if ($r.StatusCode -eq 200) { Start-Process $u; break }
+                } catch { }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
+}
+
+
 # ── The drives Windows has (WSL does not always mount them itself) ──────────
 # Network drives are never mounted by WSL, the local ones only when
 # [automount] is on in the runtime's /etc/wsl.conf - and never a disk plugged
 # in after it started.  Report every letter; the Linux side mounts the ones
 # that are missing and leaves the rest alone.
 $netArgs = @()
+# Only the letters are read here.  Get-CimInstance Win32_LogicalDisk (used before
+# 0.6.6e) asked every network drive for its size and waited for each disconnected
+# one: 24 s before anything happened on a PC with four remembered, disconnected shares.
 try {
-    foreach ($d in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3 OR DriveType=4" -ErrorAction Stop)) {
-        # A card reader without a card, or a disconnected mapping, reports no size;
-        # skipping it here saves an 8-second mount timeout inside WSL for each one.
-        if (-not $d.DeviceID -or -not $d.Size) { continue }
+    foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
+        if ($d.DriveType -ne [System.IO.DriveType]::Fixed -and $d.DriveType -ne [System.IO.DriveType]::Removable) { continue }
+        $id = $d.Name.Substring(0, 2).ToUpper()
         # the projects drive is the runtime's own folder seen from Windows:
         # mounting it back into Linux would be a loop through the share
-        if ($ProjectsDrive -and $d.DeviceID -eq $ProjectsDrive.Substring(0, 2)) { continue }
-        if ($d.DriveType -eq 4) {
-            # skip letters that point at a WSL runtime itself (e.g. the P: projects drive): mounting
-            # them back inside Linux would only add a slow loop through the network share
-            if (-not $d.ProviderName -or $d.ProviderName -match '^\\\\wsl(\$|\.localhost)\\') { continue }
-            $netArgs += @("--net", ($d.DeviceID + "=" + $d.ProviderName))
-        } else {
-            $netArgs += @("--net", ($d.DeviceID + "="))
+        if ($ProjectsDrive -and $id -eq $ProjectsDrive.Substring(0, 2).ToUpper()) { continue }
+        # a card reader without a card: skipping it saves an 8-second mount timeout inside WSL
+        if (-not $d.IsReady) { continue }
+        $netArgs += @("--net", ($id + "="))
+    }
+} catch { }
+# Network drives: "net use" knows which mappings are connected without asking the
+# servers.  Disconnected ones are left out (mounting them could only time out).
+try {
+    foreach ($line in @(& net.exe use 2>$null)) {
+        if ($line -match '^OK\s+([A-Za-z]:)\s+(\\\\.+?)(\s{2,}|$)') {
+            $id = $matches[1].ToUpper(); $unc = $matches[2].Trim()
+            if ($ProjectsDrive -and $id -eq $ProjectsDrive.Substring(0, 2).ToUpper()) { continue }
+            # a letter that points at a WSL runtime itself (e.g. the P: projects drive)
+            if ($unc -match '^\\\\wsl(\$|\.localhost)\\') { continue }
+            $netArgs += @("--net", ($id + "=" + $unc))
         }
     }
 } catch { }
@@ -170,29 +209,6 @@ if ($netArgs.Count -gt 0) {
     Write-Host ("  Drives offered to Linux: " + ($letters -join ", ") + "  (those WSL has not mounted itself are added now)") -ForegroundColor DarkGray
 }
 Write-Host ""
-
-# ── Open the browser right away on the loading screen ────────────────────────
-# splash.html shows the program name, version and credits, polls the server
-# and switches to the interface as soon as it answers.
-$job = $null
-if (-not $NoBrowser) {
-    $splash = Join-Path $Here "splash.html"
-    if (Test-Path $splash) {
-        $splashUrl = "file:///" + ($splash -replace '\\', '/') + "?url=" + [uri]::EscapeDataString($url)
-        try { Start-Process $splashUrl } catch { }
-    } else {
-        $job = Start-Job -ArgumentList $url -ScriptBlock {
-            param($u)
-            for ($i = 0; $i -lt 120; $i++) {
-                try {
-                    $r = Invoke-WebRequest -UseBasicParsing -Uri ($u + "/health") -TimeoutSec 2
-                    if ($r.StatusCode -eq 200) { Start-Process $u; break }
-                } catch { }
-                Start-Sleep -Milliseconds 500
-            }
-        }
-    }
-}
 
 # ── Run the server in the foreground ─────────────────────────────────────────
 $wslArgs = @(Get-DistroArgs) + @("-e", "/usr/local/bin/crystalpilot", "start", "--port", "$Port") + $appArgs + $netArgs

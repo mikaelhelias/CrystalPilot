@@ -274,7 +274,7 @@ Source: "{pkg}\*"; DestDir: "{{app}}\{pkgname}"; Flags: recursesubdirs createall
 ; setup, so they carry no download mark and RemoteSigned runs them.
 ; -StartedHidden: Windows applies the hidden start-up mode to the wizard's own
 ; window too; the wizard un-hides it when told it was started this way.
-Filename: "{{sys}}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy RemoteSigned -STA -File {dq}{{app}}\{pkgname}\windows\wizard.ps1{dq} -StartedHidden"; WorkingDir: "{{app}}\{pkgname}\windows"; Flags: nowait runhidden
+Filename: "{{sys}}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy RemoteSigned -STA -File {dq}{{app}}\{pkgname}\windows\wizard.ps1{dq} -StartedHidden"; WorkingDir: "{{app}}\{pkgname}\windows"; StatusMsg: "Starting the CrystalPilot setup - its first window opens in a few seconds ..."; Flags: nowait runhidden
 """
 
 

@@ -96,11 +96,17 @@ step "Python environment ($VENV)"
 if [ ! -x "$VENV/bin/python" ]; then
     python3 -m venv "$VENV" >/dev/null 2>&1 || warn "could not create venv (is python3-venv installed?)"
 fi
+# pip with one line per package, so the Windows installer's log keeps moving
+# during the longest silent step (it said nothing for minutes before 0.6.6e)
+pip_live() {
+    "$VENV/bin/python" -m pip install --progress-bar off "$@" 2>&1 | grep --line-buffered -E '^(Collecting|Installing collected|Successfully installed)' | sed -u 's/^/        /'
+    return "${PIPESTATUS[0]}"
+}
 if [ -x "$VENV/bin/python" ]; then
     "$VENV/bin/python" -m pip install -q --upgrade pip wheel >/dev/null 2>&1 || true
-    if "$VENV/bin/python" -m pip install -q numpy h5py hdf5plugin fabio matplotlib gemmi >/dev/null 2>&1; then
+    if pip_live numpy h5py hdf5plugin fabio matplotlib gemmi; then
         ok "numpy, h5py, hdf5plugin, fabio, matplotlib, gemmi installed"
-    elif "$VENV/bin/python" -m pip install -q numpy h5py hdf5plugin fabio matplotlib >/dev/null 2>&1; then
+    elif pip_live numpy h5py hdf5plugin fabio matplotlib; then
         ok "numpy, h5py, hdf5plugin, fabio, matplotlib installed (gemmi skipped)"
         NOTES+=("gemmi could not be installed; MTZ conversion via gemmi will be unavailable (XDSCONV still works).")
     else
