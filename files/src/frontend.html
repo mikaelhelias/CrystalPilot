@@ -11704,6 +11704,8 @@
                 const d = await r.json();
                 if (r.ok) {
                     var _saveMsg = '<div class="status ok">✓ Parameters saved to XDS.INP</div>';
+                    var _libNote = document.getElementById('p-lib-note');   // the file now has the field's LIB
+                    if (_libNote) { _libNote.style.display = 'none'; _libNote.textContent = ''; }
                     // Warn if HDF5 template detected but LIB is commented/empty
                     var _tmplField = document.getElementById('p-name-template');
                     var _tmplVal = _tmplField ? _tmplField.value.trim().toLowerCase() : '';
