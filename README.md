@@ -19,7 +19,8 @@ CrystalPilot aims to make X-ray data processing user-friendly and consolidated i
 - **XDS.INP and XSCALE.INP editors.** Key parameters as fields, written from the image headers or filled from CORRECT.LP; the full files are one tab away.
 - **Results read for you.** Key values of IDXREF.LP, CORRECT.LP and XSCALE.LP are pulled out, highlighted and graphed.
 - **Resolution cut-offs.** I/σ ≈ 2, R-obs ≈ 55 %, CC½ ≈ 50 % and CC½ significance are marked directly on the statistics and applied in one click.
-- **AutoPilot.** Processes single data sets or whole batches unattended, including iterative auto-indexing strategies.
+- **AutoPilot.** Processes single data sets or whole batches unattended, including iterative auto-indexing strategies; screw axes are set from the systematic absences.
+- **CPU cores and RAM.** How much of the computer XDS and the other programs may use is set in the app (4 cores by default), so the computer stays usable while they run; the core count is written into XDS.INP and XSCALE.INP.
 - **Table 1** built from the processing statistics, ready to copy into a paper.
 - **ΔCC½ frame rejection, POINTLESS, AIMLESS, XDSCONV and gemmi** for the steps after scaling.
 - **Frame viewer** for Eiger HDF5, CBF and IMG frames.

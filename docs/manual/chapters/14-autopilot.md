@@ -47,7 +47,7 @@ Each data set is marked:
 - `LIB=`, which becomes the HDF5 library set in this step for Eiger data (**Detect** finds it next to XDS, **Save** stores it);
 - file names that do not exist on this computer (for example `X-GEO_CORR`), which are commented out;
 - `DATA_RANGE`, `SPOT_RANGE` and `BACKGROUND_RANGE`, when they go beyond the frames on disk (a spot range with none of its frames on disk is commented out);
-- the beamline's computer settings — `CLUSTER_NODES`, `MAXIMUM_NUMBER_OF_JOBS`, `MAXIMUM_NUMBER_OF_PROCESSORS`, `SECONDS` — commented out;
+- the beamline's computer settings — `CLUSTER_NODES`, `MAXIMUM_NUMBER_OF_JOBS`, `MAXIMUM_NUMBER_OF_PROCESSORS`, `SECONDS` — commented out, and this computer's own added: `MAXIMUM_NUMBER_OF_PROCESSORS=` with the CPU cores of the XDS Config panel and `MAXIMUM_NUMBER_OF_JOBS= 1` (chapter 3);
 - `INCLUDE_RESOLUTION_RANGE`, commented out, because your cut-offs decide.
 
 Every change is a comment starting with `! CrystalPilot:` in the project's `XDS.INP`, and a line in the log.
@@ -74,6 +74,7 @@ Every change is a comment starting with `! CrystalPilot:` in the project's `XDS.
 |---|---|
 | Space group and cell | determined for each data set (default), or one space group and cell imposed on all. For one crystal form, imposing it keeps every data set in the same setting, which merging needs. The cell is required: XDS takes a space group only together with its cell |
 | Space group in an imported XDS.INP | for data sets whose imported file has a space group and its unit cell (a space group without a cell is left out). By default: **process without it; if that fails, with it; if that fails too, auto-index**. Or always use it, or ignore it |
+| Screw axes | tick box, on by default; shown when the space group is determined for each data set. XDS chooses the space group without screw axes (C222 for C222₁, P222 for P2₁2₁2₁). Ticked, the axial reflections in CORRECT.LP are checked, and when they show screw axes CORRECT runs again in the matching space group with the refined cell — seconds, no re-integration; the re-integration and the merge then use it. The log says what was seen, for example *0,0,l only every 2nd present → C222₁ (#20), not C222 (#21) as XDS chose*. Enantiomorphs (P4₁/P4₃, P3₁/P3₂ …) cannot be told apart this way: one is kept and the log names the other. A space group given in the XDS.INP is left alone. Unticked, XDS's choice is kept |
 | If indexing fails | after AutoPilot's own IDXREF fixes: give up on that data set, or auto-index at the quick, medium (default) or full tier |
 
 With the default route a data set gets up to three runs, each starting again from the imported file: first without its space group, then with it, then with auto-indexing and the space group left open. The first two do not auto-index, so a failed indexing moves on to the next attempt at once. With **give up** as the indexing choice, the route ends after the second run.

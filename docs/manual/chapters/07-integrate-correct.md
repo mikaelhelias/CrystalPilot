@@ -16,7 +16,7 @@ The status line shows the folder where results will be read from; on Windows als
 
 ## Run
 
-1. Click **▶ Integrate & Correct** (DEFPIX → INTEGRATE → CORRECT). INTEGRATE is the slow step; xds_par uses every core (see *Parallel processing* in the sidebar).
+1. Click **▶ Integrate & Correct** (DEFPIX → INTEGRATE → CORRECT). INTEGRATE is the slow step; xds_par uses the CPU cores set in the sidebar's XDS Config panel (4 by default, chapter 3).
 2. Alternatives: **▶ Full Pipeline** runs everything from XYCORR (or up to the step chosen in *Stop at*); **⚡ CORRECT Only** re-runs CORRECT alone in seconds after a change of space group, cell, resolution or Friedel's law; **GXPARM Re-integrate** copies the geometry refined by CORRECT (`GXPARM.XDS`) over `XPARM.XDS` and runs DEFPIX → INTEGRATE → CORRECT again, which often improves the statistics; the **▶** next to any step runs from that step through CORRECT.
 
 ![Integrate & Correct, and CORRECT Only for quick re-runs.](images/07-02-integrate-button.png)
@@ -81,7 +81,7 @@ They are meant to be read by someone who was not sitting next to you:
 - percentages use a fixed 0–100 axis, so two runs can be laid side by side and compared;
 - the overall row, the space group, the cell, and a line naming the program, the log and the date travel with the figure.
 
-**Any chart on screen**: click it to expand, then **⤓ PNG** in the corner of the window. That saves the chart as it is — dark, every series together — drawn at a fixed size so it does not depend on your screen.
+**Any chart on screen**: click it to open it in a window. Drag the window by its title bar to move it and by the grip in its bottom-right corner to resize it (the chart is redrawn to fill it); it keeps its place and size for the next chart, and a double-click on the title bar puts it back in the middle. **⤓ PNG** in the corner of the window saves the chart. That saves the chart as it is — dark, every series together — drawn at a fixed size so it does not depend on your screen.
 
 The figures need matplotlib, the same package the frame viewer uses; the Environment screen offers to install it if it is missing.
 

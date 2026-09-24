@@ -250,7 +250,8 @@ section("doc-lpviewer", "LP viewer, metrics, charts, history",
       "resolution; a CC&#189; shell XDS marks as significant at the 0.1&nbsp;% level gets a filled marker and one it does not a hollow one; "
       "percentages use a fixed 0&ndash;100 axis so two runs can be laid side by side; and the overall row, the space group, the cell and a "
       "provenance line (program, log, date) travel with the figure."),
-    P("Any chart on screen can also be saved as it is: click it to expand, then " + B("&#10515; PNG") + ". That image is drawn at a fixed "
+    P("Any chart on screen opens in a window when clicked: drag its title bar to move it, the grip in its bottom-right corner to resize it (the chart is redrawn to fill it); a double-click on the title bar puts it back in the middle. "
+      "It can also be saved as it is: " + B("&#10515; PNG") + " in the window. That image is drawn at a fixed "
       "size, so it does not depend on the screen it was saved from, and it keeps the dark interface colours and every series together."),
     SUB("Exports"),
     P(B("&#10515; Export CORRECT Data (.csv)") + " downloads the parsed CORRECT data (shell table, Wilson data, moments, aliens), " + B("&#10515; Export INTEGRATE Data (.csv)") + " the per-frame data. Every chart expands on click; " + B("hide") + " next to a chart title collapses it."),

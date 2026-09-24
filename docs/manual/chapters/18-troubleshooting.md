@@ -19,6 +19,9 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 | `XSCALE.INP has no INPUT_FILE= line and no XDS_ASCII.HKL was found` | no CORRECT output yet | run CORRECT, or add inputs with Auto-detect |
 | `another program is already running in <folder>` | a run is active there, maybe in another tab | wait or **Stop** |
 | `... exceeded the time limit of 240 min and was stopped` | very large data set or slow storage | raise `step_timeout` in `~/.crystalpilot/settings.json` |
+| `stopped by the RAM limit - it needed more than N GB` | the run needed more memory than the *RAM (GB)* field allows | raise RAM in the XDS Config panel of the sidebar and run it again (0 = no limit) |
+| The computer is slow while XDS runs | the programs use too many cores or too much memory | lower *CPU cores* or *RAM* in the XDS Config panel (chapter 3); they apply from the next run |
+| *RAM limit not available here* under the RAM field | no cgroup v2, or CrystalPilot runs neither as root nor in a systemd user session | the CPU limit still works; chapter 3 |
 | `CCP4 not found` | CCP4 not installed, not sourced, or installed somewhere CrystalPilot does not search (CCP4 9 is unpacked wherever you like) | Environment screen → CCP4 row: enter the CCP4 folder (or its bin folder) and Save & re-check. It is remembered per computer. Linux: sourcing `ccp4.setup-sh` before starting also works, but only for a start from that same terminal |
 | `Not authorised` (403) when scripting | the request lacks the per-launch token | send the token printed in the console as `X-CrystalPilot-Token` or `?token=`; set `XDS_GUI_TOKEN` to fix it |
 | `Port already in use` | another CrystalPilot (or program) on the port | the launcher opens the browser on the running one; otherwise change the port |
@@ -28,7 +31,7 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 
 | What | Where |
 |---|---|
-| XDS folder, neggia path, CCP4 folder, parallel on/off, step time limit | `~/.crystalpilot/settings.json` (per computer; written by the interface) |
+| XDS folder, neggia path, CCP4 folder, parallel on/off, CPU cores, RAM, step time limit | `~/.crystalpilot/settings.json` (per computer; written by the interface) |
 | Work mode, cut-off preference | remembered by the browser |
 | Per project: run folders, completed steps, last image path | `metadata.json` in the project folder |
 | Windows launcher | `windows\crystalpilot.cfg` (runtime, port, install folder, projects, drive letter) |
@@ -46,7 +49,7 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 | `--xds-path DIR` | `XDS_GUI_XDS_PATH` | folder of the script |
 | `--restrict-browse` | `XDS_GUI_RESTRICT_BROWSE` | off (on: every path the interface lists, reads, runs in or writes stays inside the projects folder) |
 | | `XDS_GUI_ALLOWED_HOSTS` | extra host names a server on 127.0.0.1 answers to |
-| | `XDS_GUI_SETTINGS`, `XDS_GUI_PARALLEL`, `XDS_GUI_STEP_TIMEOUT`, `XDS_GUI_TOKEN`, `NEGGIA` | see the Docs tab |
+| | `XDS_GUI_SETTINGS`, `XDS_GUI_PARALLEL`, `XDS_GUI_CPU_CORES`, `XDS_GUI_RAM_GB`, `XDS_GUI_STEP_TIMEOUT`, `XDS_GUI_TOKEN`, `NEGGIA` | see the Docs tab |
 
 ## Keyboard
 

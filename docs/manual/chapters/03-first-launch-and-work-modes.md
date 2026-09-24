@@ -23,6 +23,22 @@ The first time the interface opens, and again whenever something about the insta
 2. Click **Continue**. Tick **Don't show this again unless something changes** if you do not want the screen at every start; it comes back when the fingerprint of the checks changes, for example after CCP4 was installed.
 3. Later: click **⚙ Environment** in the header to open the screen again (it is also in the About panel behind the version badge). The header also has **⬡ Check Connection** (is the server answering?) and, when the manual is installed, **📖 Manual**.
 
+## CPU cores and RAM for processing
+
+The **XDS Config** panel at the bottom of the sidebar sets how much of the computer XDS, XSCALE and the other programs may use — all runs together, so the computer stays usable while they work. Both values are remembered per computer.
+
+![The XDS Config panel: CPU cores and RAM for the programs, with what this computer offers.](images/03-03-cpu-ram.png)
+
+| Field | Default | What it does |
+|---|---|---|
+| **CPU cores** | 4 | written into every `XDS.INP` (`MAXIMUM_NUMBER_OF_PROCESSORS=`, right after `JOB=`, with `MAXIMUM_NUMBER_OF_JOBS= 1`) and `XSCALE.INP` (`MAXIMUM_NUMBER_OF_PROCESSORS=`, before the first `OUTPUT_FILE=`). Changing it rewrites these lines in every project and in the open editors; the programs are also held to that many cores |
+| **RAM (GB)** | 16, at most three quarters of the memory | the memory the programs may use, including the frames Linux keeps cached while reading them (dropped first when the limit is reached). A run that needs more is stopped and the log says so. 0 = no limit |
+
+- Without these keywords `xds_par` and `xscale_par` take every core they see; `MAXIMUM_NUMBER_OF_JOBS` matters because COLSPOT and INTEGRATE otherwise run several jobs of that many cores each.
+- *of N* next to each field is what the programs can see: under Windows, the cores and the memory WSL may use (by default half of the PC's memory).
+- The RAM limit needs Linux control groups (cgroup v2), used when CrystalPilot runs as root (as under WSL) or in a systemd user session (a normal Linux desktop). Where neither is available the field is greyed out with the reason; the CPU limit still works.
+- The *Parallel processing* switch above them chooses `xds_par` / `xscale_par` or the serial `xds` / `xscale`.
+
 ## Work modes: how much you see
 
 The sidebar has a **Work mode** selector with four levels. A higher level never removes anything; it adds tabs, parameters and analysis sections. The manual describes the interface at **Expert**, so if a button or field mentioned here is not on your screen, raise the level.

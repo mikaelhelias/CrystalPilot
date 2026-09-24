@@ -44,6 +44,8 @@ const STEPS = [
   // 03 first launch / environment
   S("03-01-environment", { action: "envCheck(true)", wait: 3000, highlight: ["#envcheck .btn-primary"], crop: "#envcheck" }),
   S("03-02-work-mode", { action: "envClose(); switchMainTab('dp')", highlight: ["#prefs-tier-badge", "#xds-path-input"], crop: SIDEBAR }),
+  S("03-03-cpu-ram", { action: "envClose(); switchMainTab('dp'); document.getElementById('res-cpu').scrollIntoView({ block: 'center' })", wait: 800,
+                       highlight: ["#res-cpu", "#res-ram"], crop: "document.getElementById('res-cpu').closest('.sidebar-section')", cropPad: 12 }),
   // 04 projects
   S("04-01-create-project", { action: "document.getElementById('project-name').value = 'lysozyme_1'; document.getElementById('project-desc').value = 'Pilatus 6M, 0.1 deg, 1800 frames';", highlight: ["#project-name", "button[onclick='createProject()']"], crop: SIDEBAR }),
   S("04-02-project-open", { action: "document.getElementById('project-name').value = ''; document.getElementById('project-desc').value = ''; await loadProject(PROJECT); switchMainTab('dp')", wait: 2500, highlight: ["#project-list", "#current-name"], crop: "viewport" }),
