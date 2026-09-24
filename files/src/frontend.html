@@ -1782,7 +1782,7 @@
                 const saved = (d[key] !== undefined && d[key] !== null) ? d[key] : el.value.trim();
                 el.value = saved;
                 if (key === 'xds_path') { const x = document.getElementById('xds-path-input'); if (x) x.value = saved; }
-                if (key === 'neggia_lib') { const n = document.getElementById('ap-neggia-path'); if (n) n.value = saved; }
+                if (key === 'neggia_lib') { const n = document.getElementById('ap-neggia-path'); if (n) n.value = saved; _neggiaConfigured = saved; }
             } catch (e) { showToast('Could not save: ' + e.message, 'error'); return; }
             envCheck(true);
         }
@@ -2750,7 +2750,9 @@
                                         <input type="text" id="p-lib" placeholder="e.g. /path/to/dectris-neggia.so" title="Path to an external library for reading detector images (e.g. dectris-neggia.so for HDF5/H5 format). Required for Eiger .h5 files." style="min-width:280px;">
                                         <button class="btn-ghost btn-sm" onclick="browseFolder('lib-path')" title="Browse for the library file (.so / .dylib)" style="padding:2px 6px;">📂</button>
                                         <button class="toggle-btn inactive" id="tog-lib" onclick="toggleParam('LIB')" title="Toggle active or commented out in XDS.INP. Needed for HDF5/H5 image format support.">Commented</button>
+                                        <label style="min-width:0; font-family:inherit; display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; color:var(--txt3); cursor:pointer; white-space:nowrap;" title="Ticked: loading an XDS.INP puts its LIB= path in this field. Unticked: the field keeps the configured HDF5 library path (Settings / AutoPilot), whatever LIB= the loaded file has."><input type="checkbox" id="p-lib-from-file" onchange="_libFromFileChanged(this)"> from loaded XDS.INP</label>
                                     </div>
+                                    <div id="p-lib-note" style="display:none; font-size:0.72rem; color:var(--txt3); margin:-2px 0 6px 0;"></div>
                                     <div class="param-row" data-tier="normal">
                                         <label>FRIEDEL'S_LAW</label>
                                         <button class="toggle-btn" id="tog-friedel" onclick="toggleFriedel()" title="FRIEDEL'S_LAW controls whether Bijvoet pairs (h,k,l and -h,-k,-l) are merged. TRUE (default): merges Friedel pairs — use for native (non-anomalous) data. FALSE: keeps Friedel pairs separate — required for SAD/MAD phasing or to assess anomalous signal from heavy atoms, selenomethionine, or native sulfur." style="min-width:60px;">TRUE</button>
@@ -11051,6 +11053,41 @@
             }
         }
 
+        // -- LIB= in Key Parameters: configured HDF5 library vs the loaded file's --
+        // Unticked (default): loading an XDS.INP never replaces the configured
+        // library path with the file's LIB=; ticked: the file's LIB= is used.
+        let _neggiaConfigured = null;    // the server's HDF5 library path; null = not asked yet
+        function _libFromFile() {
+            try { return localStorage.getItem('cp.lib.fromXdsinp') === '1'; } catch (e) { return false; }
+        }
+        function _libFromFileChanged(box) {
+            try { localStorage.setItem('cp.lib.fromXdsinp', box.checked ? '1' : '0'); } catch (e) {}
+        }
+        function _libKeepConfigured(fileLib) {
+            const box = document.getElementById('p-lib-from-file');
+            if (box) box.checked = _libFromFile();
+            const note = document.getElementById('p-lib-note');
+            if (note) { note.style.display = 'none'; note.textContent = ''; }
+            if (_libFromFile()) return;
+            const apply = (conf) => {
+                const el = document.getElementById('p-lib');
+                if (!el || !conf || _libFromFile()) return;
+                el.value = conf;
+                if (note && fileLib && fileLib !== conf) {
+                    note.textContent = 'The loaded XDS.INP has LIB= ' + fileLib + ' \u2014 kept the configured library instead (Save parameters to write it).';
+                    note.style.display = '';
+                }
+            };
+            if (_neggiaConfigured !== null) { apply(_neggiaConfigured); return; }
+            fetch('/api/config').then(function(r){return r.json();}).then(function(cfg) {
+                _neggiaConfigured = cfg.neggia_lib || '';
+                apply(_neggiaConfigured);
+            }).catch(function(){});
+        }
+        fetch('/api/config').then(function(r){return r.json();}).then(function(cfg) {
+            if (_neggiaConfigured === null) _neggiaConfigured = cfg.neggia_lib || '';
+        }).catch(function(){});
+
         // Parse current XDS.INP text to populate param fields
         function parseINPIntoFields(text) {
             const lines = text.split('\n');
@@ -11236,6 +11273,8 @@
             const lib = get('LIB');
             if (lib) { set('p-lib', lib.value); _setToggleBtn('LIB', !lib.commented); }
             else { document.getElementById('p-lib').value = ''; _setToggleBtn('LIB', false); }
+            // Unticked "from loaded XDS.INP": the configured HDF5 library stays in the field
+            _libKeepConfigured(lib ? lib.value : '');
 
             // Auto-activate LIB when NAME_TEMPLATE points to .h5 data
             var _tmplVal = get('NAME_TEMPLATE_OF_DATA_FRAMES');
@@ -21105,9 +21144,11 @@
                         // show what the server kept: blanks, quotes and ~ are
                         // cleaned up there, and a folder becomes the file
                         if (d && d.neggia_lib && inp) inp.value = d.neggia_lib;
+                        _neggiaConfigured = (d && d.neggia_lib) || val;
                         statusEl.textContent = '\u2713 Saved: ' + ((d && d.neggia_lib) || val);
                         statusEl.style.color = '#68d391';
                     } else {
+                        _neggiaConfigured = '';
                         statusEl.textContent = 'Cleared (no HDF5 library configured)';
                         statusEl.style.color = 'var(--txt3)';
                     }
