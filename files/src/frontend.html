@@ -11395,11 +11395,15 @@
             }
         }
 
+        // text of the last "Load from other XDS.INP" (the server uses it only when the project has no XDS.INP)
+        let _loadedInpText = null;
+
         async function loadParamsFromFile() {
             if (!currentProject) return;
             try {
                 const r = await fetch(`${API}/projects/${encodeURIComponent(currentProject)}/xdsinp`);
                 const d = await r.json();
+                _loadedInpText = null;
                 parseINPIntoFields(d.content || '');
                 document.getElementById('params-save-result').innerHTML =
                     '<div class="status ok">✓ Loaded from XDS.INP</div>';
@@ -11415,6 +11419,8 @@
                 const d = await r.json();
                 if (d.error) throw new Error(d.error);
                 parseINPIntoFields(d.content || '');
+                // a project without XDS.INP starts from this whole file at the next save
+                _loadedInpText = d.content || null;
                 document.getElementById('params-save-result').innerHTML =
                     '<div class="status ok">✓ Loaded from ' + filePath.split('/').pop() + '</div>';
             } catch(e) {
@@ -11712,10 +11718,11 @@
                 const r = await fetch(`${API}/projects/${encodeURIComponent(currentProject)}/xdsinp/params`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ params })
+                    body: JSON.stringify({ params, base: _loadedInpText })
                 });
                 const d = await r.json();
                 if (r.ok) {
+                    _loadedInpText = null;
                     var _saveMsg = '<div class="status ok">✓ Parameters saved to XDS.INP</div>';
                     var _libNote = document.getElementById('p-lib-note');   // the file now has the field's LIB
                     if (_libNote) { _libNote.style.display = 'none'; _libNote.textContent = ''; }

@@ -4452,7 +4452,17 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             xds_inp = _pdir(name) / "XDS.INP"
             params = data.get("params", {})
             try:
-                content2 = _read_text_lenient(xds_inp) if xds_inp.exists() else ""
+                if xds_inp.exists():
+                    content2 = _read_text_lenient(xds_inp)
+                elif str(data.get("base") or "").strip():
+                    # first save after "Load from other XDS.INP": that whole file is
+                    # the start, so its geometry (detector axes, ROTATION_AXIS ...),
+                    # which the form does not show, is not lost
+                    content2 = str(data["base"]).replace("\r\n", "\n").replace("\r", "\n")
+                else:
+                    # parameters typed into an empty project: without the detector
+                    # axes XDS stops with INCORRECT DETECTOR SPECIFICATION
+                    content2 = "\n".join(XDSINP_GEOMETRY_DEFAULTS) + "\n"
                 content2 = XDSINPEditor.apply_params(content2, params)
                 _write_inp(xds_inp, content2)
                 self.send_json({"message": "Parameters saved"})

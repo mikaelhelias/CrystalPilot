@@ -244,6 +244,19 @@ class XDSINPGenerator:
         return _with_cpu_keywords('\n'.join(lines), 'xds'), warnings
 
 
+# The geometry of an XDS.INP started from nothing: the same lines as the
+# header-based generator (single-axis goniostat, beam along Z)
+XDSINP_GEOMETRY_DEFAULTS = (
+    "! Standard geometry added by CrystalPilot - verify ROTATION_AXIS for your beamline (1 0 0 or -1 0 0 / 0 -1 0)",
+    "DIRECTION_OF_DETECTOR_X-AXIS= 1.0 0.0 0.0",
+    "DIRECTION_OF_DETECTOR_Y-AXIS= 0.0 1.0 0.0",
+    "ROTATION_AXIS= 1.0 0.0 0.0",
+    "INCIDENT_BEAM_DIRECTION= 0.0 0.0 1.0",
+    "FRACTION_OF_POLARIZATION= 0.99",
+    "POLARIZATION_PLANE_NORMAL= 0.0 1.0 0.0",
+)
+
+
 # XSCALE.INP is hierarchical.  A keyword in the wrong level makes XSCALE stop
 # with "!!! ERROR !!! MISPLACED PARAMETER", so every keyword is filed here.
 _XSCALE_OUTPUT_KEYS = {"FRIEDEL'S_LAW", "MERGE", "STRICT_ABSORPTION_CORRECTION"}

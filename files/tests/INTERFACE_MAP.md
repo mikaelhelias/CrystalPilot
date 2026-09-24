@@ -21,7 +21,7 @@ which part of the regression battery exercises it. "U" = `test_units.py`,
 
 | Ability | Routes | Tests |
 |---|---|---|
-| Key-parameter editor (ranges, cell, SG, toggles, protected keys, multi-keyword lines) | `POST .../xdsinp/params`, `GET/POST .../xdsinp` | U (real XDS.INP round trip, lists, comments), A section 4 (subset ranges), S |
+| Key-parameter editor (ranges, cell, SG, toggles, protected keys, multi-keyword lines) | `POST .../xdsinp/params`, `GET/POST .../xdsinp` | U (real XDS.INP round trip, lists, comments), A section 4 (subset ranges), S (first save in a new project: loaded file's geometry kept / standard axes, real XYCORR) |
 | Generate XDS.INP from frame header | `GET .../generate-xdsinp` | U (generator from Eiger header), S |
 | Run folder: overwrite / sub-folder, auto-number, copy XDS.INP | `POST /api/run-folder`, `/api/run-folder/list` | S |
 | Run one step / from step / pipeline, live log, Stop | `GET /api/stream`, `POST /api/stop`, `/api/run` | A (fake xds: stop kills tree, timeout, concurrency, JSON errors), A section 4 (real XYCORR..CORRECT), S (reruns) |
