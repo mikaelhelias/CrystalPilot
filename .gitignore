@@ -25,6 +25,8 @@
 # built manual and installer settings (published on Releases / per installation)
 /docs/manual/CrystalPilot-Manual.html
 /docs/manual/CrystalPilot-Manual.pdf
+# the manual's clips (made from docs/demo/videos by build_manual.py; embedded in the HTML)
+/docs/manual/videos/
 /windows/crystalpilot.cfg
 
 __pycache__/

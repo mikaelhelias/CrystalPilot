@@ -58,6 +58,79 @@ def image_tag(alt, src, missing):
     return '<figure><img src="data:image/png;base64,%s" alt="%s"><figcaption>%s</figcaption></figure>' % (data, H.escape(alt, quote=True), inline(alt))
 
 
+VIDEOS = HERE / "videos"                           # small clips for the manual (not in git)
+DEMO_VIDEOS = HERE.parent / "demo" / "videos"     # the recorded clips they are made from (docs/demo/record_demo.js)
+_videos = []                                      # (element id, base64 mp4), written once after the chapters
+
+
+def _ffmpeg():
+    if os.environ.get("CP_FFMPEG"):
+        return os.environ["CP_FFMPEG"]
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return shutil.which("ffmpeg")
+
+
+def _mp4_seconds(path):
+    """Length of an MP4 from its movie header, without ffprobe."""
+    import struct
+    data = Path(path).read_bytes()
+    i = data.find(b"mvhd")
+    if i < 0:
+        return 0.0
+    if data[i + 4] == 1:
+        scale, dur = struct.unpack(">IQ", data[i + 24:i + 36])
+    else:
+        scale, dur = struct.unpack(">II", data[i + 16:i + 24])
+    return dur / float(scale or 1)
+
+
+def video_tag(caption, src, missing):
+    """@[caption](videos/x.mp4): a clip embedded like the pictures, as a still frame with a
+    play button; the video is decoded only when clicked.  The PDF keeps the still frame.
+    A missing clip is made from docs/demo/videos (1280 px, small), its still frame too."""
+    p = HERE / src
+    ff = _ffmpeg()
+    if not p.exists() and (DEMO_VIDEOS / p.name).exists() and ff:
+        p.parent.mkdir(exist_ok=True)
+        subprocess.run([ff, "-loglevel", "error", "-y", "-i", str(DEMO_VIDEOS / p.name), "-vf", "scale=1280:-2",
+                        "-c:v", "libx264", "-preset", "slow", "-crf", "30", "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart", "-an", str(p)], check=False)
+    if not p.exists():
+        missing.append(src)
+        return '<figure class="missing"><div class="ph">video %s not made yet</div><figcaption>%s</figcaption></figure>' % (H.escape(src), inline(caption))
+    seconds = _mp4_seconds(p)
+    poster = p.with_suffix(".jpg")
+    if ff and (not poster.exists() or poster.stat().st_mtime < p.stat().st_mtime):
+        subprocess.run([ff, "-loglevel", "error", "-y", "-ss", "%.1f" % (seconds * 0.45), "-i", str(p),
+                        "-frames:v", "1", "-q:v", "4", str(poster)], check=False)
+    vid = "cpv-%d" % (len(_videos) + 1)
+    _videos.append((vid, base64.b64encode(p.read_bytes()).decode("ascii")))
+    still = ('<img src="data:image/jpeg;base64,%s" alt="%s">' % (base64.b64encode(poster.read_bytes()).decode("ascii"), H.escape(caption, quote=True))
+             if poster.exists() else '<div class="ph">&#9654;</div>')
+    return ('<figure class="video" data-video="%s"><div class="vf">%s<button class="play" title="Play the video">&#9654;</button></div>'
+            '<figcaption>%s <span class="vs">&middot; video, %d s</span><span class="vp">(video, %d s, in the HTML manual)</span></figcaption></figure>'
+            % (vid, still, inline(caption), round(seconds), round(seconds)))
+
+
+VIDEO_JS = r"""
+document.addEventListener('click', function (e) {
+  var f = e.target.closest && e.target.closest('figure.video');
+  if (!f || f.querySelector('video')) return;
+  var d = document.getElementById(f.getAttribute('data-video')); if (!d) return;
+  var b = atob(d.textContent.trim()), u = new Uint8Array(b.length);
+  for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+  // the clips have no sound: muted, so the browser always lets them start at once
+  var v = document.createElement('video'); v.controls = true; v.playsInline = true; v.muted = true;
+  v.src = URL.createObjectURL(new Blob([u], { type: 'video/mp4' }));
+  v.addEventListener('play', function () { document.querySelectorAll('figure.video video').forEach(function (o) { if (o !== v) o.pause(); }); });
+  var vf = f.querySelector('.vf'); vf.innerHTML = ''; vf.appendChild(v); v.play();
+});
+"""
+
+
 def md_to_html(text, missing, chapter_no):
     out, i, lines = [], 0, text.split("\n")
     list_stack = []   # ("ul"|"ol")
@@ -90,6 +163,9 @@ def md_to_html(text, missing, chapter_no):
         m = re.match(r"^!\[([^\]]*)\]\(([^)]+)\)$", s)
         if m:
             close_lists(); out.append(image_tag(m.group(1), m.group(2), missing)); i += 1; continue
+        m = re.match(r"^@\[([^\]]*)\]\((videos/[^)]+\.mp4)\)$", s)
+        if m:
+            close_lists(); out.append(video_tag(m.group(1), m.group(2), missing)); i += 1; continue
         if s.startswith("|"):
             close_lists(); rows = []
             while i < len(lines) and lines[i].strip().startswith("|"):
@@ -293,6 +369,11 @@ ol, ul { margin:0 0 14px 22px; padding:0; } li { margin:0 0 6px; }
 figure { margin:14px 0 20px; } figure img { max-width:100%; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 30px rgba(0,0,0,.45); }
 figcaption { font-size:13px; color:#8fa3c7; margin-top:6px; }
 figure.missing .ph { border:1px dashed #e0a458; color:#e0a458; padding:30px; text-align:center; border-radius:8px; }
+figure.video .vf { position:relative; cursor:pointer; }
+figure.video img, figure.video video { display:block; width:100%; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 30px rgba(0,0,0,.45); background:#000; }
+figure.video .play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:76px; height:76px; border-radius:50%; border:2px solid rgba(255,255,255,.9); background:rgba(8,12,22,.72); color:#fff; font-size:30px; padding-left:7px; cursor:pointer; }
+figure.video .vf:hover .play { background:rgba(111,177,255,.9); color:#0b1220; }
+figure.video .vs { color:var(--acc); } figure.video .vp { display:none; }
 .note { border-left:3px solid var(--acc); background:rgba(111,177,255,.08); padding:10px 14px; border-radius:0 8px 8px 0; margin:12px 0; }
 .warn { border-left:3px solid #f6ad55; background:rgba(246,173,85,.08); padding:10px 14px; border-radius:0 8px 8px 0; margin:12px 0; }
 table { border-collapse:collapse; width:100%; margin:10px 0 16px; font-size:14px; }
@@ -311,6 +392,7 @@ hr { border:0; border-top:1px solid var(--line); margin:22px 0; }
   h1 { color:#111; page-break-before:always; border:0; } h1:first-of-type { page-break-before:avoid; } h2 { color:#0b4f9c; } h3 { color:#0a7a66; }
   code { color:#0b4f9c; background:#eef3fa; } pre { background:#f4f6fa; color:#222; border-color:#ccd; }
   figure { page-break-inside:avoid; } figure img { box-shadow:none; border-color:#ccd; }
+  figure.video .play, figure.video .vs { display:none; } figure.video .vp { display:inline; } figure.video img { box-shadow:none; }
   .note { background:#eef3fa; border-color:#0b4f9c; } .warn { background:#fdf3e6; border-color:#d98a2b; }
   th { color:#0a7a66; border-color:#ccd; } td { border-color:#dde; } figcaption { color:#555; }
   .cover { page-break-after:always; padding-top:0; } .cover .t { color:#111; } .cover img.shot { box-shadow:none; border-color:#ccd; max-width:100%; } .colophon { color:#555; } a { color:#0b4f9c; text-decoration:none; }
@@ -324,6 +406,7 @@ def build_html():
     if not chapters:
         sys.exit("no chapters in " + str(CHAPTERS))
     missing, body, toc, index = [], [], [], []
+    del _videos[:]
     for n, ch in enumerate(chapters, 1):
         text = ch.read_text(encoding="utf-8")
         title = next((l[2:].strip() for l in text.split("\n") if l.startswith("# ")), ch.stem)
@@ -348,11 +431,17 @@ def build_html():
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>%s</style></head><body>"
             "%s"
             "<div class=\"wrap\"><nav><input id=\"q\" type=\"search\" placeholder=\"Search the manual\u2026 (Ctrl+K)\" autocomplete=\"off\">"
-            "<div id=\"hits\" style=\"display:none\"></div><div id=\"toc\">%s</div></nav><main>%s%s</main></div><script>%s</script></body></html>") % (ver, CSS, cover, "".join(toc), "\n".join(body), colophon, SEARCH_JS)
+            "<div id=\"hits\" style=\"display:none\"></div><div id=\"toc\">%s</div></nav><main>%s%s</main></div>%s<script>%s</script></body></html>") % (
+                ver, CSS, cover, "".join(toc), "\n".join(body), colophon,
+                # the clips' data once, after the text: read only when a clip is played
+                "".join('<script type="text/plain" id="%s">%s</script>' % v for v in _videos),
+                SEARCH_JS + (VIDEO_JS if _videos else ""))
     OUT_HTML.write_text(page, encoding="utf-8")
     print("wrote %s (%d chapters, %.1f MB) and %s (%d sections)" % (OUT_HTML.name, len(chapters), OUT_HTML.stat().st_size / 1e6, OUT_INDEX.name, len(index)))
     if missing:
-        print("missing screenshots (%d): %s" % (len(missing), ", ".join(sorted(set(missing)))))
+        print("missing screenshots or videos (%d): %s" % (len(missing), ", ".join(sorted(set(missing)))))
+    if _videos:
+        print("videos embedded: %d" % len(_videos))
     return missing
 
 

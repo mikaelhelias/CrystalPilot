@@ -29,6 +29,8 @@ Click the green **CORRECT** step (or, in the LP Viewer, choose CORRECT under *Ke
 
 ![CORRECT metrics: space group and cell, ISa, the shell table with colour-coded quality, charts, cut-off estimates.](images/07-03-correct-metrics.png)
 
+@[After a run: each step one click away; CORRECT.LP read for you, the statistics per shell, the cut-off estimates and the charts.](videos/results.mp4)
+
 1. **Space group and cell** as decided by CORRECT, with the χ² of the correction factors (Advanced). If you had left the space group open, this is XDS's proposal; POINTLESS (chapter 9) gives the definitive answer.
 2. **ISa**, the asymptotic I/σ: above 20 is excellent, 10–20 good, below 5 indicates problems with the data or the integration.
 3. The **resolution shell table**: per shell the number of observations and unique reflections, completeness, R-obs, R-meas, I/σ, CC½ and the anomalous statistics; cells are coloured by quality.

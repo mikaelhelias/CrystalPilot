@@ -79,6 +79,8 @@ CrystalPilot sends nothing by itself. **Open e-mail** starts your own mail progr
 ## Getting help
 
 - The **search box in the header** (`Ctrl+K`) searches the Docs sections and this manual at once. Each result shows the sentence that matched with your words highlighted, and opens in its own window, so you can read it beside the work you were doing.
+
+@[Asking the documentation from the header: the answer opens beside your work, the words highlighted.](videos/docs.mp4)
 - The **Docs** tab is the reference for every control and file; the **Guide** tab is the short version of this manual. Its own search box works the same way, except that a Docs section is right there and is shown in place.
 - The XDS documentation: [xds.mr.mpg.de/html_doc/XDS.html](https://xds.mr.mpg.de/html_doc/XDS.html); the XDSwiki for processing advice.
 - When reporting a problem, include the log of the failing step (LP Viewer → the step), the `XDS.INP`, and the Environment screen's summary.

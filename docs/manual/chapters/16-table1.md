@@ -2,6 +2,8 @@
 
 **Goal:** the data-collection and processing statistics table required by journals and the PDB, filled from your files and exported in the format you write in. The tab is shown from the **Normal** work mode.
 
+@[Table 1 filled in from the processing, the outer shell in parentheses, copied as LaTeX.](videos/table1.mp4)
+
 ## Build it
 
 1. Open the **Statistics** tab. Click **⟳ Refresh** if you processed since the tab was last open.

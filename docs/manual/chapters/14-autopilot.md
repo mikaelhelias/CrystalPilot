@@ -2,6 +2,8 @@
 
 **Goal:** one data set or a whole synchrotron trip processed without sitting next to it: each with a chosen resolution limit, merged reflections and an MTZ, compared in one table, the best of them merged, and a log that explains every decision. The tab is shown from the **Normal** work mode.
 
+@[Setting up a run for a whole beamline visit: the folder, the data sets and their beamline XDS.INP, the six steps, Start.](videos/autopilot.mp4)
+
 The **AutoPilot** tab is a wizard of six steps. Nothing runs until you press **Start AutoPilot** on the last one. Every data set becomes a project of its own, so everything the other tabs show is there for it afterwards, and everything AutoPilot did can be redone or refined by hand.
 
 ![The AutoPilot wizard: the six steps, the drop area for folders, and the runs below.](images/14-01-autopilot.png)

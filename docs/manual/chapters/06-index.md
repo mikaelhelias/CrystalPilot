@@ -2,6 +2,8 @@
 
 **Goal:** find the crystal lattice and a first orientation. This is the first half of the pipeline and the place where most problems show up, so it is run and checked on its own.
 
+@[From the images to CORRECT: run to IDXREF with the live log, check the indexing, then integrate and scale (chapter 7).](videos/process.mp4)
+
 ## Run to IDXREF
 
 1. With `XDS.INP` saved (chapter 5), look at the pipeline track at the top of the Data Processing tab: eight steps, grey when pending.

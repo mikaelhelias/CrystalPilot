@@ -2,6 +2,8 @@
 
 **Goal:** a scaled, merged reflection file (`merged.ahkl`) from one or several data sets, with statistics and a chosen resolution limit.
 
+@[Merging with XSCALE, the cut-off taken from CORRECT.LP, then an MTZ for refinement with XDSCONV (chapter 12).](videos/merge.mp4)
+
 XSCALE puts data sets on a common scale, corrects absorption, detector and radiation-damage effects, and merges symmetry equivalents. Even for a single data set it is the normal way to produce the final merged file.
 
 ## Fill the parameters
