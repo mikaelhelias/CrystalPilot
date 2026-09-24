@@ -119,3 +119,12 @@ Static content: B (no JavaScript errors when shown).
 - A full AutoPilot run: available behind `CP_REAL_AUTOPILOT=1` (slow).
 - Windows wizard end to end (WSL runtime import, real install): manual procedure (see the 2026-09-05 session notes); run_all checks that wizard.ps1, launch.ps1 and CrystalPilot-Uninstall.ps1 parse and that the wizard renders its five pages (-Preview). The installer .exe (windows/make_installer.py, IExpress) is checked by unpacking it and running its bootstrap with -Preview.
 - Visual correctness of charts (values, labels): the browser pass checks that charts are drawn and that no script fails, not what they show.
+
+Known limitations as of 0.6.7b (2026-09-23):
+
+- RAM limit: needs cgroup v2 and either root (WSL: tested, own cgroup `crystalpilot-jobs`) or a systemd user session (`systemd-run --user --scope`: not yet tried on a real non-root Linux desktop; the WSL Ubuntu has no normal user to test it with).
+- AutoPilot screw axes (`_ap_sg_from_absences`): enantiomorphs (P4₁/P4₃, P3₁/P3₂, P6₁/P6₅) cannot be told apart by absences - the first is kept and the log names the other; with too few axial reflections XDS's space group is kept. Verified on OdoL_7 only (C222 -> C222₁).
+- Raster scans (`_is_raster_scan`): recognised by name only (a folder with "raster" in the last three path parts, or "raster" in the file name - NSLS-II FMX naming); other beamlines' raster scans are listed as ordinary, ticked data sets.
+- ΔCC½ (XDSCC12): skipped by the API suite because XDSCC12 is not installed in the test WSL.
+- The 0.6.7 / 0.6.7b Windows installers were built and checked (`-Preview`, parse), not run on a clean Windows machine.
+- The manual's videos play only in the HTML manual; the PDF shows a still frame. Media cannot be checked in the Browser pane while it is hidden: test playback headless.
