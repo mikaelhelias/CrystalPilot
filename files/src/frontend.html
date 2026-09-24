@@ -6578,7 +6578,7 @@
                         'RESOLUTION_SHELLS': shells
                     }})
                 });
-                if (!r.ok) { alert('Failed to save: server returned ' + r.status); return; }
+                if (!r.ok) { alert('Failed to save: ' + ((await r.json().catch(function () { return {}; })).error || 'server returned ' + r.status)); return; }
                 appendLog('>>> Set INCLUDE_RESOLUTION_RANGE= ' + lowRes + ' ' + highRes.toFixed(2));
                 appendLog('>>> Set RESOLUTION_SHELLS= ' + shells);
                 // Refresh the Key Parameters panel so user sees the update
@@ -6729,7 +6729,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({params: { 'EXCLUDE_RESOLUTION_RANGE': ranges }})
                 });
-                if (!r.ok) { alert('Failed to save: server returned ' + r.status); return; }
+                if (!r.ok) { alert('Failed to save: ' + ((await r.json().catch(function () { return {}; })).error || 'server returned ' + r.status)); return; }
                 appendLog('>>> Set EXCLUDE_RESOLUTION_RANGE: ' + ranges.map(function(rng){ return rng[0] + ' ' + rng[1]; }).join(', '));
                 try { await loadParamsFromFile(); } catch(e) {}
                 var action = confirm('XDS.INP updated with ' + ranges.length + ' ice ring exclusion' + (ranges.length > 1 ? 's' : '') + '.\n\nRe-run CORRECT now to apply?');
@@ -6904,7 +6904,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({params: { 'EXCLUDE_RESOLUTION_RANGE': ranges }})
                 });
-                if (!r.ok) { alert('Failed to save: server returned ' + r.status); return; }
+                if (!r.ok) { alert('Failed to save: ' + ((await r.json().catch(function () { return {}; })).error || 'server returned ' + r.status)); return; }
                 appendLog('>>> Set EXCLUDE_RESOLUTION_RANGE: ' + ranges.map(function(rng){ return rng[0] + ' ' + rng[1]; }).join(', '));
                 try { await loadParamsFromFile(); } catch(e) {}
                 var action = confirm('XDS.INP updated with ' + ranges.length + ' ice ring exclusion' + (ranges.length > 1 ? 's' : '') + '.\n\nRe-run CORRECT now to apply?');
@@ -9025,7 +9025,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({params: { 'EXCLUDE_RESOLUTION_RANGE': ranges }})
                 });
-                if (!r.ok) { alert('Failed to save: server returned ' + r.status); return; }
+                if (!r.ok) { alert('Failed to save: ' + ((await r.json().catch(function () { return {}; })).error || 'server returned ' + r.status)); return; }
                 appendLog('>>> Set EXCLUDE_RESOLUTION_RANGE: ' + ranges.map(function(rng){ return rng[0] + ' ' + rng[1]; }).join(', '));
                 try { await loadParamsFromFile(); } catch(e) {}
                 var action = confirm('XDS.INP updated with ' + ranges.length + ' ice ring exclusion' + (ranges.length > 1 ? 's' : '') + '.\n\nRe-run CORRECT now to apply?');
@@ -11718,7 +11718,7 @@
                 const r = await fetch(`${API}/projects/${encodeURIComponent(currentProject)}/xdsinp/params`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ params, base: _loadedInpText })
+                    body: JSON.stringify({ params, base: _loadedInpText, create: true })
                 });
                 const d = await r.json();
                 if (r.ok) {
@@ -13676,6 +13676,8 @@
                     }})
                 });
                 if (!r.ok) { alert('Failed to save XSCALE.INP: server returned ' + r.status); return; }
+                var _xsReply = await r.json().catch(function () { return {}; });
+                if (_xsReply.warning) { alert(_xsReply.warning); return; }
                 xsAppendLog('>>> Set INCLUDE_RESOLUTION_RANGE= ' + xsLow + ' ' + highRes.toFixed(2));
                 xsAppendLog('>>> Set RESOLUTION_SHELLS= ' + shells);
                 var action = confirm('XSCALE.INP updated:\n  INCLUDE_RESOLUTION_RANGE= ' + xsLow + ' ' + highRes.toFixed(2) + '\n  RESOLUTION_SHELLS updated with fine binning\n\nRe-run XSCALE now to apply?');
@@ -17216,6 +17218,13 @@
 
         async function xcSaveParams() {
             if (!currentProject) { alert('Select a project first'); return; }
+            // XDSCONV stops with MISSING PARAMETER VALUE FOR "OUTPUT_FILE=" when a field is empty
+            if (!document.getElementById('xc-input-file').value.trim()) await xcAutoInputFile();
+            if (!document.getElementById('xc-output-file').value.trim()) xcAutoOutputFile();
+            if (!document.getElementById('xc-input-file').value.trim()) {
+                document.getElementById('xc-params-result').innerHTML = '<div class="status error">Set the input file (the OUTPUT_FILE of XSCALE, e.g. merged.ahkl) first</div>';
+                return;
+            }
             var content = xcBuildINP();
             try {
                 var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/xdsconvinp', {
@@ -20157,7 +20166,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({params: { 'EXCLUDE_RESOLUTION_RANGE': [[hi, lo]] }})
                 });
-                if (!resp.ok) { alert('Failed to save: server returned ' + resp.status); return; }
+                if (!resp.ok) { alert('Failed to save: ' + ((await resp.json().catch(function () { return {}; })).error || 'server returned ' + resp.status)); return; }
                 appendLog('>>> Added EXCLUDE_RESOLUTION_RANGE= ' + hi + ' ' + lo + '  (ice ring ~' + r.label + ' \u00c5)');
                 try { await loadParamsFromFile(); } catch(e) {}
                 var el = document.getElementById('ice-adv-' + idx);
@@ -20177,7 +20186,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({params: { 'EXCLUDE_RESOLUTION_RANGE': ranges }})
                 });
-                if (!resp.ok) { alert('Failed to save: server returned ' + resp.status); return; }
+                if (!resp.ok) { alert('Failed to save: ' + ((await resp.json().catch(function () { return {}; })).error || 'server returned ' + resp.status)); return; }
                 appendLog('>>> Added EXCLUDE_RESOLUTION_RANGE for ' + ranges.length + ' ice ring positions');
                 try { await loadParamsFromFile(); } catch(e) {}
                 // Mark all tags as done

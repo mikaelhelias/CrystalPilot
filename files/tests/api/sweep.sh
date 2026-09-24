@@ -222,16 +222,19 @@ C=$(c -o "$T/out.json" -w '%{http_code}' -X DELETE "$U/api/projects/todelete?fil
 # ── first Save Parameters in a project without XDS.INP (0.6.7: the file held only the
 #    form fields, no detector axes, and XYCORR stopped with INCORRECT DETECTOR SPECIFICATION)
 for q in inpbase inpbare; do cj -X POST "$U/api/projects" -d "{\"name\": \"$q\", \"description\": \"\", \"data_path\": \"\"}" >/dev/null; done
-BODY=$("$PY" -c 'import json,sys; print(json.dumps({"base": open(sys.argv[1]).read(), "params": {"NX": "4150", "LIB": "__commented__"}}))' "$P/XDS.INP")
+BODY=$("$PY" -c 'import json,sys; print(json.dumps({"base": open(sys.argv[1]).read(), "create": True, "params": {"NX": "4150", "LIB": "__commented__"}}))' "$P/XDS.INP")
 C=$(cj -o "$T/out.json" -w '%{http_code}' -X POST "$U/api/projects/inpbase/xdsinp/params" -d "$BODY")
 check "Save Parameters after 'Load from other XDS.INP' in a new project keeps that file's geometry" "[ $C = 200 ] && grep -q '^ *DIRECTION_OF_DETECTOR_X-AXIS=' $T/projects/inpbase/XDS.INP && grep -q '^ *DIRECTION_OF_DETECTOR_Y-AXIS=' $T/projects/inpbase/XDS.INP && grep -q '^ *ROTATION_AXIS=' $T/projects/inpbase/XDS.INP" "code=$C $(grep -E 'DIRECTION|ROTATION' $T/projects/inpbase/XDS.INP | tr '\n' ' ')"
-C=$(cj -o "$T/out.json" -w '%{http_code}' -X POST "$U/api/projects/inpbare/xdsinp/params" -d "{\"params\": {\"NX\": \"4150\", \"NY\": \"4371\", \"QX\": \"0.075\", \"QY\": \"0.075\"}}")
+C=$(cj -o "$T/out.json" -w '%{http_code}' -X POST "$U/api/projects/inpbare/xdsinp/params" -d "{\"create\": true, \"params\": {\"NX\": \"4150\", \"NY\": \"4371\", \"QX\": \"0.075\", \"QY\": \"0.075\"}}")
 check "Save Parameters typed into a new project writes the standard detector axes" "[ $C = 200 ] && grep -q '^DIRECTION_OF_DETECTOR_X-AXIS= 1.0 0.0 0.0' $T/projects/inpbare/XDS.INP && grep -q '^DIRECTION_OF_DETECTOR_Y-AXIS= 0.0 1.0 0.0' $T/projects/inpbare/XDS.INP" "code=$C $(head -c 300 $T/projects/inpbare/XDS.INP | tr '\n' ' ')"
 if [ -n "$CP_REAL_XDS" ] && [ -x "$XDS_REAL/xds" ]; then
     (cd $T/projects/inpbase && sed -i 's/^ *JOB=.*/JOB= XYCORR/' XDS.INP && timeout 60 "$XDS_REAL/xds" > xycorr.out 2>&1)
     check "real XDS: XYCORR runs on that saved XDS.INP (no INCORRECT DETECTOR SPECIFICATION)" "[ -s $T/projects/inpbase/XYCORR.LP ] && ! grep -q '!!! ERROR' $T/projects/inpbase/xycorr.out" "$(grep '!!!' $T/projects/inpbase/xycorr.out | head -2)"
 fi
-for q in inpbase inpbare; do c -X DELETE "$U/api/projects/$q?files=true" >/dev/null; done
+cj -X POST "$U/api/projects" -d '{"name": "inpnone", "description": "", "data_path": ""}' >/dev/null
+C=$(cj -o "$T/out.json" -w '%{http_code}' -X POST "$U/api/projects/inpnone/xdsinp/params" -d '{"params": {"INCLUDE_RESOLUTION_RANGE": "50 2.0"}}')
+check "a one-keyword save (cut-off, ice rings, space group) in a project without XDS.INP is refused, no half file" "[ $C = 409 ] && [ ! -f $T/projects/inpnone/XDS.INP ] && grep -q 'no XDS.INP yet' $T/out.json" "code=$C $(head -c 200 $T/out.json)"
+for q in inpbase inpbare inpnone; do c -X DELETE "$U/api/projects/$q?files=true" >/dev/null; done
 # ── resolution cut-off in a project without XSCALE.INP (0.6.7: INCLUDE_RESOLUTION_RANGE was
 #    dropped - no INPUT_FILE to put it under - and XSCALE ran at full resolution)
 cj -X POST "$U/api/projects" -d '{"name": "xsnoinp", "description": "", "data_path": ""}' >/dev/null

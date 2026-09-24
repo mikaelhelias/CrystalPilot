@@ -421,24 +421,62 @@ def _with_cpu_keywords(text, kind):
 
 def _inp_kind(path):
     name = Path(str(path)).name.upper()
-    return 'xds' if name == 'XDS.INP' else 'xscale' if name == 'XSCALE.INP' else ''
+    return {'XDS.INP': 'xds', 'XSCALE.INP': 'xscale', 'XDSCONV.INP': 'xdsconv'}.get(name, '')
+
+
+# XDS stops with ILLEGAL (OBSOLETE ?) KEYWORD OR PARAMETER VALUE when one of
+# these is written as a decimal (NX= 4150.0, DATA_RANGE= 1.0 60.0) - tested
+# with XDS of Apr 16, 2026
+_XDS_INTEGER_KEYS = {'NX', 'NY', 'OVERLOAD', 'MINIMUM_VALID_PIXEL_VALUE', 'DATA_RANGE', 'SPOT_RANGE',
+                     'BACKGROUND_RANGE', 'EXCLUDE_DATA_RANGE', 'STARTING_FRAME', 'SPACE_GROUP_NUMBER',
+                     'MAXIMUM_NUMBER_OF_PROCESSORS', 'MAXIMUM_NUMBER_OF_JOBS'}
+
+
+def _clean_inp_text(text, kind):
+    """What XDS, XSCALE and XDSCONV cannot read, removed without changing a value:
+    the byte-order mark Windows Notepad puts in front of a UTF-8 file (the
+    programs stop with ILLEGAL KEYWORD), and in XDS.INP a whole number written
+    as a decimal in an integer keyword (NX= 4150.0 -> NX= 4150)."""
+    text = str(text or '').replace('﻿', '')
+    if kind != 'xds':
+        return text
+    out = []
+    for line in text.split('\n'):
+        if line.lstrip().startswith('!') or '=' not in line:
+            out.append(line)
+            continue
+        pairs, comment = XDSINPEditor._split_pairs(line)
+        changed = False
+        for pair in pairs:
+            if pair[0].upper() in _XDS_INTEGER_KEYS:
+                words = pair[1].split()
+                new = [str(int(float(w))) if re.fullmatch(r'[-+]?\d+\.0*', w) else w for w in words]
+                if new != words:
+                    pair[1] = ' '.join(new)
+                    changed = True
+        out.append(XDSINPEditor._join_pairs(pairs, comment) if changed else line)
+    return '\n'.join(out)
 
 
 def _write_inp(path, text):
-    """Write an input file; XDS.INP and XSCALE.INP get the CPU cores setting."""
+    """Write an input file, cleaned (_clean_inp_text); XDS.INP and XSCALE.INP get the CPU cores setting."""
     kind = _inp_kind(path)
-    Path(path).write_text(_with_cpu_keywords(text, kind) if kind else text, encoding='utf-8')
+    text = _clean_inp_text(text, kind) if kind else text
+    Path(path).write_text(_with_cpu_keywords(text, kind) if kind in ('xds', 'xscale') else text, encoding='utf-8')
 
 
 def _sync_cpu_keywords(path):
-    """Bring the CPU keywords of an existing XDS.INP / XSCALE.INP up to date; True if it changed."""
+    """Before a run: the input file cleaned and, for XDS / XSCALE, with the CPU keywords
+    up to date - also a file put in the folder by hand; True if it changed."""
     path = Path(path)
     kind = _inp_kind(path)
     if not kind or not path.is_file():
         return False
-    text = _read_text_lenient(path)
-    new = _with_cpu_keywords(text, kind)
-    if new == text:
+    raw = path.read_text(encoding='utf-8', errors='replace')
+    new = _clean_inp_text(raw, kind)
+    if kind in ('xds', 'xscale'):
+        new = _with_cpu_keywords(new, kind)
+    if new == raw:
         return False
     path.write_text(new, encoding='utf-8')
     return True
@@ -467,6 +505,8 @@ def _write_cpu_keywords(program, cwd):
         _sync_cpu_keywords(Path(cwd) / 'XDS.INP')
     elif name in ('xscale', 'xscale_par'):
         _sync_cpu_keywords(Path(cwd) / 'XSCALE.INP')
+    elif name == 'xdsconv':
+        _sync_cpu_keywords(Path(cwd) / 'XDSCONV.INP')
 
 
 def _limited_cmd(cmd, env):

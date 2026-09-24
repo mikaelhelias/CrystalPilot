@@ -4150,7 +4150,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             neggia = NEGGIA_LIB if str(dataset["template"]).lower().endswith((".h5", ".hdf5")) else ""
             text, notes = import_xdsinp(source, dataset, neggia)
             # the preview is the file as it will be written, CPU cores included
-            self.send_json({"content": _with_cpu_keywords(text, "xds"), "notes": notes, "original": _read_text_lenient(source)})
+            self.send_json({"content": _with_cpu_keywords(_clean_inp_text(text, "xds"), "xds"), "notes": notes, "original": _read_text_lenient(source)})
 
         elif path == "/api/batch/create":
             for d in (data.get("datasets") or []):
@@ -4454,6 +4454,13 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             try:
                 if xds_inp.exists():
                     content2 = _read_text_lenient(xds_inp)
+                elif not data.get("create"):
+                    # only Save Parameters (the whole form) starts an XDS.INP; a button that
+                    # sets one keyword (cut-off, ice rings, space group) would leave a file
+                    # XDS cannot use
+                    self.send_json({"error": "This project has no XDS.INP yet. Set it up in Key Parameters "
+                                             "(Generate from images or Load from other XDS.INP) and click Save Parameters first."}, 409)
+                    return
                 elif str(data.get("base") or "").strip():
                     # first save after "Load from other XDS.INP": that whole file is
                     # the start, so its geometry (detector axes, ROTATION_AXIS ...),
@@ -4502,7 +4509,14 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         params.pop("INPUT_FILE", None)
                 content2 = _xscale_apply_params(content2, params)
                 _write_inp(xscale_inp, content2)
-                self.send_json({"message": "Parameters updated in XSCALE.INP"})
+                reply = {"message": "Parameters updated in XSCALE.INP"}
+                has_input = any(_xscale_key(l) == "INPUT_FILE" and not l.strip().startswith("!") for l in content2.splitlines())
+                if not has_input and any(str(k).upper() in _XSCALE_INPUT_KEYS for k in params):
+                    # INCLUDE_RESOLUTION_RANGE and the like belong under an INPUT_FILE: none, so not written
+                    reply["warning"] = ("XSCALE.INP has no INPUT_FILE= and this project has no XDS_ASCII.HKL, so "
+                                        + ", ".join(sorted(str(k) for k in params if str(k).upper() in _XSCALE_INPUT_KEYS))
+                                        + " could not be written. Run CORRECT first, or add the input files in the XSCALE tab.")
+                self.send_json(reply)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
 
@@ -4521,7 +4535,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             name = _url_project_name(path.split("/")[3])
             xdsconv_inp = _pdir(name) / "XDSCONV.INP"
             try:
-                xdsconv_inp.write_text(data["content"], encoding="utf-8")
+                _write_inp(xdsconv_inp, data["content"])
                 self.send_json({"message": "XDSCONV.INP saved"})
             except Exception as e:
                 self.send_json({"error": f"Failed to save XDSCONV.INP: {e}"}, 500)

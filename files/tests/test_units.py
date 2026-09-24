@@ -1403,6 +1403,34 @@ def define_checks(m, scratch):
         finally:
             m.CPU_CORES, m.PROJECTS_DIR = was, was_dir
 
+    @check("input files: a UTF-8 BOM and whole numbers written as decimals (NX= 4150.0) are removed before XDS / XSCALE / XDSCONV read them")
+    def _():
+        # XDS / XSCALE / XDSCONV stop with ILLEGAL KEYWORD on both (tested with XDS Apr 16, 2026)
+        bom = "﻿"
+        root = scratch / "clean_inp"
+        root.mkdir(parents=True, exist_ok=True)
+        src = bom + "JOB= XYCORR\nNX= 4150.0  NY= 4371.0  QX= 0.075  QY= 0.075  ! detector\nDATA_RANGE= 1.0 60.0\n" \
+                    "SPOT_RANGE= 1 60\nORGX= 2008.5 ORGY= 2253.0\nX-RAY_WAVELENGTH= 0.979338\n!NX= 12.0\n"
+        m._write_inp(root / "XDS.INP", src)
+        out = (root / "XDS.INP").read_text(encoding="utf-8")
+        assert bom not in out, repr(out[:20])
+        v = m._parse_xdsinp_params(out)
+        assert v["NX"] == "4150" and v["NY"] == "4371" and v["DATA_RANGE"] == "1 60", v
+        assert v["ORGX"] == "2008.5" and v["ORGY"] == "2253.0" and v["QX"] == "0.075", v   # real numbers untouched
+        assert "! detector" in out and "!NX= 12.0" in out, out                                 # comments untouched
+        assert m._clean_inp_text("NX= 4150.5\n", "xds") == "NX= 4150.5\n"                  # not a whole number: left to XDS
+        # a file put in the folder by hand is cleaned just before the program starts
+        for name, text in (("XSCALE.INP", bom + "OUTPUT_FILE= merged.ahkl\nINPUT_FILE= XDS_ASCII.HKL\n"),
+                           ("XDSCONV.INP", bom + "INPUT_FILE= merged.ahkl\nOUTPUT_FILE= temp.hkl CCP4_I+F\n"),
+                           ("XDS.INP", bom + "JOB= XYCORR\nNX= 4150.0\n")):
+            (root / name).write_text(text, encoding="utf-8")
+        for prog in ("xscale_par", "xdsconv", "xds_par"):
+            m._write_cpu_keywords(prog, root)
+        for name in ("XSCALE.INP", "XDSCONV.INP", "XDS.INP"):
+            assert bom not in (root / name).read_text(encoding="utf-8"), name
+        assert "MAXIMUM_NUMBER" not in (root / "XDSCONV.INP").read_text(encoding="utf-8")   # no CPU keywords for XDSCONV
+        assert "NX= 4150" in (root / "XDS.INP").read_text(encoding="utf-8").replace("4150.0", "x")
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
