@@ -311,7 +311,7 @@ section("doc-autopilot", "AutoPilot",
       "Each folder is searched, down to the depth chosen, for Eiger " + C("*_master.h5") + " files and numbered frame series of at least five frames, by their names."),
     P(B("Add the open project") + " puts the project open in the sidebar into the run: it is processed in place with the XDS.INP you set up by hand in Data Processing, without a search or an import. Open another project and add it too."),
     SUB("2 · Data sets and their XDS.INP"),
-    P("The data sets found are listed; untick what you do not want and edit the project names. For each one AutoPilot looks for the XDS.INP a beamline "
+    P("The data sets found are listed; untick what you do not want and edit the project names. Raster scans (grids of shots taken to find the crystal: a rasterImages folder or &ldquo;raster&rdquo; in the file name) are listed, marked and not ticked. For each one AutoPilot looks for the XDS.INP a beamline "
       "pipeline left behind &mdash; it carries the beamline's geometry (rotation axis direction, beam centre, detector orientation), which an image header often does not. "
       "Pipelines name their folders differently at every beamline, so the search is not tied to names: it looks in the folders from step 1, in each data set's folder, "
       "its parent and grandparent and below them, and in the folders you add under " + B("Also search in") + " (for example the beamline's processed-data folder)."),

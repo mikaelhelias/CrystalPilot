@@ -156,6 +156,14 @@ def strategy_autopilot_kwargs(strategy):
 
 
 # ── 1. discovering data sets ─────────────────────────────────────────────────
+def _is_raster_scan(path):
+    """A raster (grid) scan used to find the crystal, not rotation data: beamlines put
+    them in a rasterImages folder or put "raster" in the file name (NSLS-II FMX:
+    rasterImages/<sample>_r_Raster_<n>_master.h5).  Listed, but not ticked."""
+    p = Path(str(path))
+    return any("raster" in part.lower() for part in p.parent.parts[-3:]) or "raster" in p.name.lower()
+
+
 def discover_datasets(folder, max_depth=3):
     """Data sets under `folder`: Eiger masters and numbered frame series.
 
@@ -185,7 +193,7 @@ def discover_datasets(folder, max_depth=3):
             if low.endswith("_master.h5") or low.endswith("_master.hdf5"):
                 label = name[: name.lower().rindex("_master")]
                 found.append({"kind": "eiger", "template": str(here / name), "label": label,
-                              "folder": str(here), "frames": None})
+                              "folder": str(here), "frames": None, "raster": _is_raster_scan(here / name)})
         series = {}
         for name in filenames:
             m = numbered.match(name)
@@ -202,7 +210,8 @@ def discover_datasets(folder, max_depth=3):
                 continue
             found.append({"kind": "series", "template": str(here / (prefix + "?" * width + ext)),
                           "label": prefix.rstrip("_-. ") or here.name, "folder": str(here),
-                          "frames": count, "first": first, "last": last})
+                          "frames": count, "first": first, "last": last,
+                          "raster": _is_raster_scan(here / (prefix + ext))})
     return found
 
 

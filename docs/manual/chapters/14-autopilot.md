@@ -20,7 +20,7 @@ A browser never tells a web page where a dragged folder is. AutoPilot therefore 
 
 ## 2. Data sets and their XDS.INP
 
-The data sets found are listed. Untick the ones you do not want, and change a project name if the file prefix is not a good one.
+The data sets found are listed. Untick the ones you do not want, and change a project name if the file prefix is not a good one. Raster scans — the grids of shots a beamline takes to find the crystal, recognised by a `rasterImages` folder or *raster* in the file name — are listed with a **raster scan** mark but not ticked: they are not rotation data and would not index. Tick one to process it anyway.
 
 For each data set AutoPilot looks for the `XDS.INP` a beamline pipeline left behind. That file carries what the beamline knows about its own geometry — the direction of the rotation axis, the beam centre, the detector orientation — which an image header often does not say.
 
