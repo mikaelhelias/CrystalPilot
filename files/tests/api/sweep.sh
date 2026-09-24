@@ -232,3 +232,13 @@ if [ -n "$CP_REAL_XDS" ] && [ -x "$XDS_REAL/xds" ]; then
     check "real XDS: XYCORR runs on that saved XDS.INP (no INCORRECT DETECTOR SPECIFICATION)" "[ -s $T/projects/inpbase/XYCORR.LP ] && ! grep -q '!!! ERROR' $T/projects/inpbase/xycorr.out" "$(grep '!!!' $T/projects/inpbase/xycorr.out | head -2)"
 fi
 for q in inpbase inpbare; do c -X DELETE "$U/api/projects/$q?files=true" >/dev/null; done
+# ── resolution cut-off in a project without XSCALE.INP (0.6.7: INCLUDE_RESOLUTION_RANGE was
+#    dropped - no INPUT_FILE to put it under - and XSCALE ran at full resolution)
+cj -X POST "$U/api/projects" -d '{"name": "xsnoinp", "description": "", "data_path": ""}' >/dev/null
+HKLSRC=$(ls "$P/XDS_ASCII.HKL" "$P"/*/XDS_ASCII.HKL 2>/dev/null | head -1)
+if [ -n "$HKLSRC" ]; then
+    cp "$HKLSRC" "$T/projects/xsnoinp/XDS_ASCII.HKL"
+    C=$(cj -o "$T/out.json" -w '%{http_code}' -X POST "$U/api/projects/xsnoinp/xscaleinp/params" -d '{"params": {"INCLUDE_RESOLUTION_RANGE": "999 2.50", "RESOLUTION_SHELLS": "4.0 3.0 2.5"}}')
+    check "XSCALE cut-off saved in a project without XSCALE.INP keeps INCLUDE_RESOLUTION_RANGE under an INPUT_FILE" "[ $C = 200 ] && grep -A3 '^ *INPUT_FILE= .*XDS_ASCII.HKL' $T/projects/xsnoinp/XSCALE.INP | grep -q 'INCLUDE_RESOLUTION_RANGE= *999 2.50'" "code=$C $(tr '\n' '|' < $T/projects/xsnoinp/XSCALE.INP)"
+fi
+c -X DELETE "$U/api/projects/xsnoinp?files=true" >/dev/null

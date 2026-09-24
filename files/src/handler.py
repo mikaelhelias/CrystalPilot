@@ -4490,13 +4490,16 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 content2 = "" if data.get("fresh") else (xscale_inp.read_text(encoding="utf-8", errors='replace') if xscale_inp.exists() else "")
                 # No input files chosen: default to this project's XDS_ASCII.HKL
                 # (wherever the last XDS run wrote it) when the file has none yet.
-                if isinstance(params.get("INPUT_FILE"), list) and not [f for f in params["INPUT_FILE"] if str(f).strip()]:
+                # Also when the caller sends no INPUT_FILE at all (the resolution
+                # cut-off): input keywords such as INCLUDE_RESOLUTION_RANGE belong
+                # under an INPUT_FILE and were dropped from a file that had none.
+                if params.get("INPUT_FILE") is None or (isinstance(params["INPUT_FILE"], list) and not [f for f in params["INPUT_FILE"] if str(f).strip()]):
                     has_input = any(_xscale_key(l) == "INPUT_FILE" and not l.strip().startswith("!") for l in content2.split("\n"))
                     hkl = _pfile(_pdir(name), "XDS_ASCII.HKL")
                     if not has_input and hkl.exists():
                         params["INPUT_FILE"] = [str(hkl)]
                     else:
-                        params.pop("INPUT_FILE")
+                        params.pop("INPUT_FILE", None)
                 content2 = _xscale_apply_params(content2, params)
                 _write_inp(xscale_inp, content2)
                 self.send_json({"message": "Parameters updated in XSCALE.INP"})
