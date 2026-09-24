@@ -3,12 +3,12 @@ def main():
     global PROJECTS_DIR, XDS_PATH, PORT, HOST, RESTRICT_BROWSE
 
     parser = argparse.ArgumentParser(
-        description="CrystalPilot v0.6.6j — XDS GUI",
+        description="CrystalPilot v0.6.7 — XDS GUI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Environment variables XDS_GUI_PORT, XDS_GUI_HOST, XDS_GUI_PROJECTS, "
                "XDS_GUI_XDS_PATH are also respected (CLI args take priority)."
     )
-    parser.add_argument("--version", action="version", version="CrystalPilot v0.6.6j")
+    parser.add_argument("--version", action="version", version="CrystalPilot v0.6.7")
     parser.add_argument("--port", type=int, default=None,
                         help=f"Port to listen on (default: {PORT})")
     parser.add_argument("--host", default=None,
@@ -61,7 +61,7 @@ def main():
     display_host = "localhost" if HOST in ("0.0.0.0", "::") else HOST
     print(f"""
 ╔══════════════════════════════════════════════════╗
-║          CrystalPilot v0.6.6j · XDS GUI          ║
+║          CrystalPilot v0.6.7 · XDS GUI          ║
 ║                  Mikael Elias                    ║
 ╚══════════════════════════════════════════════════╝
 Free software under the GNU GPL v3, without any warranty.
