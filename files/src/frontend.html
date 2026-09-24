@@ -2749,6 +2749,7 @@
                                         <label>LIB</label>
                                         <input type="text" id="p-lib" placeholder="e.g. /path/to/dectris-neggia.so" title="Path to an external library for reading detector images (e.g. dectris-neggia.so for HDF5/H5 format). Required for Eiger .h5 files." style="min-width:280px;">
                                         <button class="btn-ghost btn-sm" onclick="browseFolder('lib-path')" title="Browse for the library file (.so / .dylib)" style="padding:2px 6px;">📂</button>
+                                        <button class="btn-ghost btn-sm" id="p-lib-restore" onclick="_libRestoreConfigured()" title="Put back the HDF5 library path set in the Environment card" style="padding:2px 6px;">↺</button>
                                         <button class="toggle-btn inactive" id="tog-lib" onclick="toggleParam('LIB')" title="Toggle active or commented out in XDS.INP. Needed for HDF5/H5 image format support.">Commented</button>
                                         <label style="min-width:0; font-family:inherit; display:inline-flex; align-items:center; gap:4px; font-size:0.75rem; color:var(--txt3); cursor:pointer; white-space:nowrap;" title="Ticked: loading an XDS.INP puts its LIB= path in this field. Unticked: the field keeps the configured HDF5 library path (Settings / AutoPilot), whatever LIB= the loaded file has."><input type="checkbox" id="p-lib-from-file" onchange="_libFromFileChanged(this)"> from loaded XDS.INP</label>
                                     </div>
@@ -11087,6 +11088,18 @@
         fetch('/api/config').then(function(r){return r.json();}).then(function(cfg) {
             if (_neggiaConfigured === null) _neggiaConfigured = cfg.neggia_lib || '';
         }).catch(function(){});
+        // ↺ next to LIB: the Environment card's HDF5 library back into the field
+        async function _libRestoreConfigured() {
+            let conf = '';
+            try { const cfg = await (await fetch('/api/config')).json(); conf = cfg.neggia_lib || ''; _neggiaConfigured = conf; }
+            catch (e) { conf = _neggiaConfigured || ''; }
+            if (!conf) { showToast('No HDF5 library is set in the Environment card', 'warning'); return; }
+            document.getElementById('p-lib').value = conf;
+            _setToggleBtn('LIB', true);
+            toggleState['LIB'] = true;
+            const note = document.getElementById('p-lib-note');
+            if (note) { note.style.display = 'none'; note.textContent = ''; }
+        }
 
         // Parse current XDS.INP text to populate param fields
         function parseINPIntoFields(text) {
