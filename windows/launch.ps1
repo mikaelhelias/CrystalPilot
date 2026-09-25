@@ -100,6 +100,37 @@ function Show-AlreadyRunning([string]$u) {
     exit 0
 }
 
+# ── Shortcuts show the CrystalPilot icon ─────────────────────────────────────
+# Installers before 0.6.7d gave them a stock Windows icon; each start puts the
+# logo on every CrystalPilot shortcut that still has another one.
+function Update-ShortcutIcons {
+    $ico = Join-Path $Here "CrystalPilot.ico"
+    if (-not (Test-Path $ico)) { return }
+    $want = $ico + ",0"
+    $bat = Join-Path $Here "CrystalPilot.bat"
+    $changed = $false
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        foreach ($dir in @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("Programs"), $Root)) {
+            if (-not $dir) { continue }
+            $p = Join-Path $dir "CrystalPilot.lnk"
+            if (-not (Test-Path -LiteralPath $p)) { continue }
+            $l = $shell.CreateShortcut($p)
+            if ($l.TargetPath -ne $bat -or $l.IconLocation -eq $want) { continue }
+            $keep = @{ t = $l.TargetPath; a = $l.Arguments; w = $l.WorkingDirectory; d = $l.Description }
+            # a new file, not a rewritten one: Explorer would keep showing the cached old icon
+            Remove-Item -LiteralPath $p -Force -ErrorAction Stop
+            $n = $shell.CreateShortcut($p)
+            $n.TargetPath = $keep.t; $n.Arguments = $keep.a; $n.WorkingDirectory = $keep.w; $n.Description = $keep.d
+            $n.IconLocation = $want
+            $n.Save()
+            $changed = $true
+        }
+    } catch { }
+    if ($changed) { try { Start-Process -FilePath (Join-Path $env:SystemRoot "System32\ie4uinit.exe") -ArgumentList "-show" -WindowStyle Hidden } catch { } }
+}
+Update-ShortcutIcons
+
 Write-Host ""
 Write-Host "  Starting CrystalPilot ..." -ForegroundColor White
 Write-Host "  The first start after Windows boots takes up to a minute (the Linux runtime starts);" -ForegroundColor DarkGray
