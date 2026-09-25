@@ -3731,24 +3731,8 @@
                 </div>
 
                 <div id="main-tab-docs" style="display:none;">
-                <div style="display:flex; align-items:center; gap:14px; margin:0 0 8px 0; font-size:0.78rem; color:var(--txt3);"><b style="font-family:var(--head); letter-spacing:0.15em; text-transform:uppercase; color:var(--accent);">Illustrated manual</b><a id="docs-manual-pdf" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="color:var(--accent); display:none;">&#11015; PDF</a><span id="docs-manual-note"></span><span style="margin-left:auto;">CrystalPilot 0.6.7c</span></div>
-                <iframe id="docs-manual-frame" title="CrystalPilot illustrated manual" style="width:100%; height:calc(100vh - 140px); min-height:560px; border:1px solid var(--border); border-radius:10px; background:#fff; display:none;"></iframe>
-                <script>
-                function _docsLoadManual() {
-                  var f = document.getElementById("docs-manual-frame"); if (!f || f.getAttribute("src")) return;
-                  var note = document.getElementById("docs-manual-note");
-                  note.textContent = "Loading the manual…";
-                  fetch("/manual/").then(function (r) { return r.json(); }).then(function (d) {
-                    if (d && d.available) {
-                      f.style.display = ""; f.setAttribute("src", "/manual/CrystalPilot-Manual.html"); note.textContent = "";
-                      if (d.pdf) document.getElementById("docs-manual-pdf").style.display = "";
-                      var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = "";
-                    } else {
-                      note.innerHTML = "Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.";
-                    }
-                  }).catch(function () { note.textContent = "The manual could not be loaded."; });
-                }
-                </script>
+                <div style="display:flex; align-items:center; gap:14px; margin:0 0 12px 0; font-size:0.78rem; color:var(--txt3);"><b style="font-family:var(--head); letter-spacing:0.15em; text-transform:uppercase; color:var(--accent);">Illustrated manual</b><a id="docs-manual-pdf" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="color:var(--accent); display:none;">&#11015; PDF</a><span id="docs-manual-note"></span><span style="margin-left:auto;">CrystalPilot 0.6.7c</span></div>
+                <div id="docs-manual-host"></div>
                 </div><!-- /main-tab-docs -->
 
                 <!-- ── XDSCONV main tab ──────────────────────── -->
@@ -10901,6 +10885,84 @@
             document.getElementById('tab-full').classList.toggle('active', tab === 'full');
             document.getElementById('tab-lp').classList.toggle('active', tab === 'lp');
             if (tab === 'full') loadFullINP();
+        }
+
+        // ── Docs tab: the illustrated manual on the page ──────────────────
+        // The built manual (docs/manual/CrystalPilot-Manual.html) is read once, the first
+        // time the tab opens, and its contents list, chapters, pictures and clips are put
+        // into this page.  They sit in a shadow root so the manual's own stylesheet shapes
+        // them without touching the rest of the program; links inside it scroll the page.
+        var _docsManualState = 0;            // 0 not loaded, 1 loading, 2 shown
+        async function _docsLoadManual() {
+            var host = document.getElementById('docs-manual-host'), note = document.getElementById('docs-manual-note');
+            if (!host || _docsManualState) return;
+            _docsManualState = 1;
+            note.textContent = 'Loading the manual\u2026';
+            try {
+                var st = await (await fetch('/manual/')).json();
+                if (!st || !st.available) {
+                    note.innerHTML = 'Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.';
+                    _docsManualState = 0;
+                    return;
+                }
+                var html = await (await fetch('/manual/CrystalPilot-Manual.html')).text();
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var css = Array.prototype.map.call(doc.querySelectorAll('style'), function (x) { return x.textContent; }).join('\n')
+                    .replace(/:root\b/g, ':host').replace(/\bbody\s*\{/g, '.cpman {');
+                var root = host.shadowRoot || host.attachShadow({ mode: 'open' });
+                root.innerHTML = '<style>' + css + '\n#q, #hits { display:none !important; }'
+                    + ' .cpman { background:transparent; } .wrap { max-width:none; padding:0; }</style>';
+                var man = document.createElement('div');
+                man.className = 'cpman';
+                ['.cover', '.wrap'].forEach(function (sel) { var n = doc.querySelector(sel); if (n) man.appendChild(document.importNode(n, true)); });
+                Array.prototype.forEach.call(doc.querySelectorAll('script[type="text/plain"]'), function (x) { man.appendChild(document.importNode(x, true)); });
+                Array.prototype.forEach.call(man.querySelectorAll('a[href^="http"]'), function (a) { a.target = '_blank'; a.rel = 'noopener'; });
+                root.appendChild(man);
+                // the contents list stays beside the text while the page scrolls ('sticky' does
+                // not work here: a layout container of the page has overflow:auto)
+                var nav = man.querySelector('nav'), wrap = man.querySelector('.wrap');
+                if (nav && wrap) {
+                    nav.style.position = 'relative';
+                    nav.style.top = '0';
+                    var placeNav = function () {
+                        if (!host.offsetParent) return;                       // Docs tab hidden
+                        var w = wrap.getBoundingClientRect();
+                        var y = Math.min(Math.max(0, 20 - w.top), Math.max(0, w.height - nav.offsetHeight));
+                        nav.style.transform = 'translateY(' + Math.round(y) + 'px)';
+                    };
+                    window.addEventListener('scroll', placeNav, { passive: true });
+                    window.addEventListener('resize', placeNav);
+                    placeNav();
+                }
+                root.addEventListener('click', function (e) {
+                    var a = e.target.closest && e.target.closest('a[href^="#"]');
+                    if (a) {
+                        e.preventDefault();
+                        var t = root.getElementById(a.getAttribute('href').slice(1));
+                        if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        return;
+                    }
+                    // a clip: decoded only when clicked, as in the manual
+                    var f = e.target.closest && e.target.closest('figure.video');
+                    if (!f || f.querySelector('video')) return;
+                    var d = root.getElementById(f.getAttribute('data-video'));
+                    if (!d) return;
+                    var b = atob(d.textContent.trim()), u = new Uint8Array(b.length);
+                    for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+                    var v = document.createElement('video');
+                    v.controls = true; v.playsInline = true; v.muted = true;
+                    v.src = URL.createObjectURL(new Blob([u], { type: 'video/mp4' }));
+                    v.addEventListener('play', function () { Array.prototype.forEach.call(root.querySelectorAll('figure.video video'), function (o) { if (o !== v) o.pause(); }); });
+                    var vf = f.querySelector('.vf'); vf.innerHTML = ''; vf.appendChild(v); v.play();
+                });
+                if (st.pdf) document.getElementById('docs-manual-pdf').style.display = '';
+                var hb = document.getElementById('manual-btn'); if (hb) hb.style.display = '';
+                note.textContent = '';
+                _docsManualState = 2;
+            } catch (e) {
+                note.textContent = 'The manual could not be loaded: ' + e.message;
+                _docsManualState = 0;
+            }
         }
 
         function switchMainTab(tab) {

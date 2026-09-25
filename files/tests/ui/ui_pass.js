@@ -328,15 +328,23 @@ async function main() {
     mark = events.length;
     const man = await evalJs(`(async () => { const r = await fetch('/manual/'); const d = await r.json(); return { status: r.status, available: !!d.available, pdf: !!d.pdf }; })()`);
     await evalJs(`(async () => { switchMainTab('docs'); window.scrollTo(0, 0); })()`); await sleep(man.available ? 8000 : 1500);
-    const docs = await evalJs(`(() => { const f = document.getElementById('docs-manual-frame'); let d = null; try { d = f && f.contentDocument; } catch (e) {}
-      const r = f ? f.getBoundingClientRect() : { height: 0 };
-      return { frame: !!f, src: f ? f.getAttribute('src') : null, height: Math.round(r.height), title: d ? d.title : '', chapters: d ? d.querySelectorAll('[id^="ch-"]').length : 0,
+    const docs = await evalJs(`(() => { const h = document.getElementById('docs-manual-host'); const r = h && h.shadowRoot;
+      return { host: !!h, frames: document.querySelectorAll('#main-tab-docs iframe').length, chapters: r ? r.querySelectorAll('h1[id^="ch-"]').length : 0,
+               toc: r ? r.querySelectorAll('#toc a').length : 0, images: r ? r.querySelectorAll('figure img').length : 0, pageHeight: document.body.scrollHeight,
                pdf: (document.getElementById('docs-manual-pdf') || {}).style ? document.getElementById('docs-manual-pdf').style.display : 'missing',
-               note: (document.getElementById('docs-manual-note') || {}).textContent || '', cards: document.querySelectorAll('#main-tab-docs .card').length }; })()`);
-    check("Docs tab: " + (man.available ? "shows the illustrated manual itself (all chapters) and the PDF link" : "says the manual is not installed"),
-      man.status === 200 && docs.frame && docs.cards === 0 && (man.available
-        ? (docs.src === "/manual/CrystalPilot-Manual.html" && docs.height > 500 && docs.chapters >= 18 && /manual/i.test(docs.title) && (!man.pdf || docs.pdf === ""))
+               note: (document.getElementById('docs-manual-note') || {}).textContent || '' }; })()`);
+    check("Docs tab: " + (man.available ? "the illustrated manual on the page (all chapters, contents, pictures), no frame, PDF link" : "says the manual is not installed"),
+      man.status === 200 && docs.host && docs.frames === 0 && (man.available
+        ? (docs.chapters >= 18 && docs.toc >= 18 && docs.images >= 20 && docs.pageHeight > 20000 && (!man.pdf || docs.pdf === ""))
         : /Not installed/.test(docs.note)), JSON.stringify(docs));
+    if (man.available) {
+      // a contents link scrolls the page to its chapter
+      const jump = await evalJs(`(async () => { const r = document.getElementById('docs-manual-host').shadowRoot; const a = r.querySelector('#toc a[href="#ch-11"]');
+        window.scrollTo(0, 0); a.click(); await new Promise(res => setTimeout(res, 1500)); const t = r.getElementById('ch-11').getBoundingClientRect().top;
+        const n = r.querySelector('nav').getBoundingClientRect();
+        return { top: Math.round(t), scrollY: Math.round(window.scrollY), navTop: Math.round(n.top) }; })()`);
+      check("Docs tab: a contents link scrolls the page to its chapter, the contents list stays in view", jump.scrollY > 1000 && jump.top > -60 && jump.top < 400 && jump.navTop >= 0 && jump.navTop < 150, JSON.stringify(jump));
+    }
 
     // ── the Ask bar in the header: ranking, the context line, its own window ──
     // window.open needs a user gesture; Runtime.evaluate can carry one.

@@ -1240,7 +1240,8 @@ def define_checks(m, scratch):
         assert "cpdsRowHtml" in html, "the Ask bar no longer draws shared rows"
         # the Docs tab is the manual, shown inline, filled when the tab opens; manual hits
         # of the search still open the manual at the section, the words marked (?q=)
-        assert 'id="docs-manual-frame"' in html and "function _docsLoadManual" in html, "the Docs tab does not show the manual"
+        assert 'id="docs-manual-host"' in html and "function _docsLoadManual" in html, "the Docs tab does not show the manual"
+        assert "<iframe" not in html.split('id="main-tab-docs"', 1)[1].split('id="main-tab-', 1)[0], "the manual is in a frame again: it belongs on the page"
         assert "tab === 'docs' && typeof _docsLoadManual === 'function'" in html, "switchMainTab does not load the manual"
         assert '"/manual/CrystalPilot-Manual.html?q="' in html, "a manual hit no longer opens the manual at its section"
 

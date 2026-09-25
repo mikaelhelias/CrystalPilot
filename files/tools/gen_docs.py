@@ -33,36 +33,18 @@ SECTIONS = []   # (id, title, html)
 def section(sid, title, *parts): SECTIONS.append((sid, title, ''.join(parts)))
 
 XDSDOC = "https://xds.mr.mpg.de/html_doc/"
-# The Docs tab IS the illustrated manual (docs/manual/CrystalPilot-Manual.html), shown
-# in the tab at full height with its own contents and search; the PDF is one click
-# away.  The page is large (screenshots and clips inside), so the frame is filled the
-# first time the tab opens (_docsLoadManual, called from switchMainTab), not at start.
+# The Docs tab IS the illustrated manual: its chapters, pictures and clips are put on
+# the page itself (_docsLoadManual in frontend.html, the first time the tab opens),
+# with the manual's contents list beside them; the PDF is one click away.
 def render_docs():
     return (
         '<div id="main-tab-docs" style="display:none;">\n'
-        '<div style="display:flex; align-items:center; gap:14px; margin:0 0 8px 0; font-size:0.78rem; color:var(--txt3);">'
+        '<div style="display:flex; align-items:center; gap:14px; margin:0 0 12px 0; font-size:0.78rem; color:var(--txt3);">'
         '<b style="font-family:var(--head); letter-spacing:0.15em; text-transform:uppercase; color:var(--accent);">Illustrated manual</b>'
         '<a id="docs-manual-pdf" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="color:var(--accent); display:none;">&#11015; PDF</a>'
         '<span id="docs-manual-note"></span>'
         '<span style="margin-left:auto;">CrystalPilot ' + VERSION + '</span></div>\n'
-        '<iframe id="docs-manual-frame" title="CrystalPilot illustrated manual" '
-        'style="width:100%; height:calc(100vh - 140px); min-height:560px; border:1px solid var(--border); border-radius:10px; background:#fff; display:none;"></iframe>\n'
-        '<script>\n'
-        'function _docsLoadManual() {\n'
-        '  var f = document.getElementById("docs-manual-frame"); if (!f || f.getAttribute("src")) return;\n'
-        '  var note = document.getElementById("docs-manual-note");\n'
-        '  note.textContent = "Loading the manual\u2026";\n'
-        '  fetch("/manual/").then(function (r) { return r.json(); }).then(function (d) {\n'
-        '    if (d && d.available) {\n'
-        '      f.style.display = ""; f.setAttribute("src", "/manual/CrystalPilot-Manual.html"); note.textContent = "";\n'
-        '      if (d.pdf) document.getElementById("docs-manual-pdf").style.display = "";\n'
-        '      var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = "";\n'
-        '    } else {\n'
-        '      note.innerHTML = "Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.";\n'
-        '    }\n'
-        '  }).catch(function () { note.textContent = "The manual could not be loaded."; });\n'
-        '}\n'
-        '</script>\n'
+        '<div id="docs-manual-host"></div>\n'
         '</div>')
 
 # ── Quick Guide ──────────────────────────────────────────────────────────────
