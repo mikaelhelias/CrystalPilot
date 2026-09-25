@@ -896,6 +896,26 @@ def define_checks(m, scratch):
         assert len(no_cell) == 1 and "SPACE_GROUP_NUMBER" not in m.xdsinp_values(no_cell[0]["xdsinp"]), no_cell
         assert len(m.batch_attempts(fixed, m.strategy_autopilot_kwargs(fixed), with_sg)) == 1
 
+    @check("AutoPilot: a beamline file's UNIT_CELL_A/B/C-AXIS kept, one more run without them if the others fail")
+    def _():
+        kwargs = m.strategy_autopilot_kwargs({})
+        axes = ("UNIT_CELL_A-AXIS= 184.1 0.3 -2.0\nUNIT_CELL_B-AXIS= 1.2 321.5 0.4\n"
+                "UNIT_CELL_C-AXIS= 0.1 -0.2 65.0\n")
+        plain = "NAME_TEMPLATE_OF_DATA_FRAMES= x_????.cbf\n" + axes
+        runs = m.batch_attempts({}, kwargs, plain)
+        assert len(runs) == 2, runs
+        assert runs[0]["xdsinp"] == plain and runs[1]["kwargs"] == kwargs
+        v = m.xdsinp_values(runs[1]["xdsinp"])
+        assert not any(k in v for k in ("UNIT_CELL_A-AXIS", "UNIT_CELL_B-AXIS", "UNIT_CELL_C-AXIS")), runs[1]["xdsinp"]
+        assert v["NAME_TEMPLATE_OF_DATA_FRAMES"] == "x_????.cbf" and "UNIT_CELL_A/B/C-AXIS" in runs[1]["label"]
+        # with a space group: the three usual runs, then the auto-indexing one again without the axes
+        with_sg = plain + "SPACE_GROUP_NUMBER= 19\nUNIT_CELL_CONSTANTS= 78 78 37 90 90 90\n"
+        runs = m.batch_attempts({}, kwargs, with_sg)
+        assert len(runs) == 4 and runs[3]["kwargs"] == runs[2]["kwargs"], runs
+        assert "UNIT_CELL_B-AXIS" not in m.xdsinp_values(runs[3]["xdsinp"]) and "SPACE_GROUP_NUMBER" not in m.xdsinp_values(runs[3]["xdsinp"])
+        # commented axes: nothing extra
+        assert len(m.batch_attempts({}, kwargs, "NAME_TEMPLATE_OF_DATA_FRAMES= x_????.cbf\n!UNIT_CELL_A-AXIS= 1 0 0\n")) == 1
+
     @check("batch merge: consistent data sets in, the rest out with a reason, XSCALE.INP layout valid")
     def _():
         def project(name, sg, cell, isa):

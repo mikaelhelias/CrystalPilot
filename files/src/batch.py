@@ -707,6 +707,14 @@ def _xdsinp_without_space_group(text):
     return XDSINPEditor.apply_params(text, {"SPACE_GROUP_NUMBER": None, "UNIT_CELL_CONSTANTS": None})
 
 
+_CELL_AXES = ("UNIT_CELL_A-AXIS", "UNIT_CELL_B-AXIS", "UNIT_CELL_C-AXIS")
+
+
+def _xdsinp_without_cell_axes(text):
+    """The same XDS.INP with UNIT_CELL_A/B/C-AXIS commented out."""
+    return XDSINPEditor.apply_params(text, {k: None for k in _CELL_AXES})
+
+
 # ── 2. batch state on disk ───────────────────────────────────────────────────
 _BATCH_LOCK = threading.RLock()
 _BATCH_ACTIVE = {"id": None, "thread": None, "stop": None, "skip": False, "project": None}
@@ -997,7 +1005,20 @@ def batch_attempts(strategy, kwargs, imported_text):
     XDS.INP with a space group gives more than one run: by default without
     that space group, then with it, then auto-indexing - each without
     auto-indexing except the last, so a failed indexing moves on at once.
+    An imported file with UNIT_CELL_A/B/C-AXIS (a beamline's orientation,
+    wrong at times) gets one more run after those, without the axes.
     """
+    attempts = _batch_attempts_as_imported(strategy, kwargs, imported_text)
+    if imported_text is not None and any(k in xdsinp_values(imported_text) for k in _CELL_AXES):
+        last = attempts[-1]
+        attempts.append({"label": ((last["label"] + ", ") if last["label"] else "") + "without the file's UNIT_CELL_A/B/C-AXIS",
+                         "kwargs": last["kwargs"],
+                         "xdsinp": _xdsinp_without_cell_axes(last["xdsinp"] if last["xdsinp"] is not None else imported_text)})
+    return attempts
+
+
+def _batch_attempts_as_imported(strategy, kwargs, imported_text):
+    """batch_attempts without the extra run that leaves out the cell axes."""
     s = normalize_strategy(strategy)
     base = dict(kwargs)
     single = [{"label": "", "kwargs": base, "xdsinp": imported_text}]
