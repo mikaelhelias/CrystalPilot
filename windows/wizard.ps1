@@ -686,7 +686,7 @@ function Invoke-Install {
         if (-not $app -or -not (Test-Path $app)) { throw "The CrystalPilot application file (xds-gui-vNNN.py) was not found." }
         $appDest = Join-Path (Join-Path $inst "files") (Split-Path $app -Leaf)
         if ((Resolve-Path $app).Path -ne $appDest) { Copy-Item -Force $app $appDest }
-        foreach ($f in (Get-ChildItem -Path $Here -File | Where-Object { $_.Extension -in @(".ps1", ".bat", ".sh", ".html", ".md") })) {
+        foreach ($f in (Get-ChildItem -Path $Here -File | Where-Object { $_.Extension -in @(".ps1", ".bat", ".sh", ".html", ".md", ".ico") })) {
             $dest = Join-Path (Join-Path $inst "windows") $f.Name
             if ($f.FullName -ne $dest) { Copy-Item -Force $f.FullName $dest }
         }
@@ -748,11 +748,17 @@ function Invoke-Install {
         if (-not $TestMode) { try {
             $desktop = [Environment]::GetFolderPath("Desktop")
             $shell = New-Object -ComObject WScript.Shell
+            $ico = Join-Path $wHere "CrystalPilot.ico"
+            $appIcon = if (Test-Path $ico) { $ico + ",0" } else { "%SystemRoot%\System32\imageres.dll,144" }
+            # removed first: Explorer keeps showing the old icon of a shortcut that is only rewritten
+            foreach ($old in @((Join-Path $desktop "CrystalPilot.lnk"), (Join-Path ([Environment]::GetFolderPath("Programs")) "CrystalPilot.lnk"), (Join-Path $inst "CrystalPilot.lnk"))) {
+                Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+            }
             $lnk = $shell.CreateShortcut((Join-Path $desktop "CrystalPilot.lnk"))
             $lnk.TargetPath = Join-Path $wHere "CrystalPilot.bat"
             $lnk.WorkingDirectory = $wHere
             $lnk.Description = "CrystalPilot - XDS processing interface"
-            $lnk.IconLocation = "%SystemRoot%\System32\imageres.dll,144"
+            $lnk.IconLocation = $appIcon
             $lnk.Save()
             $lnk2 = $shell.CreateShortcut((Join-Path $desktop "CrystalPilot Projects.lnk"))
             $lnk2.TargetPath = $projWin
@@ -766,6 +772,8 @@ function Invoke-Install {
             $lnk4 = $shell.CreateShortcut((Join-Path $inst "CrystalPilot.lnk"))
             $lnk4.TargetPath = $lnk.TargetPath; $lnk4.WorkingDirectory = $wHere; $lnk4.Description = $lnk.Description; $lnk4.IconLocation = $lnk.IconLocation
             $lnk4.Save()
+            # the desktop and Start menu read the new icon now, not after the next sign-in
+            try { Start-Process -FilePath (Join-Path $env:SystemRoot "System32\ie4uinit.exe") -ArgumentList "-show" -WindowStyle Hidden -Wait -ErrorAction Stop } catch {}
             & $Log "Shortcuts created (desktop: CrystalPilot, CrystalPilot Projects; Start menu: CrystalPilot; $inst\CrystalPilot)."
         } catch { & $Log ("Could not create the shortcuts: " + $_.Exception.Message) } }
         if (-not $TestMode) { try {
@@ -899,7 +907,8 @@ function Register-Resume($statePath) {
     $lnk.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     $lnk.Arguments = "-NoProfile -ExecutionPolicy " + (Get-ScriptPolicy) + " -STA -WindowStyle Hidden -File `"$PSCommandPath`" -Resume `"$statePath`""
     $lnk.WorkingDirectory = $Here
-    $lnk.IconLocation = "%SystemRoot%\System32\imageres.dll,144"
+    $ico = Join-Path $Here "CrystalPilot.ico"
+    $lnk.IconLocation = if (Test-Path $ico) { $ico + ",0" } else { "%SystemRoot%\System32\imageres.dll,144" }
     $lnk.Description = "Finish installing CrystalPilot after the restart"
     $lnk.Save()
 }

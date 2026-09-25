@@ -72,7 +72,7 @@ def stage(dest, offline_image=None):
     (pkg / "windows").mkdir(parents=True)
     for f in (ROOT / "windows").iterdir():
         # the launcher's crystalpilot.cfg belongs to an installation, not to the package
-        if f.is_file() and f.name != "crystalpilot.cfg" and f.suffix.lower() in (".ps1", ".bat", ".sh", ".html", ".md", ".jpg"):
+        if f.is_file() and f.name != "crystalpilot.cfg" and f.suffix.lower() in (".ps1", ".bat", ".sh", ".html", ".md", ".jpg", ".ico"):
             shutil.copy2(f, pkg / "windows" / f.name)
     shutil.copytree(ROOT / "linux", pkg / "linux", ignore=shutil.ignore_patterns("__pycache__"))
     (pkg / "files").mkdir()
