@@ -11280,7 +11280,9 @@
             populateRanges('excl-ranges', 'excl-start', 'excl-end', 'First frame of range to exclude', 'Last frame of range to exclude', exclAll);
 
             // Modifiable only
-            const sp = get('SIGNAL_PIXEL');
+            // older files (mxCuBE, APS gmcaproc) say STRONG_PIXEL=, the name current XDS rejects;
+            // the server writes it as SIGNAL_PIXEL=
+            const sp = get('SIGNAL_PIXEL') || get('STRONG_PIXEL');
             if (sp) { set('p-signal-pixel', sp.value); _setToggleBtn('SIGNAL_PIXEL', !sp.commented); }
             else { _setToggleBtn('SIGNAL_PIXEL', false); }
 

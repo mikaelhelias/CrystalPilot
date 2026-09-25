@@ -1419,6 +1419,13 @@ def define_checks(m, scratch):
         assert v["ORGX"] == "2008.5" and v["ORGY"] == "2253.0" and v["QX"] == "0.075", v   # real numbers untouched
         assert "! detector" in out and "!NX= 12.0" in out, out                                 # comments untouched
         assert m._clean_inp_text("NX= 4150.5\n", "xds") == "NX= 4150.5\n"                  # not a whole number: left to XDS
+        # STRONG_PIXEL= (his A1 XDS.INP, the APS gmcaproc files): current XDS stops with ILLEGAL KEYWORD
+        v = m._parse_xdsinp_params(m._clean_inp_text("   STRONG_PIXEL= 25!10\nNX= 100\n", "xds"))
+        assert v.get("SIGNAL_PIXEL") == "25" and "STRONG_PIXEL" not in v, v
+        both = m._clean_inp_text("STRONG_PIXEL= 4.0\nSIGNAL_PIXEL= 6.0\n", "xds")               # given twice XDS stops too
+        v = m._parse_xdsinp_params(both)
+        assert v.get("SIGNAL_PIXEL") == "6.0" and "STRONG_PIXEL" not in v and both.count("SIGNAL_PIXEL=") == 2, both
+        assert m._clean_inp_text(both, "xds") == both                                        # a second pass changes nothing
         # a file put in the folder by hand is cleaned just before the program starts
         for name, text in (("XSCALE.INP", bom + "OUTPUT_FILE= merged.ahkl\nINPUT_FILE= XDS_ASCII.HKL\n"),
                            ("XDSCONV.INP", bom + "INPUT_FILE= merged.ahkl\nOUTPUT_FILE= temp.hkl CCP4_I+F\n"),

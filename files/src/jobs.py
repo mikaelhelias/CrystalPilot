@@ -440,6 +440,11 @@ def _clean_inp_text(text, kind):
     text = str(text or '').replace('﻿', '')
     if kind != 'xds':
         return text
+    # STRONG_PIXEL= is not a keyword of current XDS (ILLEGAL (OBSOLETE ?) KEYWORD); older
+    # files (mxCuBE 2012, APS gmcaproc 2021) use it for what XDS now calls SIGNAL_PIXEL=
+    has_signal = any(k.upper() == 'SIGNAL_PIXEL' for line in text.split('\n')
+                     if not line.lstrip().startswith('!') and '=' in line
+                     for k, _v in XDSINPEditor._split_pairs(line)[0])
     out = []
     for line in text.split('\n'):
         if line.lstrip().startswith('!') or '=' not in line:
@@ -447,6 +452,20 @@ def _clean_inp_text(text, kind):
             continue
         pairs, comment = XDSINPEditor._split_pairs(line)
         changed = False
+        if any(p[0].upper() == 'STRONG_PIXEL' for p in pairs):
+            kept = []
+            for key, value in pairs:
+                if key.upper() != 'STRONG_PIXEL':
+                    kept.append([key, value])
+                elif has_signal:
+                    out.append('!STRONG_PIXEL= %s  ! CrystalPilot: not a keyword of current XDS; SIGNAL_PIXEL= is set' % value)
+                else:
+                    kept.append(['SIGNAL_PIXEL', value])
+                    comment = (comment + '  ' if comment else '') + '! CrystalPilot: was STRONG_PIXEL='
+                    has_signal = True
+            pairs, changed = kept, True
+            if not pairs:
+                continue
         for pair in pairs:
             if pair[0].upper() in _XDS_INTEGER_KEYS:
                 words = pair[1].split()
