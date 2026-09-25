@@ -94,11 +94,11 @@ which part of the regression battery exercises it. "U" = `test_units.py`,
 
 ## Guide / Docs tabs
 
-Static content: B (no JavaScript errors when shown).
+Static content: B (no JavaScript errors when shown). The Docs tab holds only the illustrated manual (HTML, PDF, search) since 0.6.7c: B checks there is no other card.
 
 | Ability | Where | Tests |
 |---|---|---|
-| Documentation search: ranked over the Docs sections and the manual index, every term marked, the matching sentence shown | header Ask bar (`Ctrl+K`), Docs-tab box | B (ranking, context, window), U (one engine) |
+| Documentation search: ranked over the manual index (and the Guide tab), every term marked, the matching sentence shown | header Ask bar (`Ctrl+K`), Docs-tab box | B (ranking, context, window), U (one engine) |
 | A hit opens in its own window: the manual at its anchor with `?q=`, a Docs section as a standalone page | `cpdsOpenHit` / `cpdsOpenDocs` | B |
 
 ## Cross-cutting

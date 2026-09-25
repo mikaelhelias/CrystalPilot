@@ -13,6 +13,9 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 FILES=$(cd "$HERE/../.." && pwd)
+# test projects, throwaway servers and their output on the project's drive
+# (<repo>/.tmp/wsl), not in WSL's /tmp, which lives on the distro's disk
+TB=${CP_TMP_WSL:-$(dirname "$FILES")/.tmp/wsl}; mkdir -p "$TB"
 APP=${APP:-$(ls -1 "$FILES"/xds-gui-v*.py 2>/dev/null | sort -t v -k3 -n | tail -1)}
 [ -f "$APP" ] || { echo "APP not found: $APP"; exit 99; }
 PY=${PY:-$HOME/.crystalpilot/venv/bin/python}; [ -x "$PY" ] || PY=python3
@@ -42,7 +45,7 @@ ensure_drive() {  # $1 = a path; under WSL, mount the Windows drive it lives on 
 # ══════════════════════════════════════════════════════════════════════════
 if [ "${CP_SKIP_BASIC:-0}" != 1 ]; then   # CP_SKIP_BASIC=1: only the real-program sections
 echo "=== 1. robustness (fake xds_par, port 8078)"
-T=/tmp/cp_api_a; PORT=8078; U="http://127.0.0.1:$PORT"; TOK=tA
+T="$TB/cp_api_a"; PORT=8078; U="http://127.0.0.1:$PORT"; TOK=tA
 rm -rf "$T"; mkdir -p "$T/projects" "$T/xds"
 cat > "$T/xds/xds_par" <<'EOF'
 #!/bin/sh
@@ -60,13 +63,13 @@ if start_server $PORT $TOK "$T/projects" "$T/xds" "$T/settings.json"; then ok "s
 c -X POST "$U/api/projects" -H 'Content-Type: application/json' -d '{"name":"my proj","description":"","data_path":""}' >/dev/null
 printf 'JOB= XYCORR\nNAME_TEMPLATE_OF_DATA_FRAMES= /tmp/x_????.cbf\n' > "$T/projects/my proj/XDS.INP"
 R=$(c "$U/api/projects/my%20proj/xdsinp"); check "encoded project name resolves" "echo '$R' | grep -q NAME_TEMPLATE" "$R"
-C=$(c -o /tmp/cp_api_out --path-as-is -w '%{http_code}' "$U/api/projects/../lp/CORRECT"); check "traversal -> 400 JSON" "[ $C = 400 ] && grep -q error /tmp/cp_api_out" "code=$C"
+C=$(c -o "$TB/cp_api_out" --path-as-is -w '%{http_code}' "$U/api/projects/../lp/CORRECT"); check "traversal -> 400 JSON" "[ $C = 400 ] && grep -q error "$TB/cp_api_out"" "code=$C"
 C=$(c -o /dev/null -w '%{http_code}' "$U/api/stream?project=my%20proj&stop_at=NOPE"); check "unknown stop_at -> 400" "[ $C = 400 ]" "code=$C"
 C=$(c -o /dev/null -w '%{http_code}' "$U/api/frame?path=/tmp/x.cbf&frame=abc"); check "bad frame param -> 400/503" "[ $C = 400 ] || [ $C = 503 ]" "code=$C"
 mkdir -p "$T/projects/broken"; echo '{ not json' > "$T/projects/broken/metadata.json"
 R=$(c "$U/api/projects"); check "corrupt metadata skipped" "echo '$R' | grep -q 'my proj'" "$R"
 printf ' ***** CORRECT ***** \n UNIT CELL \xe5 test\n' > "$T/projects/my proj/CORRECT.LP"
-C=$(c -o /tmp/cp_api_out -w '%{http_code}' "$U/api/projects/my%20proj/lp/CORRECT"); check "LP with non-UTF8 byte served" "[ $C = 200 ]" "code=$C"
+C=$(c -o "$TB/cp_api_out" -w '%{http_code}' "$U/api/projects/my%20proj/lp/CORRECT"); check "LP with non-UTF8 byte served" "[ $C = 200 ]" "code=$C"
 c -N "$U/api/stream?project=my%20proj&step=XYCORR" > "$T/sse1.log" 2>&1 &
 sleep 2; CH=$(grep -o 'child=[0-9]*' "$T/sse1.log" | head -1 | cut -d= -f2)
 check "fake xds started, child known" "[ -n \"$CH\" ] && kill -0 $CH 2>/dev/null" "$(head -3 $T/sse1.log)"
@@ -95,11 +98,11 @@ stop_server "$T" $PORT; pkill -f 'sleep 120' 2>/dev/null; rm -rf "$T"
 
 # ══════════════════════════════════════════════════════════════════════════
 echo "=== 2. access control (port 8079)"
-T=/tmp/cp_api_b; PORT=8079; U="http://127.0.0.1:$PORT"; TOK=testtoken123
+T="$TB/cp_api_b"; PORT=8079; U="http://127.0.0.1:$PORT"; TOK=testtoken123
 rm -rf "$T"; mkdir -p "$T/projects" "$T/xds"
 if start_server $PORT $TOK "$T/projects" "$T/xds" "$T/settings.json"; then ok "server up"; else bad "server up -- $(tail -3 $T/server.log)"; fi
 check "binds 127.0.0.1 only" "ss -ltn | grep ':$PORT ' | grep -q '127.0.0.1:$PORT'" "$(ss -ltn | grep ":$PORT ")"
-C=$("$CURL" -s -o /tmp/cp_api_out -w '%{http_code}' "$U/api/projects"); check "no token -> 403" "[ $C = 403 ]" "code=$C"
+C=$("$CURL" -s -o "$TB/cp_api_out" -w '%{http_code}' "$U/api/projects"); check "no token -> 403" "[ $C = 403 ]" "code=$C"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "X-CrystalPilot-Token: $TOK" "$U/api/projects"); check "header token -> 200" "[ $C = 200 ]" "code=$C"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' "$U/api/projects?token=$TOK"); check "query token -> 200" "[ $C = 200 ]" "code=$C"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H 'X-CrystalPilot-Token: wrong' "$U/api/projects"); check "wrong token -> 403" "[ $C = 403 ]" "code=$C"
@@ -121,7 +124,7 @@ if [ "${CP_REAL_XSCALE:-0}" = "1" ]; then
     SRC="$HOME/crystalpilot_projects/${CP_REAL_PROJECT:-test}"
     lrf=$(grep -o '"last_run_folder": "[^"]*"' "$SRC/metadata.json" 2>/dev/null | sed 's/.*: "//; s/"$//'); [ -n "$lrf" ] && ensure_drive "$lrf"
     if [ -f "$SRC/metadata.json" ] && [ -x "$XDS_REAL/xscale_par" ]; then
-        T=/tmp/cp_api_c; PORT=8081; U="http://127.0.0.1:$PORT"; TOK=tC
+        T="$TB/cp_api_c"; PORT=8081; U="http://127.0.0.1:$PORT"; TOK=tC
         rm -rf "$T"; mkdir -p "$T/projects/p"; cp "$SRC/metadata.json" "$T/projects/p/"; [ -f "$SRC/XSCALE.INP" ] && cp "$SRC/XSCALE.INP" "$T/projects/p/"
         c() { "$CURL" -s -H "X-CrystalPilot-Token: $TOK" "$@"; }
         if start_server $PORT $TOK "$T/projects" "$XDS_REAL" "$T/settings.json"; then ok "server up"; else bad "server up -- $(tail -3 $T/server.log)"; fi
@@ -152,7 +155,7 @@ if [ "${CP_REAL_XDS:-0}" = "1" ]; then
     if [ ! -d "$fdir" ] || [ ! -x "$XDS_REAL/xds_par" ]; then
         echo "   skipped: frames folder $fdir or $XDS_REAL/xds_par not reachable"
     else
-        T=/tmp/cp_api_d; PORT=8082; U="http://127.0.0.1:$PORT"; TOK=tD
+        T="$TB/cp_api_d"; PORT=8082; U="http://127.0.0.1:$PORT"; TOK=tD
         rm -rf "$T"; mkdir -p "$T/projects"; echo '{}' > "$T/settings.json"
         c()  { "$CURL" -s -H "X-CrystalPilot-Token: $TOK" "$@"; }
         cj() { "$CURL" -s -H "X-CrystalPilot-Token: $TOK" -H 'Content-Type: application/json' "$@"; }

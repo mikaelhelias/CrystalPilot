@@ -324,17 +324,16 @@ async function main() {
       if (ve.length) console.log("     note: visible error boxes on " + name + ": " + ve.join(" / ").slice(0, 300));
       await shot("07_" + tab);
     }
-    // Docs tab: table of contents matches the sections, links scroll, API section renders
+    // Docs tab: the illustrated manual only (open it, its PDF, search it)
     mark = events.length;
     await evalJs(`(async () => { switchMainTab('docs'); window.scrollTo(0, 0); })()`); await sleep(1200);
-    const docs = await evalJs(`(() => { const toc = document.querySelectorAll('#docs-toc-links a').length, cards = document.querySelectorAll('#main-tab-docs .card').length, ids = Array.from(document.querySelectorAll('#main-tab-docs .card')).map(c => c.id); const missing = Array.from(document.querySelectorAll('#docs-toc-links a')).map(a => (a.getAttribute('onclick') || '').match(/docJump\\('([^']+)'\\)/)).filter(Boolean).map(m => m[1]).filter(id => !document.getElementById(id)); return { toc, cards, missing, api: document.querySelectorAll('#doc-api tbody tr').length }; })()`);
-    check("Docs tab: table of contents matches the sections", docs.toc === docs.cards && docs.toc >= 20 && docs.missing.length === 0, JSON.stringify(docs));
-    check("Docs tab: API reference lists the routes", docs.api >= 40, JSON.stringify(docs));
+    const docs = await evalJs(`(() => ({ ids: Array.from(document.querySelectorAll('#main-tab-docs .card')).map(c => c.id), toc: document.querySelectorAll('#docs-toc-links a').length }))()`);
+    check("Docs tab: only the illustrated-manual card", docs.ids.length === 1 && docs.ids[0] === "doc-manual" && docs.toc === 0, JSON.stringify(docs));
     const man = await evalJs(`(async () => { const r = await fetch('/manual/'); const d = await r.json(); const links = (document.getElementById('doc-manual-links') || {}).textContent || ''; return { status: r.status, available: d.available, card: links.slice(0, 80) }; })()`);
     check("Docs tab: illustrated-manual card answers", man.status === 200 && man.card.length > 5 && (!man.available || /Open the illustrated manual/.test(man.card)), JSON.stringify(man));
     await evalJs(`(async () => { document.getElementById('docs-search').value = 'XSCALE'; _docsSearchNow('XSCALE'); })()`); await sleep(2000);
     const ds = await evalJs(`(() => { const box = document.getElementById('docs-search-results'); const hits = box.querySelectorAll('a.ds-hit'); const t = box.textContent; return { shown: box.style.display !== 'none', hits: hits.length, docs: /DOCS/.test(t), manual: /MANUAL/.test(t), btn: (document.getElementById('manual-btn') || {}).style.display }; })()`);
-    check("Docs tab: search finds Docs sections" + (man.available ? ", manual pages, and the header Manual button shows" : ""), ds.shown && ds.hits >= 3 && ds.docs && (!man.available || (ds.manual && ds.btn === "")), JSON.stringify(ds));
+    check("Docs tab: the search box answers" + (man.available ? " with manual pages, and the header Manual button shows" : ""), ds.shown && (!man.available || (ds.hits >= 3 && ds.manual && ds.btn === "")), JSON.stringify(ds));
     await evalJs(`(async () => { document.getElementById('docs-search').value = ''; _docsSearchNow(''); })()`);
 
     // ── the Ask bar in the header: ranking, the context line, its own window ──
@@ -345,19 +344,23 @@ async function main() {
       return r.result.value;
     };
     const ask = await evalJs(`(async () => { const b = document.getElementById('askbar-in'); if (!b) return { missing: true };
+      // the Environment screen opens on a timer after the splash and may come up after the
+      // start-up dismissal; it is a modal over everything, so close it as a user would
+      try { if (typeof envClose === 'function') envClose(); } catch (e) {}
       window.scrollTo(0, 0); b.value = 'xscale cut-off'; cpAskRender('xscale cut-off'); await new Promise(r => setTimeout(r, 500));
       const pop = document.getElementById('askbar-pop'), rows = Array.from(pop.querySelectorAll('a.ds-hit'));
       // the first rows must be on top of the page, not cut off by the header (0.6.6c showed one and a half)
       const clickable = rows.slice(0, 3).filter(r => { const q = r.getBoundingClientRect();
         const e = document.elementFromPoint(q.left + q.width / 2, q.top + Math.min(q.height / 2, 20)); return q.height > 0 && e && r.contains(e); }).length;
-      return { shown: pop.style.display !== 'none', rows: rows.length, marks: pop.querySelectorAll('mark').length, clickable,
+      const cover = rows[0] ? (function (q) { const e = document.elementFromPoint(q.left + q.width / 2, q.top + 10); return e ? (e.id || e.className || e.tagName) : null; })(rows[0].getBoundingClientRect()) : null;
+      return { shown: pop.style.display !== 'none', rows: rows.length, marks: pop.querySelectorAll('mark').length, clickable, cover,
                top: (rows[0] || {}).textContent || '', snippets: rows.filter(r => r.querySelector('.ds-snip')).length }; })()`);
     check("Ask bar: the header search ranks the documentation and shows the matching sentence",
       !ask.missing && ask.shown && ask.rows >= 3 && ask.marks >= 2 && /XSCALE/i.test(ask.top) && ask.snippets === ask.rows && ask.clickable === 3,
       JSON.stringify(ask).slice(0, 300));
     // one window per gesture is all a browser grants, so ask twice
     const docWin = await evalGesture(`(() => {
-      const w = cpdsOpenDocs('doc-xscale', ['xscale'], 'xscale');
+      const w = cpdsOpenDocs('doc-quick-guide', ['xscale'], 'xscale');   // the Guide tab: the Docs tab holds only the manual
       if (!w) return { opened: false };
       const doc = { title: w.document.title, marks: w.document.querySelectorAll('mark').length,
                     card: !!w.document.querySelector('.card'), scripts: w.document.querySelectorAll('script').length,
@@ -365,8 +368,8 @@ async function main() {
       w.close();
       return { opened: true, doc };
     })()`);
-    check("Ask bar: a Docs section opens in its own window, marked and self-contained",
-      docWin.opened && docWin.doc.card && docWin.doc.marks >= 1 && docWin.doc.scripts === 0 && docWin.doc.back && /XSCALE/i.test(docWin.doc.title),
+    check("Ask bar: a Guide hit opens in its own window, marked and self-contained",
+      docWin.opened && docWin.doc.card && docWin.doc.marks >= 1 && docWin.doc.scripts === 0 && docWin.doc.back && /Quick Guide/i.test(docWin.doc.title),
       JSON.stringify(docWin).slice(0, 300));
     const manWin = await evalGesture(`(() => {
       const m = cpdsPopup('/manual/CrystalPilot-Manual.html?q=xscale#ch-11', 'cpmanualcheck', 900, 700);
@@ -374,10 +377,8 @@ async function main() {
     })()`);
     check("Ask bar: a manual hit opens the manual in its own window", manWin === true, String(manWin));
     await evalJs(`(() => { const b = document.getElementById('askbar-in'); b.value = ''; cpAskRender(''); })()`);
-    await evalJs(`docJump('doc-api')`); await sleep(1500);
-    const sy = await evalJs(`window.scrollY`);
-    check("Docs tab: contents links scroll to their section", sy > 1000, "scrollY=" + sy);
-    await shot("07_docs_api");
+    await evalJs(`(async () => { switchMainTab('docs'); window.scrollTo(0, 0); })()`); await sleep(800);
+    await shot("07_docs");
     check("Docs tab: no JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
     await evalJs(`(async () => { switchMainTab('dp'); switchMainTab('autopilot'); })()`); await sleep(3500);
     const apTxt = await evalJs(`(() => { const r = document.getElementById('ap-results'), card = document.getElementById('apw-detail'); return r && r.style.display !== 'none' && card.style.display !== 'none' ? r.textContent.slice(0, 300) : ''; })()`);

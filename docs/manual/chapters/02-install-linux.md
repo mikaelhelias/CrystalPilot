@@ -41,7 +41,7 @@ bash install-linux.sh --port 8100 --no-launch
 | `crystalpilot stop` | stop the background server |
 | `crystalpilot status` / `crystalpilot log` | is it running / follow the log |
 
-The interface is at `http://127.0.0.1:8000`. It answers this computer only; to use it from other machines start the program with `--host 0.0.0.0` (see the Docs tab, *Security and access*).
+The interface is at `http://127.0.0.1:8000`. It answers this computer only; to use it from other machines start the program with `--host 0.0.0.0` (see chapter 18, *Security in one paragraph*).
 
 ## Where things go
 

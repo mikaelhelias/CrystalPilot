@@ -1358,6 +1358,17 @@ def stream_xscale(project_name, write_fn, run_folder=None):
     project_dir = _pdir(project_name)
     xscale_exe = _find_xscale_exe(xds_runner.xds_path)
 
+    # No XSCALE.INP yet: write the default one for this project's XDS_ASCII.HKL (the
+    # values an empty XSCALE form saves with "Save as new XSCALE.INP") and run it
+    made_default = ""
+    if not (project_dir / "XSCALE.INP").exists() and not (run_folder and (Path(run_folder) / "XSCALE.INP").exists()):
+        _hkl = _pfile(project_dir, "XDS_ASCII.HKL")
+        if _hkl.exists():
+            _write_inp(project_dir / "XSCALE.INP", _xscale_apply_params("", {
+                "OUTPUT_FILE": "merged.ahkl", "INPUT_FILE": [str(_hkl)],
+                "STRICT_ABSORPTION_CORRECTION": "FALSE", "FRIEDEL'S_LAW": "TRUE", "MERGE": "FALSE"}))
+            made_default = str(_hkl)
+
     # Determine working directory
     if run_folder:
         work_dir = Path(run_folder).resolve()
@@ -1392,8 +1403,10 @@ def stream_xscale(project_name, write_fn, run_folder=None):
     def send(event, data):
         write_fn("event: " + event + "\ndata: " + json.dumps(data) + "\n\n")
 
+    if made_default:
+        send("log", {"text": ">>> No XSCALE.INP yet: wrote the default one (OUTPUT_FILE= merged.ahkl, INPUT_FILE= " + made_default + ")"})
     if not xscale_inp.exists():
-        send("error_msg", {"message": "XSCALE.INP not found in " + str(work_dir)}); send("done", {}); return
+        send("error_msg", {"message": "No XSCALE.INP in " + str(work_dir) + " and no XDS_ASCII.HKL of this project to write one for. Run CORRECT first, or set the input files in the XSCALE tab and save."}); send("done", {}); return
     try:
         _inp_text = xscale_inp.read_text(encoding="utf-8", errors="replace")
         if not any(_xscale_key(l) == "INPUT_FILE" and not l.strip().startswith("!") for l in _inp_text.split("\n")):

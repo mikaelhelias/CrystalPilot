@@ -2,7 +2,7 @@
 
 ## The one rule about files
 
-Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project folder. Everything a program writes is in the folder where that program last ran, and CrystalPilot remembers that folder per program. When a viewer says a file is missing, look at the status line under the run-folder field: that is where it is looking. The Docs tab (*Projects and where files live*) has the full rule, and `http://127.0.0.1:8000/api/projects/<name>/locations` lists where every file resolves.
+Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project folder. Everything a program writes is in the folder where that program last ran, and CrystalPilot remembers that folder per program. When a viewer says a file is missing, look at the status line under the run-folder field: that is where it is looking. `http://127.0.0.1:8000/api/projects/<name>/locations` lists where every file resolves.
 
 ## Messages you may see
 
@@ -78,9 +78,9 @@ CrystalPilot sends nothing by itself. **Open e-mail** starts your own mail progr
 
 ## Getting help
 
-- The **search box in the header** (`Ctrl+K`) searches the Docs sections and this manual at once. Each result shows the sentence that matched with your words highlighted, and opens in its own window, so you can read it beside the work you were doing.
+- The **search box in the header** (`Ctrl+K`) searches this manual. Each result shows the sentence that matched with your words highlighted, and opens in its own window, so you can read it beside the work you were doing.
 
 @[Asking the documentation from the header: the answer opens beside your work, the words highlighted.](videos/docs.mp4)
-- The **Docs** tab is the reference for every control and file; the **Guide** tab is the short version of this manual. Its own search box works the same way, except that a Docs section is right there and is shown in place.
+- The **Docs** tab opens this manual (HTML and PDF) and has the same search; the **Guide** tab is the short version of this manual.
 - The XDS documentation: [xds.mr.mpg.de/html_doc/XDS.html](https://xds.mr.mpg.de/html_doc/XDS.html); the XDSwiki for processing advice.
 - When reporting a problem, include the log of the failing step (LP Viewer → the step), the `XDS.INP`, and the Environment screen's summary.

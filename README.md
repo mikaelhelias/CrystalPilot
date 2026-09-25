@@ -167,7 +167,7 @@ The **Environment** screen lists what was found (XDS, parallel binaries, neggia,
 ## Documentation
 
 - **Manual:** 18 illustrated chapters in `docs/manual/`, opened in the app with the 📖 Manual button and searchable from the header.
-- **Docs tab:** inside the app, a reference for every control and file.
+- **Docs tab:** opens the manual and its PDF, with the same search.
 
 ## Building from source
 

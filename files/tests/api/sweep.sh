@@ -245,3 +245,11 @@ if [ -n "$HKLSRC" ]; then
     check "XSCALE cut-off saved in a project without XSCALE.INP keeps INCLUDE_RESOLUTION_RANGE under an INPUT_FILE" "[ $C = 200 ] && grep -A3 '^ *INPUT_FILE= .*XDS_ASCII.HKL' $T/projects/xsnoinp/XSCALE.INP | grep -q 'INCLUDE_RESOLUTION_RANGE= *999 2.50'" "code=$C $(tr '\n' '|' < $T/projects/xsnoinp/XSCALE.INP)"
 fi
 c -X DELETE "$U/api/projects/xsnoinp?files=true" >/dev/null
+# ── XSCALE run with no XSCALE.INP: the default one is written for the project's XDS_ASCII.HKL and run
+cj -X POST "$U/api/projects" -d '{"name": "xsrun", "description": "", "data_path": ""}' >/dev/null
+if [ -n "$HKLSRC" ]; then
+    cp "$HKLSRC" "$T/projects/xsrun/XDS_ASCII.HKL"
+    stream xsrun "/api/xscale/stream?project=xsrun" 600
+    check "XSCALE with no XSCALE.INP writes the default for the project's XDS_ASCII.HKL and completes" "done_ok xsrun XSCALE && grep -q '^ *INPUT_FILE= .*XDS_ASCII.HKL' $T/projects/xsrun/XSCALE.INP && grep -q 'wrote the default one' $T/xsrun.log" "$(explain xsrun)"
+fi
+c -X DELETE "$U/api/projects/xsrun?files=true" >/dev/null
