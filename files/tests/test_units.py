@@ -13,10 +13,12 @@ XDS.INP written by CrystalPilot, LP files, XSCALE.INP written by the old
 "Save new" button).  Whenever a bug is found in production, add the file that
 triggered it here and a check that fails on the old behaviour.
 """
+import atexit
 import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -35,10 +37,26 @@ def newest_build():
     return cands[-1]
 
 
+def _remove_scratch(scratch):
+    """Delete the scratch folder, also the folders a check made unreadable on purpose."""
+    os.chdir(str(Path(__file__).resolve().parent))
+    def _unlock(func, p, _exc):
+        os.chmod(p, 0o700)
+        parent = os.path.dirname(p)
+        if parent:
+            os.chmod(parent, 0o700)
+        func(p)
+    shutil.rmtree(str(scratch), onerror=_unlock)
+
+
 def load_module(path):
     # The module creates ./projects at import unless --projects-dir is present:
     # import it from a scratch folder so the source tree stays clean.
-    scratch = Path(tempfile.mkdtemp(prefix="cp_units_"))
+    # on the project's drive (<repo>/.tmp, ignored by git), removed when the checks end
+    tmp = Path(os.environ.get("CP_TMP") or Path(__file__).resolve().parents[2] / ".tmp")
+    tmp.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="cp_units_", dir=str(tmp)))
+    atexit.register(_remove_scratch, scratch)
     os.chdir(scratch)
     os.environ["XDS_GUI_SETTINGS"] = str(scratch / "settings.json")
     os.environ["XDS_GUI_PROJECTS"] = str(scratch / "projects")

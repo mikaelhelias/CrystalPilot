@@ -14,6 +14,14 @@
 const { spawn, execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+// Temp folders go to <repo>/.tmp (the project's drive, ignored by git), not the system
+// temp folder; leftovers of an interrupted run are removed at the next start.
+const TMP = process.env.CP_TMP || path.join(__dirname, "../..", ".tmp");
+fs.mkdirSync(TMP, { recursive: true });
+for (const old of fs.readdirSync(TMP)) {
+  if (!/^cp\-cap\-/.test(old)) continue;
+  try { if (Date.now() - fs.statSync(path.join(TMP, old)).mtimeMs > 3600e3) fs.rmSync(path.join(TMP, old), { recursive: true, force: true }); } catch (e) {}
+}
 const os = require("os");
 
 const URL_ = process.env.CP_UI_URL || "http://127.0.0.1:8082";
@@ -120,7 +128,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   const browser = findBrowser();
   const port = 9400 + Math.floor(Math.random() * 400);
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "cp-cap-"));
+  const profile = fs.mkdtempSync(path.join(TMP, "cp-cap-"));
   const proc = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", "--force-device-scale-factor=1",
     "--remote-debugging-port=" + port, "--user-data-dir=" + profile, `--window-size=${W},${Hh}`, "about:blank"], { stdio: "ignore" });
   let ws, id = 0; const pending = new Map();
@@ -239,7 +247,7 @@ async function main() {
     try { proc.kill(); } catch (e) {}
     await sleep(500);
     try { if (process.platform === "win32") execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore" }); } catch (e) {}
-    try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch (e) {}   // Edge may still hold files for a moment
   }
 }
 main().catch((e) => { console.log("FAIL capture crashed -- " + e.message); process.exit(2); });

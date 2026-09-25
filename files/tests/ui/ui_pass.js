@@ -15,6 +15,14 @@
 const { spawn, execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+// Temp folders go to <repo>/.tmp (the project's drive, ignored by git), not the system
+// temp folder; leftovers of an interrupted run are removed at the next start.
+const TMP = process.env.CP_TMP || path.join(__dirname, "../../..", ".tmp");
+fs.mkdirSync(TMP, { recursive: true });
+for (const old of fs.readdirSync(TMP)) {
+  if (!/^cp\-ui\-/.test(old)) continue;
+  try { if (Date.now() - fs.statSync(path.join(TMP, old)).mtimeMs > 3600e3) fs.rmSync(path.join(TMP, old), { recursive: true, force: true }); } catch (e) {}
+}
 const os = require("os");
 
 const URL_ = process.env.CP_UI_URL || "http://127.0.0.1:8082";
@@ -38,7 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   const browser = findBrowser();
   const port = 9333 + Math.floor(Math.random() * 500);
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "cp-ui-"));
+  const profile = fs.mkdtempSync(path.join(TMP, "cp-ui-"));
   const proc = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
     "--remote-debugging-port=" + port, "--user-data-dir=" + profile, "--window-size=1500,1000", "about:blank"],
     { stdio: "ignore" });
@@ -394,7 +402,7 @@ async function main() {
     try { proc.kill(); } catch (e) {}
     await sleep(500);
     try { if (process.platform === "win32") execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore" }); } catch (e) {}
-    try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch (e) {}   // Edge may still hold files for a moment
   }
 }
 

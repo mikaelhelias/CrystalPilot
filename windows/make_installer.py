@@ -351,7 +351,9 @@ def main():
     a = ap.parse_args()
     dist = Path(a.dist)
     dist.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="cp-pkg-"))
+    tmp = ROOT / ".tmp"                      # the project's drive, not the system temp folder
+    tmp.mkdir(exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="cp-pkg-", dir=str(tmp)))
     try:
         pkg, ver = stage(work)
         z = make_zip(pkg, dist / ("CrystalPilot-" + ver + ".zip"))
