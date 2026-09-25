@@ -5903,6 +5903,7 @@
             // whole form into XDS.INP, and a form still holding the previous project's
             // values (or nothing) would overwrite this project's file with them.
             try { await loadParamsFromFile(); } catch (e) {}
+            try { await _xsXcFollowProject(name); } catch (e) {}
             if (typeof _table1LpSource !== 'undefined') _table1LpSource = null;
             
             const pipeline = document.getElementById("pipeline");
@@ -17214,6 +17215,57 @@
             }
             if (!foundFreeR) _xcSetFreeR(false);
             if (!foundFriedel) _xcSetFriedel(false);  // default FALSE when absent
+        }
+
+        // ── XSCALE / XDSCONV forms follow the open project ──
+        // They kept the previous project's values, and Save then wrote them (input
+        // files, output names) into the project opened next.  Opening another project
+        // now shows its XSCALE.INP / XDSCONV.INP, or - when it has none - the forms as
+        // the page starts (the presets), never the previous project's values.
+        // Re-opening the same project (after every run) leaves the forms alone.
+        var _xsXcProject = null;
+        function _xsXcFormState() {
+            var vals = {};
+            document.querySelectorAll('#main-tab-xscale input[id^="xs-"], #main-tab-xscale select[id^="xs-"], #main-tab-xdsconv input[id^="xc-"], #main-tab-xdsconv select[id^="xc-"]')
+                .forEach(function (e) { if (e.type !== 'button' && e.type !== 'checkbox' && e.type !== 'radio' && e.type !== 'file') vals[e.id] = e.value; });
+            return { vals: vals, xsFriedel: _xsFriedel, xsMerge: _xsMerge, xsStrictAbs: _xsStrictAbs, xcFriedel: _xcFriedel, xcFreeR: _xcFreeR };
+        }
+        var _xsXcStart = _xsXcFormState();       // taken once, as the page starts
+        function _xsXcRestore(prefix) {
+            Object.keys(_xsXcStart.vals).forEach(function (id) {
+                if (id.indexOf(prefix) !== 0) return;
+                var e = document.getElementById(id);
+                if (e) e.value = _xsXcStart.vals[id];
+            });
+        }
+        async function _xsXcFollowProject(name) {
+            if (!name || name === _xsXcProject) return;
+            _xsXcProject = name;
+            var enc = encodeURIComponent(name);
+            try {
+                var xs = await (await fetch(API + '/projects/' + enc + '/xscaleinp')).json();
+                if (currentProject !== name) return;
+                var first = document.querySelector('#xs-input-files .xs-input-file');
+                if (first) first.value = '';
+                xsParseIntoParams(xs.content || '');
+                if (!xs.content) {
+                    _xsXcRestore('xs-');
+                    _xsSetFriedel(_xsXcStart.xsFriedel); _xsSetMerge(_xsXcStart.xsMerge); _xsSetStrictAbs(_xsXcStart.xsStrictAbs);
+                    _xsInputBaseline = null;
+                }
+            } catch (e) {}
+            try {
+                var xc = await (await fetch(API + '/projects/' + enc + '/xdsconvinp')).json();
+                if (currentProject !== name) return;
+                var mtz = document.getElementById('xc-mtz-name');
+                if (mtz) mtz.value = _xsXcStart.vals['xc-mtz-name'] || '';
+                if (xc.content) {
+                    xcParseIntoParams(xc.content);
+                } else {
+                    _xsXcRestore('xc-');
+                    _xcSetFriedel(_xsXcStart.xcFriedel); _xcSetFreeR(_xsXcStart.xcFreeR);
+                }
+            } catch (e) {}
         }
 
         async function xcSaveParams() {

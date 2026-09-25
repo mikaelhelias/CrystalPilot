@@ -1482,7 +1482,15 @@ def stream_xdsconv(project_name, write_fn, work_dir=None, mtz_name=None):
     send("step_start", {"step": "XDSCONV"})
 
     f2mtz_before = _output_stamp(work_dir / "F2MTZ.INP")
-    rc, outcome = _run_streaming([str(xdsconv_exe)], work_dir, lambda t: send("log", {"text": t}), key=project_name, expected_outputs=["XDSCONV.LP"])
+    printed_errors = []
+
+    def _xdsconv_log(t):
+        # a wrong input file: XDSCONV prints "!!! ERROR !!! WRONG TYPE OF INPUT FILE"
+        # on the screen only and its XDSCONV.LP ends before any error line
+        if "!!! ERROR" in t:
+            printed_errors.append(t.strip())
+        send("log", {"text": t})
+    rc, outcome = _run_streaming([str(xdsconv_exe)], work_dir, _xdsconv_log, key=project_name, expected_outputs=["XDSCONV.LP"])
     if outcome != "ok":
         msg = _outcome_message(outcome, "XDSCONV")
         send("error_msg", {"message": msg})
@@ -1501,6 +1509,8 @@ def stream_xdsconv(project_name, write_fn, work_dir=None, mtz_name=None):
                     error_msg = ln.strip(); break
     else:
         status, error_msg = "failed", "No XDSCONV.LP file generated"
+    if status == "completed" and printed_errors:
+        status, error_msg = "failed", printed_errors[0]
 
     send("step_done", {"step": "XDSCONV", "status": status, "error": error_msg})
 
