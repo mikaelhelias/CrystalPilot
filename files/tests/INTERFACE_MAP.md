@@ -128,3 +128,14 @@ Known limitations as of 0.6.7b (2026-09-23):
 - ΔCC½ (XDSCC12): skipped by the API suite because XDSCC12 is not installed in the test WSL.
 - The 0.6.7 / 0.6.7b Windows installers were built and checked (`-Preview`, parse), not run on a clean Windows machine.
 - The manual's videos play only in the HTML manual; the PDF shows a still frame. Media cannot be checked in the Browser pane while it is hidden: test playback headless.
+
+Known limitations and open items as of 0.6.7c + later commits (v385, 2026-09-25):
+
+- AutoPilot import keeps a beamline XDS.INP's `UNIT_CELL_A-AXIS`/`B`/`C` orientation. The APS gmcaproc file of D6 (23IDD_2021_03_06_cbf) carries one from a wrong indexing (184 x 321 A cell; the data give 92.8 x 161.9 A): the first AutoPilot pass on D6 ended with 3.5 % completeness, ISa 1.07. Not fixed - should the import drop those three keywords (and maybe the beamline's SG/cell) or check them against IDXREF?
+- Key Parameters "Load from other XDS.INP" into a project that already HAS an XDS.INP takes only the form fields: the loaded file's ROTATION_AXIS, SENSOR_THICKNESS, polarization, UNTRUSTED_*, REFINE(...) are ignored (bug check 3, 2026-09-24). Decision pending: take the whole loaded file, or warn which keywords were not taken.
+- Frames 301-400 of MBP-S14 and frames 1-100 of Free-9DY_1/_2 do not index (the beamline's fast_dp also failed on Free-9DY): data, not the program - do not use them as test sets.
+- The Environment screen reopens on a timer after the splash; a test that dismisses it at start can find it back later (it is a modal and covers hit-tests): ui_pass.js closes it right before the Ask-bar checks.
+- Docs tab = the illustrated manual on the page (`_docsLoadManual`, shadow root; the contents list is kept in view by a scroll handler because a page container has overflow:auto, so CSS sticky does not work there). The manual is 26.7 MB and is fetched on the first opening of the tab. The Browser pane cannot screenshot the resulting 150 000 px page (blank images): take screenshots headless.
+- Last full battery: v382 (all stages; one transient section-1 server start, sections 1-2 re-run 29/29). v383-v385 (Docs tab only) passed the quick battery and a headless search/Docs test, not the full battery.
+- dist/ holds 0.6.7c packages built from v380; commits after it (XSCALE default, Docs tab, battery on F:) are not in any package: the next packages must be 0.6.7d.
+- Test data and servers go to F: (`<repo>/.tmp`, `<repo>/.tmp/wsl`, `F:\tmp\claude\crystal_pilot`), never C: - see tests/README.md.

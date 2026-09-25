@@ -37,6 +37,12 @@ parsers. Expect 10 to 20 minutes when the frames are on a network share.
 | `test_workflows.py` (19 tests, included by default) | HTTP-to-process workflows: full XDS/XSCALE/XDSCONV/f2mtz/cad orchestration, AutoPilot, quick auto-indexing, external run folders, cancellation/retry, timeout, invalid requests, failed reruns, stale conversion outputs, and input/metadata/cache persistence failures. |
 | `api/api_tests.sh` (34 checks) | live server: percent-encoded names, traversal 400, JSON errors, corrupt metadata, non-UTF-8 LP, Stop kills the whole process tree, step timeout, concurrent-run refusal, XSCALE "Save new" writes a valid file with the project's HKL, token/cookie/CORS rules, `/health` readable by the loading screen, and the real XSCALE run |
 
+Temporary files: nothing goes on C:. The headless-browser profiles, the unit
+checks' scratch folder and the installer's work folder are made in `<repo>/.tmp`
+(git-ignored; `CP_TMP` overrides) and removed after the run; the API suite's
+throwaway projects and servers live in `<repo>/.tmp/wsl` (`CP_TMP_WSL`
+overrides) instead of WSL's `/tmp`.
+
 The complete battery, with the endpoint sweep and the browser pass:
 
 ```bash
