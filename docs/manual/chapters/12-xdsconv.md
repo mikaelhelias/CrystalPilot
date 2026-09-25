@@ -11,6 +11,8 @@
 5. **Friedel's law**: match what you used in XSCALE.
 6. **Working folder**: the project folder, or the latest `XSCALE_NNN` sub-folder when XSCALE ran there.
 
+Opening a project fills this form from its own `XDSCONV.INP`, or with the defaults when it has none. **Save** fills an empty INPUT_FILE with the OUTPUT_FILE of XSCALE and an empty output name with the one derived from the project.
+
 ![XDSCONV parameters with the input file, Auto from XSCALE, and the two run buttons.](images/12-01-xdsconv.png)
 
 ## Run

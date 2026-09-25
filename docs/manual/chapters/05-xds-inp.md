@@ -20,7 +20,8 @@
 ## Way 2: import an existing XDS.INP
 
 - **⟳ Load from XDS.INP** reads the file already in the project into the form.
-- **📂 Load from other XDS.INP…** imports the parameters of any XDS.INP, for example from a beamline auto-processing run. This fills the form only; press **💾 Save Parameters** to write them to the project.
+- **📂 Load from other XDS.INP…** imports the parameters of any XDS.INP, for example from a beamline auto-processing run. This fills the form only; press **💾 Save Parameters** to write them to the project. In a new project without XDS.INP, that first save keeps the whole loaded file (detector axes, rotation axis and the other keywords the form does not show) with your form values on top.
+- The **LIB** field keeps the HDF5 library set in the Environment screen when a file is loaded: a beamline XDS.INP usually names the beamline's own library path. Tick **from loaded XDS.INP** next to LIB to take the file's path instead. **↺** puts the Environment screen's library back if the field was erased.
 
 ## Way 3: the form
 
@@ -28,6 +29,7 @@ Type or change values in the groups (experiment, detector, indexing, corrections
 
 - **Active / Commented toggles.** SPACE_GROUP_NUMBER, UNIT_CELL_CONSTANTS, SIGNAL_PIXEL, EXCLUDE_DATA_RANGE and several correction keywords have a toggle. *Commented* writes the line with a leading `!`: the value is kept in the file but XDS ignores it. Leave the space group commented (or 0) to let XDS decide the symmetry in CORRECT; set it once you know it.
 - **⟲ Cell & space group from IDXREF** opens the lattice table of the latest IDXREF run so you can pick a Bravais lattice with one click (chapter 6).
+- In a new project without XDS.INP, typed parameters are saved with the standard geometry that Generate from images writes; check ROTATION_AXIS for your beamline.
 
 ![Toggles next to the space group and cell fields, and the button that fills them from IDXREF.](images/05-03-toggles.png)
 
@@ -50,7 +52,11 @@ The **Full Input File** sub-tab shows the text of `XDS.INP`. **⟳ Load / Refres
 | OSCILLATION_RANGE, X-RAY_WAVELENGTH, DETECTOR_DISTANCE | from the header | check them against the beamline log if the header is incomplete |
 | ORGX, ORGY | beam centre in pixels | a wrong beam centre is the first suspect when indexing fails |
 | ROTATION_AXIS | `1 0 0` or `-1 0 0` | beamline convention; only editable in the raw file |
-| LIB | path to `dectris-neggia.so` | Eiger data only |
+| LIB | path to `dectris-neggia.so` | Eiger data only; kept from the Environment screen unless **from loaded XDS.INP** is ticked |
+
+## Old or hand-edited files
+
+Before XDS reads XDS.INP, CrystalPilot corrects what XDS cannot read without changing a value: the byte-order mark Windows Notepad can put at the start of a file, whole numbers written as decimals in integer keywords (`NX= 4150.0` becomes `NX= 4150`), and `STRONG_PIXEL=` from older beamline files, which XDS no longer knows: it is written as `SIGNAL_PIXEL=` with the same value and a `! CrystalPilot:` note.
 
 ## If it goes wrong
 

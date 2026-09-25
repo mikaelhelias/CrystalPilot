@@ -30,6 +30,7 @@ XSCALE puts data sets on a common scale, corrects absorption, detector and radia
 
 - **💾 Update in existing XSCALE.INP** merges the form into the file and keeps everything else (comments, other OUTPUT_FILE blocks).
 - **📄 Save as new XSCALE.INP** writes a fresh file from the form.
+- Opening a project fills the form from its own XSCALE.INP, or with the defaults when it has none.
 - Both write every keyword into its XSCALE section (global keywords before `OUTPUT_FILE`, output keywords after it, per-data-set keywords under each `INPUT_FILE`), and repair a file that had keywords in the wrong place. If a run starts with no input file at all, the project's `XDS_ASCII.HKL` is inserted and the log says so.
 - **Run mode**: *Overwrite* runs in the project folder (previous `XSCALE.LP` kept as `.prev1`); *Sub-folders* creates `XSCALE_001`, `XSCALE_002`, … and rewrites the input paths so they still resolve.
 - Click **▶ Run XSCALE**. The log streams; the sub-tab **LP Viewer** opens the result.
