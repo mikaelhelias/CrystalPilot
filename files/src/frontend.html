@@ -11429,6 +11429,40 @@
             }
         }
 
+        // keywords Save Parameters writes from the form; every other line stays as the project's XDS.INP has it
+        const _FORM_INP_KEYS = new Set(['OSCILLATION_RANGE', 'X-RAY_WAVELENGTH', 'NAME_TEMPLATE_OF_DATA_FRAMES',
+            'DETECTOR_DISTANCE', 'DETECTOR', 'NX', 'NY', 'ORGX', 'ORGY', 'QX', 'QY', 'OVERLOAD',
+            'SPACE_GROUP_NUMBER', 'UNIT_CELL_CONSTANTS', 'EXCLUDE_DATA_RANGE', 'SIGNAL_PIXEL', 'STRONG_PIXEL', 'LIB',
+            'DATA_RANGE', 'SPOT_RANGE', "FRIEDEL'S_LAW", 'CORRECTIONS', 'STRICT_ABSORPTION_CORRECTION',
+            'MINIMUM_I/SIGMA', 'REFLECTIONS/CORRECTION_FACTOR', 'REFINE(INTEGRATE)', 'INCLUDE_RESOLUTION_RANGE',
+            'RESOLUTION_SHELLS', 'MINIMUM_FRACTION_OF_INDEXED_SPOTS',
+            // written from the CPU setting and by each run
+            'JOB', 'MAXIMUM_NUMBER_OF_JOBS', 'MAXIMUM_NUMBER_OF_PROCESSORS']);
+
+        // active keywords of an XDS.INP text as {KEY: normalised values}
+        function _inpActiveKeys(text) {
+            var out = {};
+            String(text || '').replace(/^﻿/, '').split(/\r?\n/).forEach(function(line) {
+                var s = line.split('!')[0];
+                if (!s.trim()) return;
+                var re = /([A-Za-z][A-Za-z0-9_'()\/.\-]*)\s*=/g, m, hits = [];
+                while ((m = re.exec(s)) !== null) hits.push({ key: m[1].toUpperCase(), start: m.index, end: re.lastIndex });
+                hits.forEach(function(h, i) {
+                    var val = s.slice(h.end, i + 1 < hits.length ? hits[i + 1].start : s.length).trim().split(/\s+/)
+                        .map(function(t) { var n = Number(t); return (t !== '' && !isNaN(n)) ? String(n) : t; }).join(' ');
+                    out[h.key] = (h.key in out) ? out[h.key] + ' | ' + val : val;
+                });
+            });
+            return out;
+        }
+
+        // keywords outside the form whose active values differ between the loaded file and the project's XDS.INP
+        function _inpKeysNotTakenOver(loadedText, projectText) {
+            var a = _inpActiveKeys(loadedText), b = _inpActiveKeys(projectText);
+            var keys = Object.keys(a).concat(Object.keys(b).filter(function(k) { return !(k in a); }));
+            return keys.filter(function(k) { return !_FORM_INP_KEYS.has(k) && a[k] !== b[k]; }).sort();
+        }
+
         async function loadParamsFromExternalFile(filePath) {
             try {
                 const r = await fetch(`${API}/fv-xdsinp?path=${encodeURIComponent(filePath)}`);
@@ -11437,8 +11471,23 @@
                 parseINPIntoFields(d.content || '');
                 // a project without XDS.INP starts from this whole file at the next save
                 _loadedInpText = d.content || null;
-                document.getElementById('params-save-result').innerHTML =
-                    '<div class="status ok">✓ Loaded from ' + filePath.split('/').pop() + '</div>';
+                var _msg = '<div class="status ok">✓ Loaded from ' + filePath.split('/').pop() + '</div>';
+                // a project that has an XDS.INP keeps its own lines outside the form: say which differ
+                try {
+                    var rp = await fetch(`${API}/projects/${encodeURIComponent(currentProject)}/xdsinp`);
+                    var dp = await rp.json();
+                    if (dp.exists !== false && (dp.content || '').trim()) {
+                        var diff = _inpKeysNotTakenOver(d.content || '', dp.content);
+                        if (diff.length) {
+                            _msg += '<div style="margin-top:6px; padding:8px 10px; background:rgba(246,173,85,0.08); border:1px solid rgba(246,173,85,0.3); border-radius:6px; font-size:0.78rem; color:var(--txt2); line-height:1.6;">'
+                                + '<span style="color:var(--gold); font-weight:600;">⚠ Save Parameters takes only the form fields.</span> '
+                                + 'These lines differ between the loaded file and the project\'s XDS.INP, and the project keeps its own: '
+                                + diff.map(function(k) { return '<code>' + k + '</code>'; }).join(', ')
+                                + '. Copy them in the Full Input File tab if you want them.</div>';
+                        }
+                    }
+                } catch(_e) {}
+                document.getElementById('params-save-result').innerHTML = _msg;
             } catch(e) {
                 document.getElementById('params-save-result').innerHTML =
                     `<div class="status error">✗ ${e.message}</div>`;
