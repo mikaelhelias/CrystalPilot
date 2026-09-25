@@ -101,7 +101,7 @@ function Show-AlreadyRunning([string]$u) {
 }
 
 # ── Shortcuts show the CrystalPilot icon ─────────────────────────────────────
-# Installers before 0.6.7d gave them a stock Windows icon; each start puts the
+# Installers before 0.6.8 gave them a stock Windows icon; each start puts the
 # logo on every CrystalPilot shortcut that still has another one.
 function Update-ShortcutIcons {
     $ico = Join-Path $Here "CrystalPilot.ico"
