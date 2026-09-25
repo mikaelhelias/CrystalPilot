@@ -1227,7 +1227,7 @@ def define_checks(m, scratch):
         missing = sorted(called - defined)
         assert not missing, "called but never defined: " + ", ".join(missing)
 
-    @check("frontend: the header Ask bar and the Docs box share one search engine")
+    @check("frontend: one search engine (header Ask bar); the Docs tab shows the illustrated manual itself")
     def _():
         html = m.get_frontend_html()
         for name in ('id="askbar-in"', 'id="askbar-pop"', "function cpAskGo", "function cpdsSearch",
@@ -1237,7 +1237,12 @@ def define_checks(m, scratch):
         # the Docs tab had its own ranking once; two rankings are two manuals
         for gone in ("_dsScore", "_dsSnip", "_dsMark(", "_dsTerms"):
             assert gone not in html, "the Docs tab carries its own search again: " + gone
-        assert "_docsSearchNow" in html and "cpdsRowHtml" in html, "the Docs box no longer draws shared rows"
+        assert "cpdsRowHtml" in html, "the Ask bar no longer draws shared rows"
+        # the Docs tab is the manual, shown inline, filled when the tab opens; manual hits
+        # of the search still open the manual at the section, the words marked (?q=)
+        assert 'id="docs-manual-frame"' in html and "function _docsLoadManual" in html, "the Docs tab does not show the manual"
+        assert "tab === 'docs' && typeof _docsLoadManual === 'function'" in html, "switchMainTab does not load the manual"
+        assert '"/manual/CrystalPilot-Manual.html?q="' in html, "a manual hit no longer opens the manual at its section"
 
 
     # -- Windows paths and the drives WSL did not mount ----------------------

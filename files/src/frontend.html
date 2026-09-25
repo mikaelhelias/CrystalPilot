@@ -3731,28 +3731,24 @@
                 </div>
 
                 <div id="main-tab-docs" style="display:none;">
-                <div style="margin:0 0 14px 0;"><input id="docs-search" type="search" autocomplete="off" placeholder="Search the illustrated manual&hellip;  (e.g. run folder, Friedel, XSCALE cut-off)" oninput="docsSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';docsSearch('');}" style="width:100%; padding:10px 14px; border-radius:10px; border:1px solid var(--border2); background:var(--panel2); color:var(--txt); font-family:var(--body); font-size:0.9rem; outline:none;"><div id="docs-search-results" style="display:none; margin-top:6px; max-height:60vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--border); border-radius:10px;"></div><style>#main-tab-docs mark { background:#f6c94d; color:#111; padding:0 2px; border-radius:2px; } #main-tab-docs mark.ds { background:#4cc9b0; }</style></div>
+                <div style="display:flex; align-items:center; gap:14px; margin:0 0 8px 0; font-size:0.78rem; color:var(--txt3);"><b style="font-family:var(--head); letter-spacing:0.15em; text-transform:uppercase; color:var(--accent);">Illustrated manual</b><a id="docs-manual-pdf" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="color:var(--accent); display:none;">&#11015; PDF</a><span id="docs-manual-note"></span><span style="margin-left:auto;">CrystalPilot 0.6.7c</span></div>
+                <iframe id="docs-manual-frame" title="CrystalPilot illustrated manual" style="width:100%; height:calc(100vh - 140px); min-height:560px; border:1px solid var(--border); border-radius:10px; background:#fff; display:none;"></iframe>
                 <script>
-                var _dsTimer = null;
-                function docsSearch(q) { clearTimeout(_dsTimer); _dsTimer = setTimeout(function(){ _docsSearchNow(q); }, 150); }
-                function _docsSearchNow(q) {
-                  var box = document.getElementById("docs-search-results"); if (!box) return;
-                  var terms = cpdsTerms(q); cpdsClearMarks();
-                  if (!terms.length) { box.style.display = "none"; box.innerHTML = ""; return; }
-                  // the manual index arrives once, asynchronously; redraw when it does
-                  cpdsLoadManual(function(){ var b = document.getElementById("docs-search"); if (b && b.value.trim()) _docsSearchNow(b.value); });
-                  var hits = cpdsSearch(q, 40), man = cpdsManualState();
-                  box.style.display = "";
-                  var foot = (man && !man.length) ? "<div style=\"color:var(--txt3); font-size:0.75rem; padding:6px 10px;\">Illustrated manual not installed here.</div>" : "";
-                  if (!hits.length) { box.innerHTML = "<div style=\"color:var(--txt3); padding:8px 12px;\">No match for &ldquo;" + cpdsEsc(q) + "&rdquo;</div>" + foot; return; }
-                  box.innerHTML = hits.map(function(h, i){ return cpdsRowHtml(h, i, terms); }).join("") + foot;
-                  Array.prototype.forEach.call(box.querySelectorAll("a.ds-hit"), function(a){ a.onclick = function(e){ e.preventDefault(); var h = hits[+a.getAttribute("data-i")];
-                    if (h.kind === "manual") { cpdsOpenHit(h, q); }
-                    else { docJump(h.id); var body = document.querySelector("#" + h.id + " .card-body"); if (body) { cpdsClearMarks(); cpdsMarkDom(body, terms); } } }; });
+                function _docsLoadManual() {
+                  var f = document.getElementById("docs-manual-frame"); if (!f || f.getAttribute("src")) return;
+                  var note = document.getElementById("docs-manual-note");
+                  note.textContent = "Loading the manual…";
+                  fetch("/manual/").then(function (r) { return r.json(); }).then(function (d) {
+                    if (d && d.available) {
+                      f.style.display = ""; f.setAttribute("src", "/manual/CrystalPilot-Manual.html"); note.textContent = "";
+                      if (d.pdf) document.getElementById("docs-manual-pdf").style.display = "";
+                      var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = "";
+                    } else {
+                      note.innerHTML = "Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.";
+                    }
+                  }).catch(function () { note.textContent = "The manual could not be loaded."; });
                 }
                 </script>
-                <div class="card" id="doc-manual"><div class="card-header"><span class="card-title">Illustrated manual</span></div><div class="card-body" style="font-family:'DM Sans',var(--mono),sans-serif; font-size:0.84rem; color:var(--txt2); line-height:1.85;"><p style="margin:0 0 10px 0;">A step-by-step manual with screenshots of every task (installing, setting up a project, indexing, integrating, reading the results, space group, scaling, MTZ export, AIMLESS, AutoPilot, gemmi, Table 1, frame viewer, troubleshooting) is shipped as one HTML page and a PDF in the <code style="color:var(--accent2);">docs/manual</code> folder next to the application.</p><div id="doc-manual-links" style="margin:6px 0 10px 0;"><span style="color:var(--txt3);">Checking whether the manual is installed&hellip;</span></div><script>(function(){ try { fetch("/manual/").then(function(r){ return r.json(); }).then(function(d){ var el = document.getElementById("doc-manual-links"); if (!el) return; if (d && d.available) { var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = ""; el.innerHTML = '<a class="btn-primary" href="/manual/CrystalPilot-Manual.html" target="_blank" rel="noopener" style="display:inline-block; padding:8px 16px; border-radius:8px; text-decoration:none; margin-right:8px;">&#128214; Open the illustrated manual</a>' + (d.pdf ? '<a class="btn-secondary" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="display:inline-block; padding:8px 16px; border-radius:8px; text-decoration:none;">&#11015; PDF</a>' : "") + '<div style="font-size:0.75rem; color:var(--txt3); margin-top:6px;">Folder: ' + (d.folder || "") + "</div>"; } else { el.innerHTML = '<span style="color:var(--txt3);">Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.</span>'; } }).catch(function(){}); } catch (e) {} })();</script><p style="margin:0 0 10px 0;">The illustrated manual is the documentation of CrystalPilot. The search box above and the one in the <b style="color:var(--txt);">header</b> (<code style="color:var(--accent2);">Ctrl+K</code>) search it from any tab: each result carries the sentence that matched with your words highlighted and opens the manual at that section in its own window. Inside the manual, the box in the side bar (Ctrl+K) searches its sections. The &#128214; Manual button in the header opens it directly.</p></div></div>
-                <div style="margin-top:10px; font-size:0.72rem; color:var(--txt3);">CrystalPilot 0.6.7c</div>
                 </div><!-- /main-tab-docs -->
 
                 <!-- ── XDSCONV main tab ──────────────────────── -->
@@ -10933,6 +10929,7 @@
             if (tab === 'dp') dpCheckXDS();
             if (tab === 'fv') fvCheckDeps();
             if (tab === 'xdsconv') { xcCheckXDSCONV(); xcCheckCCP4(); }
+            if (tab === 'docs' && typeof _docsLoadManual === 'function') _docsLoadManual();
             // In tutorial mode, auto-populate XSCALE fields from CORRECT.LP
             if (tab === 'xscale') xsCheckXDS();
             if (tab === 'xscale' && currentProject && _currentTier === 'tutorial') {

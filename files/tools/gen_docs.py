@@ -33,61 +33,37 @@ SECTIONS = []   # (id, title, html)
 def section(sid, title, *parts): SECTIONS.append((sid, title, ''.join(parts)))
 
 XDSDOC = "https://xds.mr.mpg.de/html_doc/"
-# ═════════════════════════════════════════════════════════════════════════════
-section("doc-manual", "Illustrated manual",
-    P("A step-by-step manual with screenshots of every task (installing, setting up a project, indexing, integrating, reading the results, "
-      "space group, scaling, MTZ export, AIMLESS, AutoPilot, gemmi, Table 1, frame viewer, troubleshooting) is shipped as one HTML page and a PDF in the "
-      + C("docs/manual") + " folder next to the application."),
-    '<div id="doc-manual-links" style="margin:6px 0 10px 0;"><span style="color:var(--txt3);">Checking whether the manual is installed&hellip;</span></div>'
-    '<script>(function(){ try { fetch("/manual/").then(function(r){ return r.json(); }).then(function(d){ var el = document.getElementById("doc-manual-links"); if (!el) return; '
-    'if (d && d.available) { var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = ""; el.innerHTML = \'<a class="btn-primary" href="/manual/CrystalPilot-Manual.html" target="_blank" rel="noopener" style="display:inline-block; padding:8px 16px; border-radius:8px; text-decoration:none; margin-right:8px;">&#128214; Open the illustrated manual</a>\' + (d.pdf ? \'<a class="btn-secondary" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="display:inline-block; padding:8px 16px; border-radius:8px; text-decoration:none;">&#11015; PDF</a>\' : "") + \'<div style="font-size:0.75rem; color:var(--txt3); margin-top:6px;">Folder: \' + (d.folder || "") + "</div>"; } '
-    'else { el.innerHTML = \'<span style="color:var(--txt3);">Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.</span>\'; } }).catch(function(){}); } catch (e) {} })();</script>',
-    P("The illustrated manual is the documentation of CrystalPilot. The search box above and the one in the " + B("header") + " (" + C("Ctrl+K") + ") "
-      "search it from any tab: each result carries the sentence that matched with your words highlighted and opens the manual at that section "
-      "in its own window. Inside the manual, the box in the side bar (Ctrl+K) searches its sections. The &#128214; Manual button in the header opens it directly."),
-)
-
-# ═════════════════════════════════════════════════════════════════════════════
-
-# The box at the top of the Docs tab. The RANKING and the result rows come from
-# the shared engine (cpds* in frontend.html, next to the header Ask bar): two
-# boxes that rank differently would be two manuals to the reader. What differs
-# is only where a hit lands — inside this tab the section is right there, so a
-# Docs hit scrolls to it and highlights the words, while a manual hit opens the
-# illustrated manual in its own window.
-SEARCH_UI = (
-    '<div style="margin:0 0 14px 0;">'
-    '<input id="docs-search" type="search" autocomplete="off" placeholder="Search the illustrated manual&hellip;  (e.g. run folder, Friedel, XSCALE cut-off)" '
-    'oninput="docsSearch(this.value)" onkeydown="if(event.key===\'Escape\'){this.value=\'\';docsSearch(\'\');}" '
-    'style="width:100%; padding:10px 14px; border-radius:10px; border:1px solid var(--border2); background:var(--panel2); color:var(--txt); font-family:var(--body); font-size:0.9rem; outline:none;">'
-    '<div id="docs-search-results" style="display:none; margin-top:6px; max-height:60vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--border); border-radius:10px;"></div>'
-    '<style>#main-tab-docs mark { background:#f6c94d; color:#111; padding:0 2px; border-radius:2px; } #main-tab-docs mark.ds { background:#4cc9b0; }</style>'
-    '</div>\n'
-    '<script>\n'
-    'var _dsTimer = null;\n'
-    'function docsSearch(q) { clearTimeout(_dsTimer); _dsTimer = setTimeout(function(){ _docsSearchNow(q); }, 150); }\n'
-    'function _docsSearchNow(q) {\n'
-    '  var box = document.getElementById("docs-search-results"); if (!box) return;\n'
-    '  var terms = cpdsTerms(q); cpdsClearMarks();\n'
-    '  if (!terms.length) { box.style.display = "none"; box.innerHTML = ""; return; }\n'
-    '  // the manual index arrives once, asynchronously; redraw when it does\n'
-    '  cpdsLoadManual(function(){ var b = document.getElementById("docs-search"); if (b && b.value.trim()) _docsSearchNow(b.value); });\n'
-    '  var hits = cpdsSearch(q, 40), man = cpdsManualState();\n'
-    '  box.style.display = "";\n'
-    '  var foot = (man && !man.length) ? "<div style=\\"color:var(--txt3); font-size:0.75rem; padding:6px 10px;\\">Illustrated manual not installed here.</div>" : "";\n'
-    '  if (!hits.length) { box.innerHTML = "<div style=\\"color:var(--txt3); padding:8px 12px;\\">No match for &ldquo;" + cpdsEsc(q) + "&rdquo;</div>" + foot; return; }\n'
-    '  box.innerHTML = hits.map(function(h, i){ return cpdsRowHtml(h, i, terms); }).join("") + foot;\n'
-    '  Array.prototype.forEach.call(box.querySelectorAll("a.ds-hit"), function(a){ a.onclick = function(e){ e.preventDefault(); var h = hits[+a.getAttribute("data-i")];\n'
-    '    if (h.kind === "manual") { cpdsOpenHit(h, q); }\n'
-    '    else { docJump(h.id); var body = document.querySelector("#" + h.id + " .card-body"); if (body) { cpdsClearMarks(); cpdsMarkDom(body, terms); } } }; });\n'
-    '}\n'
-    '</script>\n')
-
+# The Docs tab IS the illustrated manual (docs/manual/CrystalPilot-Manual.html), shown
+# in the tab at full height with its own contents and search; the PDF is one click
+# away.  The page is large (screenshots and clips inside), so the frame is filled the
+# first time the tab opens (_docsLoadManual, called from switchMainTab), not at start.
 def render_docs():
-    cards = ''.join('<div class="card" id="%s"><div class="card-header"><span class="card-title">%s</span></div><div class="card-body" style="%s">%s</div></div>\n' %
-                    (sid, title, BODY, body) for sid, title, body in SECTIONS)
-    return ('<div id="main-tab-docs" style="display:none;">\n' + SEARCH_UI + cards +
-            '<div style="margin-top:10px; font-size:0.72rem; color:var(--txt3);">CrystalPilot ' + VERSION + '</div>\n</div>')
+    return (
+        '<div id="main-tab-docs" style="display:none;">\n'
+        '<div style="display:flex; align-items:center; gap:14px; margin:0 0 8px 0; font-size:0.78rem; color:var(--txt3);">'
+        '<b style="font-family:var(--head); letter-spacing:0.15em; text-transform:uppercase; color:var(--accent);">Illustrated manual</b>'
+        '<a id="docs-manual-pdf" href="/manual/CrystalPilot-Manual.pdf" target="_blank" rel="noopener" style="color:var(--accent); display:none;">&#11015; PDF</a>'
+        '<span id="docs-manual-note"></span>'
+        '<span style="margin-left:auto;">CrystalPilot ' + VERSION + '</span></div>\n'
+        '<iframe id="docs-manual-frame" title="CrystalPilot illustrated manual" '
+        'style="width:100%; height:calc(100vh - 140px); min-height:560px; border:1px solid var(--border); border-radius:10px; background:#fff; display:none;"></iframe>\n'
+        '<script>\n'
+        'function _docsLoadManual() {\n'
+        '  var f = document.getElementById("docs-manual-frame"); if (!f || f.getAttribute("src")) return;\n'
+        '  var note = document.getElementById("docs-manual-note");\n'
+        '  note.textContent = "Loading the manual\u2026";\n'
+        '  fetch("/manual/").then(function (r) { return r.json(); }).then(function (d) {\n'
+        '    if (d && d.available) {\n'
+        '      f.style.display = ""; f.setAttribute("src", "/manual/CrystalPilot-Manual.html"); note.textContent = "";\n'
+        '      if (d.pdf) document.getElementById("docs-manual-pdf").style.display = "";\n'
+        '      var hb = document.getElementById("manual-btn"); if (hb) hb.style.display = "";\n'
+        '    } else {\n'
+        '      note.innerHTML = "Not installed here. The manual is in the <code>docs/manual</code> folder of the CrystalPilot package; open <code>CrystalPilot-Manual.pdf</code> from there, or rebuild it with <code>python docs/manual/build_manual.py</code>.";\n'
+        '    }\n'
+        '  }).catch(function () { note.textContent = "The manual could not be loaded."; });\n'
+        '}\n'
+        '</script>\n'
+        '</div>')
 
 # ── Quick Guide ──────────────────────────────────────────────────────────────
 GUIDE = [
@@ -145,4 +121,4 @@ text = SRC.read_text(encoding="utf-8")
 text, rd = splice(text, "main-tab-docs", render_docs())
 text, rg = splice(text, "main-tab-guide", render_guide())
 SRC.write_text(text, encoding="utf-8", newline="\n")
-print("docs replaced lines %s, guide replaced lines %s; %d doc sections, %d guide steps, version %s" % (rd, rg, len(SECTIONS), len(GUIDE), VERSION))
+print("docs replaced lines %s, guide replaced lines %s; the Docs tab shows the illustrated manual; %d guide steps, version %s" % (rd, rg, len(GUIDE), VERSION))

@@ -324,17 +324,19 @@ async function main() {
       if (ve.length) console.log("     note: visible error boxes on " + name + ": " + ve.join(" / ").slice(0, 300));
       await shot("07_" + tab);
     }
-    // Docs tab: the illustrated manual only (open it, its PDF, search it)
+    // Docs tab: the illustrated manual itself, shown in the tab (filled when the tab opens), and its PDF
     mark = events.length;
-    await evalJs(`(async () => { switchMainTab('docs'); window.scrollTo(0, 0); })()`); await sleep(1200);
-    const docs = await evalJs(`(() => ({ ids: Array.from(document.querySelectorAll('#main-tab-docs .card')).map(c => c.id), toc: document.querySelectorAll('#docs-toc-links a').length }))()`);
-    check("Docs tab: only the illustrated-manual card", docs.ids.length === 1 && docs.ids[0] === "doc-manual" && docs.toc === 0, JSON.stringify(docs));
-    const man = await evalJs(`(async () => { const r = await fetch('/manual/'); const d = await r.json(); const links = (document.getElementById('doc-manual-links') || {}).textContent || ''; return { status: r.status, available: d.available, card: links.slice(0, 80) }; })()`);
-    check("Docs tab: illustrated-manual card answers", man.status === 200 && man.card.length > 5 && (!man.available || /Open the illustrated manual/.test(man.card)), JSON.stringify(man));
-    await evalJs(`(async () => { document.getElementById('docs-search').value = 'XSCALE'; _docsSearchNow('XSCALE'); })()`); await sleep(2000);
-    const ds = await evalJs(`(() => { const box = document.getElementById('docs-search-results'); const hits = box.querySelectorAll('a.ds-hit'); const t = box.textContent; return { shown: box.style.display !== 'none', hits: hits.length, docs: /DOCS/.test(t), manual: /MANUAL/.test(t), btn: (document.getElementById('manual-btn') || {}).style.display }; })()`);
-    check("Docs tab: the search box answers" + (man.available ? " with manual pages, and the header Manual button shows" : ""), ds.shown && (!man.available || (ds.hits >= 3 && ds.manual && ds.btn === "")), JSON.stringify(ds));
-    await evalJs(`(async () => { document.getElementById('docs-search').value = ''; _docsSearchNow(''); })()`);
+    const man = await evalJs(`(async () => { const r = await fetch('/manual/'); const d = await r.json(); return { status: r.status, available: !!d.available, pdf: !!d.pdf }; })()`);
+    await evalJs(`(async () => { switchMainTab('docs'); window.scrollTo(0, 0); })()`); await sleep(man.available ? 8000 : 1500);
+    const docs = await evalJs(`(() => { const f = document.getElementById('docs-manual-frame'); let d = null; try { d = f && f.contentDocument; } catch (e) {}
+      const r = f ? f.getBoundingClientRect() : { height: 0 };
+      return { frame: !!f, src: f ? f.getAttribute('src') : null, height: Math.round(r.height), title: d ? d.title : '', chapters: d ? d.querySelectorAll('[id^="ch-"]').length : 0,
+               pdf: (document.getElementById('docs-manual-pdf') || {}).style ? document.getElementById('docs-manual-pdf').style.display : 'missing',
+               note: (document.getElementById('docs-manual-note') || {}).textContent || '', cards: document.querySelectorAll('#main-tab-docs .card').length }; })()`);
+    check("Docs tab: " + (man.available ? "shows the illustrated manual itself (all chapters) and the PDF link" : "says the manual is not installed"),
+      man.status === 200 && docs.frame && docs.cards === 0 && (man.available
+        ? (docs.src === "/manual/CrystalPilot-Manual.html" && docs.height > 500 && docs.chapters >= 18 && /manual/i.test(docs.title) && (!man.pdf || docs.pdf === ""))
+        : /Not installed/.test(docs.note)), JSON.stringify(docs));
 
     // ── the Ask bar in the header: ranking, the context line, its own window ──
     // window.open needs a user gesture; Runtime.evaluate can carry one.
