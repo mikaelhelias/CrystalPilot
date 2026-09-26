@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrystalPilot</title>
+<meta name="description" content="CrystalPilot: a browser interface for XDS. A 2-minute video tour.">
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0a0e1a; --panel: #111827; --txt: #e8eef8; --dim: #8fa3bf; --accent: #63b3ed; --border: rgba(99,179,237,0.25); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: radial-gradient(ellipse at top, #13213b 0%, var(--bg) 60%) fixed, var(--bg); color: var(--txt);
+    font-family: 'DM Sans', system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 40px 16px 56px; }
+  header { display: flex; align-items: center; gap: 18px; margin-bottom: 26px; }
+  header img { width: 72px; height: 72px; filter: drop-shadow(0 0 18px rgba(99,179,237,0.55)); }
+  h1 { margin: 0; font: 700 clamp(30px, 6vw, 48px)/1 'Rajdhani', sans-serif; letter-spacing: 0.14em; color: #cfe8ff; }
+  .sub { margin: 6px 0 0; color: var(--dim); font-size: clamp(15px, 2.4vw, 18px); }
+  .video { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: #000;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.55), 0 0 40px rgba(99,179,237,0.12); }
+  video { display: block; width: 100%; height: auto; }
+  .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+  .links a { padding: 11px 20px; border-radius: 999px; border: 1px solid var(--border); color: var(--txt); text-decoration: none;
+    font: 600 16px 'Rajdhani', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; background: rgba(99,179,237,0.08); }
+  .links a.main { background: var(--accent); color: #07111f; border-color: var(--accent); }
+  .links a:hover { border-color: var(--accent); }
+  footer { margin-top: 30px; color: #5f7390; font-size: 14px; line-height: 1.6; }
+  footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="">
+    <div>
+      <h1>CRYSTALPILOT</h1>
+      <p class="sub">A browser interface for XDS: data processing made easier to run, check and learn.</p>
+    </div>
+  </header>
+  <div class="video">
+    <video controls playsinline preload="metadata" poster="poster.jpg">
+      <source src="crystalpilot-promo.mp4" type="video/mp4">
+    </video>
+  </div>
+  <nav class="links">
+    <a class="main" href="https://github.com/mikaelhelias/CrystalPilot">CrystalPilot on GitHub</a>
+    <a href="https://github.com/mikaelhelias/CrystalPilot/releases">Downloads</a>
+  </nav>
+  <footer>
+    Free software under the GNU GPL v3. Linux, and Windows 10/11 through WSL2.<br>
+    XDS: W. Kabsch (2010) Acta Cryst. D66, 125–132. XDS, DECTRIS neggia and CCP4 are obtained from their authors.<br>
+    Cite: Elias, M. (2026). CrystalPilot. Zenodo. <a href="https://doi.org/10.5281/zenodo.22756729">doi:10.5281/zenodo.22756729</a>
+  </footer>
+</main>
+</body>
+</html>
