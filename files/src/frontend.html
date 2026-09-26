@@ -12959,7 +12959,7 @@
             // Position over image (img may be centered in wrap via text-align:center)
             canvas.style.left = img.offsetLeft + 'px';
             canvas.style.top  = img.offsetTop  + 'px';
-            canvas.style.display = (_fvRingsOn || _fvSpotsOn) ? 'block' : 'none';
+            canvas.style.display = (_fvRingsOn || _fvSpotsOn || _iceShowOnFrameViewer) ? 'block' : 'none';
             _fvDrawOverlay();
         }
 
@@ -12972,75 +12972,48 @@
             if (_fvRingsOn) _fvDrawRings(ctx, canvas.width, canvas.height);
             
             // ── Ice ring circles on frame viewer ──
+            // Drawn in detector pixels and shown at the viewer's zoom (0.25-8x): line, dash and
+            // label sizes are divided by the zoom so they read the same on screen at every zoom.
             if (_iceShowOnFrameViewer && _fvGeo) {
                 (function() {
                     var geo = _fvGeo;
                     var _qx = geo.qx, _qy = geo.qy, _ox = geo.orgx, _oy = geo.orgy;
                     var _dd = geo.dist, _ll = geo.lambda;
-                    var _iceClr = 'rgba(99,200,255,0.55)';
-                    var _iceLbl = 'rgba(99,200,255,0.85)';
+                    var z = Math.max(0.1, _fvZoom || 1);
+                    var radiusPx = function (d) {   // ring radius in detector pixels, x and y
+                        var sinTh = _ll / (2.0 * d);
+                        if (sinTh >= 1.0 || sinTh <= 0) return null;
+                        var radMM = _dd * Math.tan(2.0 * Math.asin(sinTh));
+                        return [radMM / _qx, radMM / _qy];
+                    };
                     _iceRingPositions.forEach(function(ring) {
-                        var sinTh = _ll / (2.0 * ring.d);
-                        if (sinTh >= 1.0 || sinTh <= 0) return;
-                        var twoTh = 2.0 * Math.asin(sinTh);
-                        var radMM = _dd * Math.tan(twoTh);
-                        var radX = radMM / _qx;
-                        var radY = radMM / _qy;
-                        if (radX < 5 || radX > canvas.width * 1.5) return;
+                        var r = radiusPx(ring.d);
+                        if (!r || r[0] < 5 || r[0] > canvas.width * 1.5) return;
+                        var rIn = radiusPx(ring.d + ring.hw), rOut = radiusPx(ring.d - ring.hw);
                         ctx.save();
-                        ctx.strokeStyle = _iceClr;
-                        ctx.lineWidth = 1.2;
-                        ctx.setLineDash([6, 4]);
-                        ctx.beginPath();
-                        if (Math.abs(radX - radY) < 1) {
-                            ctx.arc(_ox, _oy, radX, 0, 2 * Math.PI);
-                        } else {
-                            ctx.ellipse(_ox, _oy, radX, radY, 0, 0, 2 * Math.PI);
+                        // the ring's width in d as a translucent band
+                        if (rIn && rOut) {
+                            ctx.beginPath();
+                            ctx.ellipse(_ox, _oy, rOut[0], rOut[1], 0, 0, 2 * Math.PI);
+                            ctx.ellipse(_ox, _oy, rIn[0], rIn[1], 0, 0, 2 * Math.PI, true);
+                            ctx.fillStyle = 'rgba(80,190,255,0.16)';
+                            ctx.fill();
                         }
+                        ctx.strokeStyle = 'rgba(80,200,255,0.95)';
+                        ctx.lineWidth = 2.2 / z;
+                        ctx.setLineDash([9 / z, 6 / z]);
+                        ctx.beginPath();
+                        ctx.ellipse(_ox, _oy, r[0], r[1], 0, 0, 2 * Math.PI);
                         ctx.stroke();
                         ctx.setLineDash([]);
-                        ctx.fillStyle = _iceLbl;
-                        ctx.font = '11px sans-serif';
+                        ctx.font = 'bold ' + Math.round(13 / z) + 'px sans-serif';
                         ctx.textAlign = 'left';
-                        ctx.fillText('❄' + ring.label + 'Å', _ox + radX * 0.707 + 4, _oy - radX * 0.707 - 2);
-                        ctx.restore();
-                    });
-                })();
-            }
-
-            
-            // ── Ice ring circles on frame viewer ──
-            if (_iceShowOnFrameViewer && _fvGeo) {
-                (function() {
-                    var geo = _fvGeo;
-                    var _qx = geo.qx, _qy = geo.qy, _ox = geo.orgx, _oy = geo.orgy;
-                    var _dd = geo.dist, _ll = geo.lambda;
-                    var _iceClr = 'rgba(99,200,255,0.55)';
-                    var _iceLbl = 'rgba(99,200,255,0.85)';
-                    _iceRingPositions.forEach(function(ring) {
-                        var sinTh = _ll / (2.0 * ring.d);
-                        if (sinTh >= 1.0 || sinTh <= 0) return;
-                        var twoTh = 2.0 * Math.asin(sinTh);
-                        var radMM = _dd * Math.tan(twoTh);
-                        var radX = radMM / _qx;
-                        var radY = radMM / _qy;
-                        if (radX < 5 || radX > canvas.width * 1.5) return;
-                        ctx.save();
-                        ctx.strokeStyle = _iceClr;
-                        ctx.lineWidth = 1.2;
-                        ctx.setLineDash([6, 4]);
-                        ctx.beginPath();
-                        if (Math.abs(radX - radY) < 1) {
-                            ctx.arc(_ox, _oy, radX, 0, 2 * Math.PI);
-                        } else {
-                            ctx.ellipse(_ox, _oy, radX, radY, 0, 0, 2 * Math.PI);
-                        }
-                        ctx.stroke();
-                        ctx.setLineDash([]);
-                        ctx.fillStyle = _iceLbl;
-                        ctx.font = '11px sans-serif';
-                        ctx.textAlign = 'left';
-                        ctx.fillText('❄' + ring.label + 'Å', _ox + radX * 0.707 + 4, _oy - radX * 0.707 - 2);
+                        ctx.lineWidth = 3 / z;
+                        ctx.strokeStyle = 'rgba(5,10,20,0.85)';
+                        var lx = _ox + r[0] * 0.707 + 4 / z, ly = _oy - r[1] * 0.707 - 2 / z;
+                        ctx.strokeText('❄ ' + ring.label + ' Å', lx, ly);
+                        ctx.fillStyle = 'rgba(140,220,255,1)';
+                        ctx.fillText('❄ ' + ring.label + ' Å', lx, ly);
                         ctx.restore();
                     });
                 })();
