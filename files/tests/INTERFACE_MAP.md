@@ -117,25 +117,23 @@ Static content: B (no JavaScript errors when shown). The Docs tab holds only the
 
 - `/api/deps/install`, `/api/gemmi/install`, `/api/xdscc12/download`: they install software; excluded from automated runs.
 - A full AutoPilot run: available behind `CP_REAL_AUTOPILOT=1` (slow).
-- Windows wizard end to end (WSL runtime import, real install): manual procedure (see the 2026-09-05 session notes); run_all checks that wizard.ps1, launch.ps1 and CrystalPilot-Uninstall.ps1 parse and that the wizard renders its five pages (-Preview). The installer .exe (windows/make_installer.py, IExpress) is checked by unpacking it and running its bootstrap with -Preview.
+- Windows wizard end to end (WSL runtime import, real install): manual procedure; run_all checks that wizard.ps1, launch.ps1 and CrystalPilot-Uninstall.ps1 parse and that the wizard renders its five pages (-Preview). The installer .exe (windows/make_installer.py, IExpress) is checked by unpacking it and running its bootstrap with -Preview.
 - Visual correctness of charts (values, labels): the browser pass checks that charts are drawn and that no script fails, not what they show.
 
 Known limitations as of 0.6.7b (2026-09-23):
 
 - RAM limit: needs cgroup v2 and either root (WSL: tested, own cgroup `crystalpilot-jobs`) or a systemd user session (`systemd-run --user --scope`: not yet tried on a real non-root Linux desktop; the WSL Ubuntu has no normal user to test it with).
-- AutoPilot screw axes (`_ap_sg_from_absences`): enantiomorphs (P4₁/P4₃, P3₁/P3₂, P6₁/P6₅) cannot be told apart by absences - the first is kept and the log names the other; with too few axial reflections XDS's space group is kept. Verified on OdoL_7 only (C222 -> C222₁).
+- AutoPilot screw axes (`_ap_sg_from_absences`): enantiomorphs (P4₁/P4₃, P3₁/P3₂, P6₁/P6₅) cannot be told apart by absences - the first is kept and the log names the other; with too few axial reflections XDS's space group is kept. Verified on one data set only (C222 -> C222₁).
 - Raster scans (`_is_raster_scan`): recognised by name only (a folder with "raster" in the last three path parts, or "raster" in the file name - NSLS-II FMX naming); other beamlines' raster scans are listed as ordinary, ticked data sets.
-- ΔCC½ (XDSCC12): skipped by the API suite because XDSCC12 is not installed in the test WSL.
 - The 0.6.7 / 0.6.7b Windows installers were built and checked (`-Preview`, parse), not run on a clean Windows machine.
 - The manual's videos play only in the HTML manual; the PDF shows a still frame. Media cannot be checked in the Browser pane while it is hidden: test playback headless.
 
-Known limitations and open items as of 0.6.7c + later commits (v385, 2026-09-25):
+Known limitations and open items as of 0.6.9:
 
-- AutoPilot import keeps a beamline XDS.INP's `UNIT_CELL_A-AXIS`/`B`/`C` orientation. The APS gmcaproc file of D6 (23IDD_2021_03_06_cbf) carries one from a wrong indexing (184 x 321 A cell; the data give 92.8 x 161.9 A): the first AutoPilot pass on D6 ended with 3.5 % completeness, ISa 1.07. Not fixed - should the import drop those three keywords (and maybe the beamline's SG/cell) or check them against IDXREF?
-- Key Parameters "Load from other XDS.INP" into a project that already HAS an XDS.INP takes only the form fields: the loaded file's ROTATION_AXIS, SENSOR_THICKNESS, polarization, UNTRUSTED_*, REFINE(...) are ignored (bug check 3, 2026-09-24). Decision pending: take the whole loaded file, or warn which keywords were not taken.
-- Frames 301-400 of MBP-S14 and frames 1-100 of Free-9DY_1/_2 do not index (the beamline's fast_dp also failed on Free-9DY): data, not the program - do not use them as test sets.
+- AutoPilot import keeps a beamline XDS.INP's `UNIT_CELL_A-AXIS`/`B`/`C` orientation; when every run with it fails, one more run is made without it (0.6.9). A run that succeeds with a wrong orientation (seen on one beamline file: a cell twice too long, 3.5 % completeness) is not caught.
+- Key Parameters "Load from other XDS.INP" into a project that already has an XDS.INP takes only the form fields; since 0.6.9 it lists the lines outside the form that differ (ROTATION_AXIS, SENSOR_THICKNESS, UNTRUSTED_*, REFINE(...)) and keeps the project's own.
+- Some test data sets do not index on some frame ranges (the beamline's own processing failed on them too): data, not the program - do not use them as test sets.
 - The Environment screen reopens on a timer after the splash; a test that dismisses it at start can find it back later (it is a modal and covers hit-tests): ui_pass.js closes it right before the Ask-bar checks.
 - Docs tab = the illustrated manual on the page (`_docsLoadManual`, shadow root; the contents list is kept in view by a scroll handler because a page container has overflow:auto, so CSS sticky does not work there). The manual is 26.7 MB and is fetched on the first opening of the tab. The Browser pane cannot screenshot the resulting 150 000 px page (blank images): take screenshots headless.
-- Last full battery: v382 (all stages; one transient section-1 server start, sections 1-2 re-run 29/29). v383-v385 (Docs tab only) passed the quick battery and a headless search/Docs test, not the full battery.
-- dist/ holds 0.6.7c packages built from v380; commits after it (XSCALE default, Docs tab, battery on F:) are not in any package: the next packages must be 0.6.7d.
+- Last full battery: v390 = 0.6.9 (all stages, XDSCC12 included; browser pass 47/47, API suite 205/205). Test folders on F: can stay locked for a while after a server stops ("Directory not empty"); a run that collides with them fails at "server up" - clear `<repo>/.tmp/wsl/cp_*` and re-run.
 - Test data and servers go to F: (`<repo>/.tmp`, `<repo>/.tmp/wsl`, `F:\tmp\claude\crystal_pilot`), never C: - see tests/README.md.

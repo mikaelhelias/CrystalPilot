@@ -720,19 +720,19 @@ def define_checks(m, scratch):
     @check("AutoPilot discovery: raster scans are flagged (rasterImages folder or 'raster' in the name), rotation data not")
     def _():
         root = scratch / "visit"
-        crystal = root / "OdoL_7" / "1" / "MHE-000B_7"
+        crystal = root / "xtal_7" / "1" / "puck_7"
         (crystal / "rasterImages").mkdir(parents=True)
-        (crystal / "OdoL_7_3703_master.h5").write_bytes(b"")                                    # the rotation data set
-        (crystal / "rasterImages" / "OdoL_7_r_Raster_3702_master.h5").write_bytes(b"")          # FMX raster scan
-        (root / "OdoL_7" / "0" / "MHE-000B_7" / "rasterImages").mkdir(parents=True)
-        (root / "OdoL_7" / "0" / "MHE-000B_7" / "rasterImages" / "OdoL_7_r_Raster_3701_master.h5").write_bytes(b"")
+        (crystal / "xtal_7_3703_master.h5").write_bytes(b"")                                    # the rotation data set
+        (crystal / "rasterImages" / "xtal_7_r_Raster_3702_master.h5").write_bytes(b"")          # FMX raster scan
+        (root / "xtal_7" / "0" / "puck_7" / "rasterImages").mkdir(parents=True)
+        (root / "xtal_7" / "0" / "puck_7" / "rasterImages" / "xtal_7_r_Raster_3701_master.h5").write_bytes(b"")
         (root / "grid").mkdir()
         for n in range(1, 8):
             (root / "grid" / ("xtal_raster_%04d.cbf" % n)).write_bytes(b"")                   # a raster series by its name
             (root / "grid" / ("xtal_rot_%04d.cbf" % n)).write_bytes(b"")
         found = {Path(d["template"]).name: d["raster"] for d in m.discover_datasets(root, max_depth=5)}
-        assert found == {"OdoL_7_3703_master.h5": False, "OdoL_7_r_Raster_3702_master.h5": True,
-                         "OdoL_7_r_Raster_3701_master.h5": True, "xtal_raster_????.cbf": True, "xtal_rot_????.cbf": False}, found
+        assert found == {"xtal_7_3703_master.h5": False, "xtal_7_r_Raster_3702_master.h5": True,
+                         "xtal_7_r_Raster_3701_master.h5": True, "xtal_raster_????.cbf": True, "xtal_rot_????.cbf": False}, found
         html = m.get_frontend_html()
         assert "ds.picked = !ds.raster" in html, "raster scans are not left unticked in the wizard"
         assert 'apw-badge raster' in html
@@ -1463,7 +1463,7 @@ def define_checks(m, scratch):
         assert v["ORGX"] == "2008.5" and v["ORGY"] == "2253.0" and v["QX"] == "0.075", v   # real numbers untouched
         assert "! detector" in out and "!NX= 12.0" in out, out                                 # comments untouched
         assert m._clean_inp_text("NX= 4150.5\n", "xds") == "NX= 4150.5\n"                  # not a whole number: left to XDS
-        # STRONG_PIXEL= (his A1 XDS.INP, the APS gmcaproc files): current XDS stops with ILLEGAL KEYWORD
+        # STRONG_PIXEL= (older beamline XDS.INP files, e.g. APS gmcaproc): current XDS stops with ILLEGAL KEYWORD
         v = m._parse_xdsinp_params(m._clean_inp_text("   STRONG_PIXEL= 25!10\nNX= 100\n", "xds"))
         assert v.get("SIGNAL_PIXEL") == "25" and "STRONG_PIXEL" not in v, v
         both = m._clean_inp_text("STRONG_PIXEL= 4.0\nSIGNAL_PIXEL= 6.0\n", "xds")               # given twice XDS stops too
