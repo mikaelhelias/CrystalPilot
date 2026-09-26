@@ -357,7 +357,8 @@ async function main() {
       // the Environment screen opens on a timer after the splash and may come up after the
       // start-up dismissal; it is a modal over everything, so close it as a user would
       try { if (typeof envClose === 'function') envClose(); } catch (e) {}
-      window.scrollTo(0, 0); b.value = 'xscale cut-off'; cpAskRender('xscale cut-off'); await new Promise(r => setTimeout(r, 500));
+      // the page scrolls smoothly: from deep in the Docs tab a plain scrollTo(0, 0) is still under way when the rows are measured
+      window.scrollTo({ top: 0, behavior: 'instant' }); b.value = 'xscale cut-off'; cpAskRender('xscale cut-off'); await new Promise(r => setTimeout(r, 500));
       const pop = document.getElementById('askbar-pop'), rows = Array.from(pop.querySelectorAll('a.ds-hit'));
       // the first rows must be on top of the page, not cut off by the header (0.6.6c showed one and a half)
       const clickable = rows.slice(0, 3).filter(r => { const q = r.getBoundingClientRect();
