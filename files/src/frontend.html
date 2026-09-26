@@ -7567,21 +7567,16 @@
                             vals.push(getVal(runs[ri2].data, met.key));
                         }
                         // Find best value index (skip if section highlight suppressed, unless it is a resolution row)
-                        var bestIdx = -1;
+                        // every run that has the best value is marked; a row where all runs are equal has no best
+                        var bestSet = [];
                         var suppressHL = secNoHL && !met.isRes;
                         if (met.lower !== null && !suppressHL) {
-                            var bestVal = null;
-                            for (var bi = 0; bi < vals.length; bi++) {
-                                var nv = numVal(vals[bi]);
-                                if (!isNaN(nv)) {
-                                    if (bestVal === null || (met.lower ? nv < bestVal : nv > bestVal)) {
-                                        bestVal = nv; bestIdx = bi;
-                                    }
-                                }
+                            var nums = vals.map(numVal), valid = nums.filter(function (x) { return !isNaN(x); });
+                            if (valid.length >= 2) {
+                                var bestVal = met.lower ? Math.min.apply(null, valid) : Math.max.apply(null, valid);
+                                var allSame = valid.every(function (x) { return x === valid[0]; });
+                                if (!allSame) nums.forEach(function (x, i) { if (x === bestVal) bestSet.push(i); });
                             }
-                            var validCount = 0;
-                            for (var vc = 0; vc < vals.length; vc++) { if (!isNaN(numVal(vals[vc]))) validCount++; }
-                            if (validCount < 2) bestIdx = -1;
                         }
                         var isResRow = met.isRes;
                         h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
@@ -7590,9 +7585,10 @@
                             var vStr = vals[vi] !== '' ? String(vals[vi]) : '-';
                             if (typeof vals[vi] === 'number') vStr = Number(vals[vi]).toFixed(2);
                             var cellBg = vi === 0 ? 'rgba(99,179,237,0.08)' : 'transparent';
-                            if (vi === bestIdx) cellBg = 'rgba(104,211,145,0.15)';
-                            var cellColor = vi === bestIdx ? '#68d391' : 'var(--txt)';
-                            var fw = (vi === bestIdx || isResRow) ? 'font-weight:700;' : '';
+                            var isBest = bestSet.indexOf(vi) >= 0;
+                            if (isBest) cellBg = 'rgba(104,211,145,0.15)';
+                            var cellColor = isBest ? '#68d391' : 'var(--txt)';
+                            var fw = (isBest || isResRow) ? 'font-weight:700;' : '';
                             h += '<td style="padding:3px 6px; text-align:right; font-family:var(--mono); background:' + cellBg + '; color:' + cellColor + ';' + fw + '">' + vStr + '</td>';
                         }
                         h += '</tr>';
