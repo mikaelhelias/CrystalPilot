@@ -10,6 +10,11 @@
 
 CrystalPilot aims to make X-ray data processing user-friendly and consolidated in one interface. It manages projects, handles your data and the XDS input files, and follows the processing from the images to a merged data set. Along the way it builds "Table 1" automatically. Its work modes, from Tutorial to Expert, also make it a platform for learning data processing. It runs on Linux, and on Windows through WSL2 with a one-click installer.
 
+<p align="center">
+  <a href="docs/readme/videos/crystalpilot-promo.mp4"><img src="docs/readme/images/promo-preview.gif" alt="CrystalPilot in 20 seconds: key metrics, comparing runs, the frame viewer, work modes, Table 1" width="820"></a><br>
+  <sub>CrystalPilot in 20 seconds. Click for the full video (1:54, MP4, 9.5 MB).</sub>
+</p>
+
 ![CrystalPilot: project, pipeline and run controls](docs/readme/images/overview.png)
 
 ## What it does
