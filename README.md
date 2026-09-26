@@ -86,9 +86,8 @@ The common resolution cut-off criteria are highlighted directly in the statistic
 
 AutoPilot processes individual data sets or whole batches, including iterative auto-indexing strategies, and imports the XDS.INP already written at the beamline when one matches.
 
-![AutoPilot data sets with imported and header-generated XDS.INP](docs/readme/images/autopilot-xdsinp-search.png)
 
-![The imported XDS.INP as it will be used](docs/readme/images/autopilot-xdsinp-view.png)
+![AutoPilot data sets with imported and header-generated XDS.INP](docs/readme/images/autopilot-xdsinp-search.png)
 
 ### Frame viewer
 
