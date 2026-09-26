@@ -614,7 +614,7 @@ REPORT_MAIL_LINK = 1900          # characters of the ENCODED mailto link; Window
 
 
 # The path segment after /home/, /Users/ or \Users\ IS a user name - the full
-# one, a Windows 8.3 short form (VALUED~1), or somebody else's - so it is
+# one, a Windows 8.3 short form (JOHNDO~1), or somebody else's - so it is
 # replaced by its position in the path, not by looking for a known name.
 # [\\]+ also covers JSON text, where each backslash is written twice; matching
 # only the names this account goes by missed exactly that case.
