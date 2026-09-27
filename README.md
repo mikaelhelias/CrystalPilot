@@ -8,7 +8,7 @@
 
 **Crystallographic data processing & analysis: a browser interface for XDS.**
 
-CrystalPilot aims to make X-ray data processing user-friendly and consolidated in one interface. It manages projects, handles your data and the XDS input files, and follows the processing from the images to a merged data set. Along the way it builds "Table 1" automatically. Its work modes, from Tutorial to Expert, also make it a platform for learning data processing. It runs on Linux, and on Windows through WSL2 with a one-click installer.
+CrystalPilot aims to make X-ray data processing user-friendly and consolidated in one interface. It manages projects, handles your data and the XDS input files, and follows the processing from the images to a merged data set. Along the way it builds "Table 1" automatically. Its work modes, from Tutorial to Expert, also make it a platform for learning data processing. It runs on Linux, natively on macOS (Apple silicon and Intel), and on Windows through WSL2 with a one-click installer.
 
 <p align="center">
   <a href="docs/readme/videos/crystalpilot-promo.mp4"><img src="docs/readme/images/promo-preview.webp" alt="CrystalPilot highlights: XDS and XSCALE input filled in for you, the frame viewer, work modes, Table 1" width="880"></a><br>
@@ -103,7 +103,7 @@ A highly capable frame viewer is integrated, with resolution and ice rings, pred
 ## Installation
 
 First download from their authors (free for academic use):
-- **XDS** (Linux 64-bit package): https://xds.mr.mpg.de
+- **XDS** (the Linux 64-bit package for Windows and Linux, the macOS package for a Mac): https://xds.mr.mpg.de
 - **DECTRIS neggia** (`dectris-neggia.so`, for Eiger `.h5` data): https://github.com/dectris-cloud/neggia/releases
 - **CCP4** (optional; needed for POINTLESS, AIMLESS and the MTZ export): https://www.ccp4.ac.uk
 
@@ -156,6 +156,21 @@ XDS is found automatically because the program sits next to it. The frame viewer
    Your browser opens the interface. `crystalpilot stop` stops the server; `crystalpilot fg` runs it in the terminal instead.
 
 More: [linux/README-Linux.md](linux/README-Linux.md)
+
+### macOS (Apple silicon and Intel)
+
+CrystalPilot runs natively with the macOS build of XDS (Apple silicon `XDS-Apple_M1`, or Intel `XDS-OSX_64`) and the macOS neggia library for the same processor. Python 3.7 or newer is needed (`xcode-select --install`, or python.org).
+
+1. Unpack XDS (for example into `/Applications`) and put the neggia library next to `xds_par`.
+2. Get the repository (**Code → Download ZIP**, or `git clone`) and unzip it.
+3. Double-click **mac/Install CrystalPilot.command** (the first time: right-click → **Open**), or in Terminal:
+   ```bash
+   bash mac/install-mac.sh
+   ```
+   It builds the application, creates a private Python environment in `~/CrystalPilot`, finds XDS, the neggia library matching it (arm64 or x86_64) and CCP4 in `/Applications`, clears the download quarantine that stops macOS from running XDS, and installs **CrystalPilot** and **CrystalPilot Stop** in `~/Applications`.
+4. Start **CrystalPilot** from Launchpad, Spotlight or the Dock. It opens in your browser.
+
+More: [mac/README-Mac.md](mac/README-Mac.md)
 
 ### First launch
 

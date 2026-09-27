@@ -358,6 +358,10 @@ def _ram_total_gb():
                     return int(line.split()[1]) / 1048576.0
     except (OSError, ValueError, IndexError):
         pass
+    try:  # macOS (no /proc)
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1073741824.0
+    except (AttributeError, OSError, ValueError):
+        pass
     return 0.0
 
 CPU_CORES_DEFAULT = 4
@@ -704,6 +708,61 @@ def _clean_path_setting(value, filenames=()):
 
 NEGGIA_NAMES = ('dectris-neggia.so', 'dectris-neggia.dylib')
 
+_MACHO_CPU = {0x01000007: 'x86_64', 0x0100000c: 'arm64'}
+
+
+def _macho_archs(path):
+    """The CPU architectures of a Mach-O file ({'arm64'}, {'x86_64'} or both for
+    a universal file); empty when the file is not Mach-O or cannot be read."""
+    import struct as _st
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(4096)
+    except OSError:
+        return set()
+    if head[:4] in (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe') and len(head) >= 8:
+        return {_MACHO_CPU.get(_st.unpack('<i', head[4:8])[0] & 0xffffffff, '?')}
+    if head[:4] in (b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf') and len(head) >= 8:
+        size = 20 if head[3] == 0xbe else 32
+        n = _st.unpack('>I', head[4:8])[0]
+        if not 0 < n < 20:              # a Java class file has the same magic
+            return set()
+        return {_MACHO_CPU.get(_st.unpack('>I', head[8 + i * size:12 + i * size])[0], '?')
+                for i in range(n) if 12 + i * size <= len(head)}
+    return set()
+
+
+def _neggia_usable(path, xds_dir=None):
+    """Whether XDS here can load this reader library.  On macOS it has to be a
+    Mac library built for the architecture of the XDS binaries (an arm64 XDS
+    cannot load an x86_64 dectris-neggia_osx.so, and the reverse); elsewhere
+    anything but a Mac library."""
+    import platform as _plat
+    libs = _macho_archs(path)
+    if _plat.system() != 'Darwin':
+        return not libs
+    d = Path(xds_dir) if xds_dir else XDS_PATH
+    xds = set()
+    for n in ('xds_par', 'xds'):
+        if (d / n).is_file():
+            xds = _macho_archs(d / n)
+            break
+    return bool(libs & (xds or {_plat.machine()}))
+
+
+def _neggia_in_dir(d, xds_dir=None):
+    """The neggia library in folder d that XDS can load: the usual names first,
+    then variants such as dectris-neggia-arm64.so or dectris-neggia_osx.so."""
+    d = Path(d)
+    try:
+        variants = sorted(p for p in d.glob('dectris-neggia*') if p.suffix in ('.so', '.dylib'))
+    except OSError:
+        variants = []
+    for c in [d / n for n in NEGGIA_NAMES] + variants:
+        if c.is_file() and _neggia_usable(c, xds_dir):
+            return str(c)
+    return ''
+
 
 def _find_neggia():
     """Try to locate the dectris-neggia shared library.
@@ -718,20 +777,15 @@ def _find_neggia():
     import platform as _plat
     import glob as _glob_neg
 
-    names = ['dectris-neggia.so', 'dectris-neggia.dylib']
-    if _plat.system() == 'Darwin':
-        names = ['dectris-neggia.dylib', 'dectris-neggia.so']
-
     # 0. Environment variable override
     env_val = os.environ.get('NEGGIA', '')
     if env_val and os.path.isfile(env_val):
         return env_val
 
     # 1. Alongside XDS binaries
-    for n in names:
-        candidate = XDS_PATH / n
-        if candidate.exists():
-            return str(candidate)
+    found = _neggia_in_dir(XDS_PATH)
+    if found:
+        return found
 
     # 2. Common installation locations
     search_dirs = [
@@ -752,17 +806,16 @@ def _find_neggia():
             Path('/usr/lib/aarch64-linux-gnu'),
         ])
     for d in search_dirs:
-        for n in names:
-            c = d / n
-            if c.exists():
-                return str(c)
+        found = _neggia_in_dir(d)
+        if found:
+            return found
     # 3. Glob alongside XDS common install locations
-    for pat in ['/opt/xds/*/dectris-neggia.*',
-                str(Path.home() / 'xds' / '*' / 'dectris-neggia.*'),
-                '/usr/local/xds/*/dectris-neggia.*']:
-        hits = _glob_neg.glob(pat)
-        if hits:
-            return hits[0]
+    for pat in ['/opt/xds/*/dectris-neggia*',
+                str(Path.home() / 'xds' / '*' / 'dectris-neggia*'),
+                '/usr/local/xds/*/dectris-neggia*']:
+        for hit in sorted(_glob_neg.glob(pat)):
+            if hit.endswith(('.so', '.dylib')) and _neggia_usable(hit):
+                return hit
 
     return ''
 
