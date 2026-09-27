@@ -10,8 +10,8 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-SRC = Path(r"F:\app\crystal_pilot\files\src\frontend.html")
-VERSION = re.search(r'VERSION = "([^"]+)"', Path(r"F:\app\crystal_pilot\files\src\config.py").read_text(encoding="utf-8")).group(1)
+SRC = Path(__file__).resolve().parents[1] / "src" / "frontend.html"
+VERSION = re.search(r'VERSION = "([^"]+)"', (SRC.parent / "config.py").read_text(encoding="utf-8")).group(1)
 
 # ── tiny HTML helpers (same look as the existing cards) ──────────────────────
 BODY = "font-family:'DM Sans',var(--mono),sans-serif; font-size:0.84rem; color:var(--txt2); line-height:1.85;"
