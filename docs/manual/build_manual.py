@@ -231,7 +231,9 @@ def headless(exe, output_flag, url, out, min_size, timeout, extra=(), grace=60):
     except FileNotFoundError:
         pass
     try:
-        r = subprocess.run([exe, "--headless=new", "--disable-gpu"] + list(extra) + [output_flag + str(part), url],
+        # its own profile in the repo's .tmp (on the project drive), not the default one on C:
+        profile = "--user-data-dir=" + str(ROOT / ".tmp" / "edge-manual")
+        r = subprocess.run([exe, "--headless=new", "--disable-gpu", profile] + list(extra) + [output_flag + str(part), url],
                            capture_output=True, text=True, timeout=timeout)
         said = (r.stderr or r.stdout or "").strip()
     except subprocess.TimeoutExpired:
