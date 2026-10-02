@@ -497,10 +497,11 @@ def _make_runnable(p):
     except OSError as e:
         why = str(p) + " is not allowed to run and CrystalPilot could not change that (" + (e.strerror or str(e)) + ")"
         if IS_WSL:
-            # a Windows user has no Linux terminal: the way out is a normal
-            # CCP4 for Windows installation, chosen with the folder button
-            return (why + ". Install CCP4 for Windows the normal way (for example in C:\\CCP4-9) and choose "
-                    "that folder on the Environment screen with the folder button.")
+            # a Windows user has no Linux terminal: the way out is CCP4 on a
+            # Windows drive, where every program may run, chosen with the folder button
+            return (why + ". This happens to CCP4 copied into CrystalPilot's Linux folders. Install CCP4 for "
+                    "Windows on a Windows drive instead (for example C:\\CCP4-9, with the installer in the CCP4 "
+                    "download) and choose that folder on the Environment screen with the folder button.")
         return why + " - run: chmod +x " + str(p.parent) + "/*"
     return ""
 
