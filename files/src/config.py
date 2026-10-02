@@ -485,6 +485,21 @@ CCP4_BIN_SAVED = str(SETTINGS.get("ccp4_bin") or "")
 CCP4_BIN = CCP4_BIN_SAVED if CCP4_BIN_SAVED and _is_ccp4_bin(CCP4_BIN_SAVED) else ""
 
 
+def _make_runnable(p):
+    """A program file without the execute bit gets it.  Files copied into the
+    Linux file system from Windows (Explorer, \\\\wsl.localhost) arrive as
+    rw-r--r--, and a CCP4 copied that way then fails with "Permission denied"
+    (exit code 126).  Returns "" or why the program still cannot be run."""
+    if os.name == "nt" or os.access(str(p), os.X_OK):
+        return ""
+    try:
+        p.chmod(p.stat().st_mode | 0o111)
+    except OSError as e:
+        return (str(p) + " cannot be run: it has no execute permission and it could not be set (" +
+                (e.strerror or str(e)) + ") - run: chmod +x " + str(p.parent) + "/*")
+    return ""
+
+
 def _ccp4_program(name, folder=None):
     """Find CCP4 program `name` in the CCP4 bin folder.
 
@@ -501,7 +516,8 @@ def _ccp4_program(name, folder=None):
         return None, "", "the CCP4 folder " + str(d) + " does not exist"
     p = d / name
     if p.is_file():
-        return p, "unix", ""
+        problem = _make_runnable(p)
+        return (None, "", problem) if problem else (p, "unix", "")
     if p.is_symlink():
         try:
             target = os.readlink(str(p))
@@ -514,7 +530,8 @@ def _ccp4_program(name, folder=None):
         if os.name == "nt":
             return pe, "unix", ""
         if IS_WSL:
-            return pe, "windows", ""
+            problem = _make_runnable(pe)
+            return (None, "", problem) if problem else (pe, "windows", "")
         return None, "", (str(d) + " holds " + name + ".exe, a CCP4 for Windows, which cannot run on Linux - "
                           "install the Linux CCP4")
     return None, "", name + " not found in " + str(d)

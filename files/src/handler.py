@@ -1766,9 +1766,17 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             entries.append({"name": "..", "path": str(parent), "is_dir": True})
                     else:
                         entries.append({"name": "..", "path": str(parent), "is_dir": True})
-                for child in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-                    if not child.name.startswith("."):
-                        entries.append({"name": child.name, "path": str(child), "is_dir": child.is_dir()})
+                # Windows refuses even a look at the files it keeps open (on C:
+                # DumpStack.log.tmp, pagefile.sys ...): such an entry is listed as
+                # a file instead of failing the whole folder.
+                def _is_dir(x):
+                    try:
+                        return x.is_dir()
+                    except OSError:
+                        return False
+                children = [(c, _is_dir(c)) for c in p.iterdir() if not c.name.startswith(".")]
+                for child, is_dir in sorted(children, key=lambda x: (not x[1], x[0].name.lower())):
+                    entries.append({"name": child.name, "path": str(child), "is_dir": is_dir})
                 self.send_json({"cwd": str(p), "entries": entries, "missing": missing, "problem": path_problem})
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)

@@ -94,6 +94,18 @@ F="$T/projects/my proj/XSCALE.INP"
 check "xscale 'Save new': INPUT_FILE resolved to the run folder" "grep -q 'INPUT_FILE= .*/run1/XDS_ASCII.HKL' \"$F\"" "$(cat "$F")"
 check "xscale 'Save new': globals before OUTPUT_FILE" "[ \$(grep -n '^SPACE_GROUP_NUMBER' \"$F\" | cut -d: -f1) -lt \$(grep -n '^OUTPUT_FILE' \"$F\" | cut -d: -f1) ]" "$(cat "$F")"
 R=$(c "$U/api/xscale-detect-hkl?project=my%20proj"); check "detect-hkl lists the run-folder HKL" "echo '$R' | grep -q run1" "$R"
+# CCP4 copied in from Windows arrives without the execute bit (exit code 126):
+# it is set by itself.  In the Linux file system - on /mnt/<drive> every file
+# shows as executable, which would make this check pass without the fix.
+CC=$(mktemp -d /tmp/cp_ccp4.XXXXXX); mkdir -p "$CC/bin"
+printf '#!/bin/sh\necho fake\n' > "$CC/bin/f2mtz"; cp "$CC/bin/f2mtz" "$CC/bin/cad"; chmod 644 "$CC/bin/f2mtz" "$CC/bin/cad"
+c -X POST "$U/api/config" -H 'Content-Type: application/json' -d "{\"ccp4_bin\": \"$CC/bin\"}" >/dev/null
+R=$(c "$U/api/ccp4check"); check "ccp4: programs without the execute bit made runnable" "echo '$R' | grep -q '\"f2mtz\": true' && [ -x $CC/bin/f2mtz ] && [ -x $CC/bin/cad ]" "$R $(ls -l $CC/bin)"
+rm -rf "$CC"
+# folder browser: C: holds files Windows keeps locked (DumpStack.log.tmp, pagefile.sys)
+if mountpoint -q /mnt/c; then
+    R=$(c "$U/api/ls?path=/mnt/c"); check "folder browser lists /mnt/c despite locked files" "echo '$R' | grep -q '\"cwd\": \"/mnt/c\"' && ! echo '$R' | grep -q '\"error\"'" "$(echo "$R" | cut -c1-200)"
+fi
 stop_server "$T" $PORT; pkill -f 'sleep 120' 2>/dev/null; rm -rf "$T"
 
 # ══════════════════════════════════════════════════════════════════════════
