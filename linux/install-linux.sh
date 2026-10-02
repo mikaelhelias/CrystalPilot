@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 if grep -q $'\r' "$0"; then tr -d '\r' < "$0" > "/tmp/crystalpilot-install.$$.sh"; exec bash "/tmp/crystalpilot-install.$$.sh" "$@"; fi # CRLF guard - keep on one line
 #
-# CrystalPilot - Linux (and macOS) installer.
+# CrystalPilot - Linux installer (for macOS use mac/install-mac.sh).
 #
 #   bash install-linux.sh                 # install with defaults, then start CrystalPilot
 #   bash install-linux.sh --xds /opt/xds  # tell it where the XDS binaries are
