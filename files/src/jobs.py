@@ -185,23 +185,29 @@ def _kill_proc_tree(proc):
             if proc.poll() is None:
                 proc.kill()
     else:
+        # macOS answers EPERM, not ESRCH, when every process left in the group
+        # has exited and only waits to be reaped (Linux answers 0): nothing is
+        # alive any more, the same as a group that is gone.
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             return
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline:
-            proc.poll()  # reap the parent while observing the whole group
-            try:
-                os.killpg(proc.pid, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
+        except PermissionError:
+            pass
         else:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                proc.poll()  # reap the parent while observing the whole group
+                try:
+                    os.killpg(proc.pid, 0)
+                except (ProcessLookupError, PermissionError):
+                    break
+                time.sleep(0.05)
+            else:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
