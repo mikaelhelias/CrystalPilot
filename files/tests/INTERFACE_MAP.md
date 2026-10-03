@@ -137,3 +137,10 @@ Known limitations and open items as of 0.6.9:
 - Docs tab = the illustrated manual on the page (`_docsLoadManual`, shadow root; the contents list is kept in view by a scroll handler because a page container has overflow:auto, so CSS sticky does not work there). The manual is 26.7 MB and is fetched on the first opening of the tab. The Browser pane cannot screenshot the resulting 150 000 px page (blank images): take screenshots headless.
 - Last full battery: v390 = 0.6.9 (all stages, XDSCC12 included; browser pass 47/47, API suite 205/205). Test folders on F: can stay locked for a while after a server stops ("Directory not empty"); a run that collides with them fails at "server up" - clear `<repo>/.tmp/wsl/cp_*` and re-run.
 - Test data and servers go to F: (`<repo>/.tmp`, `<repo>/.tmp/wsl`, `F:\tmp\claude\crystal_pilot`), never C: - see tests/README.md.
+
+macOS, as of 0.6.9b (2026-10-03):
+
+- macOS support (`mac/`, RAM total via sysconf, neggia matched to the XDS processor) came with pull request #1 and was tested by its contributor on one Apple silicon Mac (macOS 27, XDS for Apple silicon, CCP4 9). Not tested: an Intel Mac, the installer on a clean Mac, a full real XDS chain through CrystalPilot on a Mac.
+- Automatic checks: `.github/workflows/checks.yml` (Ubuntu and macOS, system Python, no XDS) - see tests/README.md "Platforms". The Linux job was rehearsed in WSL on a clean clone with Ubuntu's Python 3.12 (all stages OK); the macOS job runs for the first time on GitHub.
+- `test_parent_exit_does_not_leave_term_resistant_child` (review regressions) failed on the contributor's Mac; the cause is not known yet (no Mac here). Read it from the first macOS run of the check before changing anything. The other two tests that failed there (`test_imported_xdsinp_first_run_is_without_its_space_group`, `test_autopilot_cannot_diagnose_old_logs_after_preparation_failure`) failed on Linux as well and were test artifacts, fixed in the tests.
+- On macOS the RAM limit is off (no cgroups); the CPU limit works through MAXIMUM_NUMBER_OF_PROCESSORS in the input files only (no taskset).

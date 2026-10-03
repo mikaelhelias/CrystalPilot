@@ -92,6 +92,49 @@ check that fails on the old behaviour before fixing.
 `@check("name")`; raise `AssertionError` with a useful message on failure.
 `api/api_tests.sh`: use `check "name" "shell test" "text shown on failure"`.
 
+## Platforms: Windows, Linux and macOS
+
+CrystalPilot runs on Windows (through WSL), on Linux, and natively on macOS
+(`mac/`, contributed in pull request #1). The battery above runs on Windows
+and in WSL. Linux and macOS are checked automatically on GitHub:
+
+- **`.github/workflows/checks.yml`** runs at every push and pull request, on
+  an Ubuntu machine and on a Mac (Apple silicon), each with the system's own
+  Python (on the Mac, Apple's 3.9 - what a user with the Xcode command line
+  tools has). It checks that the install scripts parse (`mac/` with macOS's
+  bash 3.2) and runs `tests/run_all.py`: build, py_compile, JS syntax, unit
+  checks, review regressions, workflow tests. No XDS runs there. The result is
+  on the repository's Actions page and next to each commit; a red cross on the
+  macOS job means the change broke something on a Mac.
+- **The same Linux check here**, without GitHub: from the repository root, in
+  WSL, `cd files && /usr/bin/python3 tests/run_all.py` (on a clean clone, so
+  the build numbers of the working copy are not touched).
+- **Before a release**, the installer and a real XDS run on a Mac can only be
+  checked on a Mac: ask the macOS contributor to run `mac/install-mac.sh` on
+  the release candidate.
+
+Rules for code that has to keep working on all three:
+
+- **What a Mac does not have:** `/proc` (memory, cgroups, process states),
+  `taskset`, `sched_setaffinity`, the `timeout` command, `systemd`, WSL and
+  drive letters. bash is 3.2 (no `mapfile`, no `${var,,}`, no associative
+  arrays) and `sed`, `grep`, `stat`, `date` are the BSD versions (`sed -i ''`,
+  no `grep -P`, `stat -f` instead of `stat -c`). Code that uses any of these
+  needs a fallback (see `_ram_total_gb`, `_limited_cmd`: on a Mac the RAM limit
+  is off and the CPU limit works through MAXIMUM_NUMBER_OF_PROCESSORS and
+  OMP_NUM_THREADS, without pinning).
+- **Python 3.7 or newer** is what `mac/install-mac.sh` accepts, and the Mac
+  check runs Apple's 3.9: nothing newer than 3.7 without a fallback (`:=` is
+  3.8, `str.removeprefix` 3.9, `match` and `X | Y` type unions 3.10).
+- **Platform tests:** `IS_WSL` for WSL, `os.name == "nt"` for Windows,
+  `platform.system() == "Darwin"` for macOS. A Windows-only branch must not
+  swallow Linux/macOS behaviour, and the reverse.
+- **Tests that pass only on Windows are suspect:** Windows makes no symbolic
+  links for a normal user and the CPU/RAM limits are off there, so a test can
+  depend on that without anyone noticing. Two such tests were found when the
+  Mac check was set up (a frame path through the no-blanks link; the workflow
+  stand-in's bookkeeping files linked into auto-indexing trial folders).
+
 ## The illustrated manual
 
 `docs/manual/build_manual.py` builds `CrystalPilot-Manual.html/.pdf` and the search index from `docs/manual/chapters/*.md` and `images/`. `--capture` re-takes the screenshots: it starts this battery's real-chain server with `CP_REAL_IMPORT=test CP_SKIP_RERUNS=1 CP_SKIP_AUTOPILOT=1` (the finished results of project `test` are imported, only XDSCONV / POINTLESS / AIMLESS / gemmi run) and drives `capture.js`. The battery checks that `/manual/`, the HTML and the index are served, that the Docs-tab search finds Docs and manual hits, and that the header Manual button appears (sweep.sh, ui_pass.js). Details in `docs/manual/README.md`.

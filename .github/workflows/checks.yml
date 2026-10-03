@@ -1,0 +1,43 @@
+# CrystalPilot checks on Linux and macOS, at every push and pull request:
+# the build, compile, JS syntax, unit, review and workflow checks of
+# files/tests/run_all.py, and the install scripts parse.  Real XDS runs and the
+# Windows installer are tested on the developer's machine (files/tests/README.md).
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (Ubuntu's Python)
+            os: ubuntu-latest
+            python: /usr/bin/python3
+          - name: macOS (Apple's Python)
+            # what a Mac user with the Xcode command line tools has (3.9)
+            os: macos-latest
+            python: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python
+        run: ${{ matrix.python }} --version
+
+      - name: Install scripts parse
+        run: |
+          if [ "$(uname)" = Darwin ]; then
+            # macOS runs them with its own bash 3.2
+            for f in mac/install-mac.sh "mac/Install CrystalPilot.command"; do /bin/bash -n "$f" || exit 1; echo "ok $f"; done
+          else
+            for f in linux/*.sh windows/*.sh files/tests/api/*.sh; do bash -n "$f" || exit 1; echo "ok $f"; done
+          fi
+
+      - name: Build and checks
+        working-directory: files
+        run: ${{ matrix.python }} tests/run_all.py

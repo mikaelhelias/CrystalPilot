@@ -11,6 +11,7 @@
 !/mac/
 !/windows/
 !/files/
+!/.github/
 
 # files/: sources, build script, docs generator, tests
 /files/*
