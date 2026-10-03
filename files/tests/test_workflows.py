@@ -7,6 +7,7 @@ These tests verify orchestration, not crystallographic numerical correctness.
 import contextlib
 import http.client
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -41,9 +42,12 @@ class Workflows(unittest.TestCase):
             path = cls.bin / name; path.touch(); cls.paths[str(path)] = name
         original = m.subprocess.Popen
         def popen(cmd, **kwargs):
-            name = cls.paths.get(str(cmd[0]))
-            if name:
-                cmd = [sys.executable, str(HERE/'fixtures/workflow_tool.py'), name] + list(cmd[1:])
+            # on Linux the CPU/RAM limits put taskset / the cgroup shell in
+            # front of the program: the stand-in replaces it where it is
+            cmd = list(cmd)
+            at = next((i for i, c in enumerate(cmd) if str(c) in cls.paths), None)
+            if at is not None:
+                cmd[at:at + 1] = [sys.executable, str(HERE/'fixtures/workflow_tool.py'), cls.paths[str(cmd[at])]]
             return original(cmd, **kwargs)
         cls.stack.enter_context(patch.object(m.subprocess, 'Popen', side_effect=popen))
         for name in ('xds','xscale','xdsconv'):
@@ -380,7 +384,12 @@ class Workflows(unittest.TestCase):
         self.assertIn("Imported by CrystalPilot", text)
         self.assertNotIn("SPACE_GROUP_NUMBER", m.xdsinp_values(text))
         self.assertNotIn("CLUSTER_NODES", m.xdsinp_values(text))
-        self.assertEqual(m.xdsinp_values(text)["NAME_TEMPLATE_OF_DATA_FRAMES"], str(self.p / "xtal_imp_????.cbf"))
+        # the image folder (this project's) has a blank: on Linux and macOS the template goes
+        # through a link without blanks (batch_xds_safe_template); Windows makes no link
+        tmpl = m.xdsinp_values(text)["NAME_TEMPLATE_OF_DATA_FRAMES"]
+        self.assertEqual(os.path.basename(tmpl), "xtal_imp_????.cbf")
+        self.assertEqual(os.path.realpath(os.path.join(str(m._pdir(item["project"])), os.path.dirname(tmpl))),
+                         os.path.realpath(str(self.p)))
 
     def test_imported_xdsinp_space_group_route_runs_each_attempt_until_one_succeeds(self):
         state = self._imported_batch("xtal_route", {"optimize": "never", "dcc_half": "off", "autoindex_tier": "off"})

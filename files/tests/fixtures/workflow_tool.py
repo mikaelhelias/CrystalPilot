@@ -8,7 +8,13 @@ import time
 
 tool = sys.argv[1]
 fixtures = Path(__file__).parent / 'real'
-control = json.loads(Path('control.json').read_text()) if Path('control.json').exists() else {}
+# Auto-indexing trial folders link the project's files (Linux, macOS; Windows
+# makes no links): a run is controlled and recorded where it happens, never
+# through such a link.
+_ctl = Path('control.json')
+control = json.loads(_ctl.read_text()) if _ctl.is_file() and not _ctl.is_symlink() else {}
+if Path('executed.jsonl').is_symlink():
+    Path('executed.jsonl').unlink()
 inp = Path('XDS.INP' if tool == 'xds' else tool.upper() + '.INP')
 jobs = re.search(r'^JOB\s*=\s*(.*)', inp.read_text(), re.M).group(1).split() if tool == 'xds' else [tool.upper()]
 for step in jobs:
