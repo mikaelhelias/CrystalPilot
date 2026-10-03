@@ -56,3 +56,11 @@ The interface is at `http://127.0.0.1:8000`. It answers this computer only; to u
 ## Updating and removing
 
 Copy the new `xds-gui-vNNN.py` next to the installer and run it again (projects and settings are kept), or copy it to `~/crystalpilot/app/crystalpilot.py` and restart. To remove: `crystalpilot stop`, then delete `~/crystalpilot`, `~/.local/bin/crystalpilot` and `~/.local/share/applications/crystalpilot.desktop`. Projects stay where they are.
+
+## On macOS
+
+CrystalPilot runs natively on a Mac, Apple silicon or Intel, with the macOS build of XDS (`XDS-Apple_M1` or `XDS-OSX_64` from [xds.mr.mpg.de](https://xds.mr.mpg.de)) and the macOS neggia library built for the same processor (arm64 or x86_64; an arm64 XDS cannot load an x86_64 library). CCP4 comes from its macOS installer, in `/Applications/ccp4-9`.
+
+Double-click **Install CrystalPilot.command** in the `mac` folder (the first time, right-click it and choose **Open**), or run `bash mac/install-mac.sh` in Terminal. It does what the Linux installer does, and also clears the download quarantine that makes macOS refuse to run XDS, checks that XDS runs on this processor (and that its licence has not expired), and installs **CrystalPilot** and **CrystalPilot Stop** in `~/Applications`, so it starts from Launchpad, Spotlight or the Dock. The install folder is `~/CrystalPilot`; the options are those above, with `mac/install-mac.sh` instead of `install-linux.sh`.
+
+The CPU-core limit works as on Linux; the RAM limit does not exist on macOS, so its field is disabled. To remove it: **CrystalPilot Stop**, then delete `~/Applications/CrystalPilot.app`, `~/Applications/CrystalPilot Stop.app` and `~/CrystalPilot` (move the projects out first).

@@ -134,12 +134,17 @@ def _environment_report():
     neg = NEGGIA_LIB if (NEGGIA_LIB and Path(NEGGIA_LIB).exists()) else ''
     gone = NEGGIA_LIB if (NEGGIA_LIB and not neg) else ''
     if not neg:
-        for _n in ('dectris-neggia.so', 'dectris-neggia.dylib'):
-            if (xds_path / _n).exists():
-                neg = str(xds_path / _n); break
+        neg = _neggia_in_dir(xds_path, xds_path)
     if not neg:
         neg = _find_neggia()
-    if neg and Path(neg).exists():
+    if neg and Path(neg).exists() and not _neggia_usable(neg, xds_path):
+        checks.append({"id": "neggia", "status": "warn", "title": "Eiger HDF5 reader (dectris-neggia)",
+                       "detail": neg + " is built for another system or processor than the XDS binaries"
+                                 + (" (" + ", ".join(sorted(_macho_archs(neg))) + ")" if _macho_archs(neg) else "")
+                                 + ", so XDS cannot load it. Enter the path of the matching library.",
+                       "path": neg, "action": "set_neggia_path",
+                       "link": "https://github.com/dectris/neggia/releases", "link_label": "neggia releases"})
+    elif neg and Path(neg).exists():
         checks.append({"id": "neggia", "status": "ok", "title": "Eiger HDF5 reader (dectris-neggia)",
                        "detail": neg, "path": neg, "action": "set_neggia_path"})
     else:
@@ -4052,6 +4057,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             neggia = data.get("neggia_lib")
             if neggia is not None:
                 neggia = _clean_path_setting(neggia, NEGGIA_NAMES)
+                if neggia and Path(neggia).is_dir():
+                    neggia = _neggia_in_dir(neggia) or neggia
                 if neggia and not Path(neggia).is_file():
                     self.send_json({"error": "No file at " + neggia +
                                              ". Give the full path of dectris-neggia.so (or the folder it is in)."}, 400)
