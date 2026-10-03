@@ -172,9 +172,19 @@ class ReviewRegressions(unittest.TestCase):
             if state.exists():self.assertEqual(state.read_text().split()[2],'Z')
             self.assertIsNotNone(p.poll())
         finally:
+            # macOS: EPERM when only exited, not yet reaped processes are left
             try:os.killpg(p.pid,signal.SIGKILL)
-            except ProcessLookupError:pass
+            except (ProcessLookupError,PermissionError):pass
             p.wait(); p.stdout.close()
+
+    @unittest.skipIf(os.name=='nt','POSIX process group test')
+    def test_stopping_a_program_that_already_exited(self):
+        # macOS answers EPERM to killpg for a group of exited, not yet reaped
+        # processes; Stop and timeouts reach that state while the reader waits
+        p=subprocess.Popen([sys.executable,'-c','pass'],start_new_session=True)
+        time.sleep(.5)
+        m._kill_proc_tree(p)
+        self.assertIsNotNone(p.returncode)
 
     def test_pipeline_cancellation_between_steps(self):
         events=[]; original=m._run_streaming
