@@ -3877,8 +3877,18 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Request body must be a JSON object"}, 400)
             return
         
-        with _directory_reservation(self._write_paths(path, data)):
-            self._dispatch_POST(path, data)
+        # The answer leaves only after the project folders are released: a
+        # browser that sends its next write the moment it has the answer must
+        # not find them still reserved ("another program is already running").
+        # Every POST answer is complete (no streaming), so holding it is safe.
+        real_wfile, self.wfile = self.wfile, io.BytesIO()
+        try:
+            with _directory_reservation(self._write_paths(path, data)):
+                self._dispatch_POST(path, data)
+        finally:
+            held, self.wfile = self.wfile, real_wfile
+            if held.getvalue():
+                self.wfile.write(held.getvalue())
 
     def _write_paths(self, path, data):
         if self._project_route(path) is not None:

@@ -108,6 +108,11 @@ def _processing_job(kind):
             previous = getattr(_JOB_LOCAL, 'job', None)
             job = previous or ProcessingJob(project, kind)
             _JOB_LOCAL.job = job
+            # The terminal event is held back until the folders are released:
+            # the browser starts the next step the moment it arrives, and must
+            # not find them still reserved ("another program is already running").
+            held = []
+            original_writer = None
             if bound.arguments.get('write_fn'):
                 original_writer = bound.arguments['write_fn']
                 stream_status = ['completed']
@@ -123,7 +128,8 @@ def _processing_job(kind):
                             stream_status[0] = status
                         if event_name == terminal:
                             payload.setdefault('status', 'stopped' if job.cancelled.is_set() else stream_status[0])
-                            event = 'event: ' + terminal + '\ndata: ' + json.dumps(payload) + '\n\n'
+                            held.append('event: ' + terminal + '\ndata: ' + json.dumps(payload) + '\n\n')
+                            return
                     original_writer(event)
                 bound.arguments['write_fn'] = write_event
             try:
@@ -147,6 +153,11 @@ def _processing_job(kind):
                     with _proc_lock:
                         _JOBS.pop(job.id, None)
                 _JOB_LOCAL.job = previous
+                for event in held:
+                    try:
+                        original_writer(event)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass        # the browser has gone
         return run
     return decorate
 

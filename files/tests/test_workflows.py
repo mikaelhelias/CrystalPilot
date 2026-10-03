@@ -405,6 +405,36 @@ class Workflows(unittest.TestCase):
         text = (m._pdir(item["project"]) / "XDS.INP").read_text(encoding="utf-8")
         self.assertEqual(m.xdsinp_values(text).get("SPACE_GROUP_NUMBER"), "19")
 
+    def _project_busy_at_terminal(self, route, terminal, **params):
+        """Read a run's events as the browser does; was the project folder still
+        reserved when the terminal event arrived?  Releasing is made slow, so an
+        event sent before the release is always caught."""
+        original = m._release_dir
+        def slow_release(path):
+            time.sleep(.3); original(path)
+        key = m._directory_key(self.p)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=60)
+        busy = None
+        with patch.object(m, '_release_dir', side_effect=slow_release):
+            conn.request('GET', route + '?' + urllib.parse.urlencode({'project': self.name, **params}),
+                         headers={'X-CrystalPilot-Token': m.API_TOKEN})
+            response = conn.getresponse()
+            while True:
+                line = response.readline()
+                if not line:
+                    break
+                if line.strip() == ('event: ' + terminal).encode():
+                    busy = key in m._BUSY_DIRS
+                    break
+            response.read(); conn.close()
+        self.assertIsNotNone(busy, 'no ' + terminal + ' event')
+        return busy
+
+    def test_a_run_says_done_only_after_the_project_folder_is_free(self):
+        # the browser starts the next step the moment "done" arrives
+        self.assertFalse(self._project_busy_at_terminal('/api/stream', 'done', step='XYCORR'),
+                         '"done" came before the project folder was released')
+
     def test_open_project_is_processed_in_place_with_its_own_xdsinp(self):
         own = "JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nDATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.1\n" \
               "NAME_TEMPLATE_OF_DATA_FRAMES= /hand/made/x_????.cbf\nORGX= 1234 ORGY= 1300\n"

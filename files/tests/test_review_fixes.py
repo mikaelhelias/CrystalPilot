@@ -177,6 +177,20 @@ class ReviewRegressions(unittest.TestCase):
             except (ProcessLookupError,PermissionError):pass
             p.wait(); p.stdout.close()
 
+    def test_a_save_answers_only_after_the_project_folder_is_free(self):
+        # releasing is made slow: an answer sent before the release would
+        # arrive while the folder is still reserved, and a next write sent at
+        # once was refused with 409 (seen on GitHub's slower test machines)
+        original=m._release_dir
+        def slow_release(path):
+            time.sleep(.3); original(path)
+        key=m._directory_key(self.p)
+        with patch.object(m,'_release_dir',side_effect=slow_release):
+            self.assertEqual(request('POST',self.url+'/settings',{'viewer_template':'x'})[0],200)
+            busy=key in m._BUSY_DIRS
+        self.assertFalse(busy,'the answer came before the project folder was released')
+        self.assertEqual(request('POST',self.url+'/settings',{'viewer_template':'y'})[0],200)
+
     @unittest.skipIf(os.name=='nt','POSIX process group test')
     def test_stopping_a_program_that_already_exited(self):
         # macOS answers EPERM to killpg for a group of exited, not yet reaped
