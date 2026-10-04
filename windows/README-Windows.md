@@ -102,9 +102,14 @@ Windows-specific parts.
 The app's folder browser shows **C:, D:, ... buttons** when it runs in WSL.
 **Network drives** (Z: and friends) are not mounted by WSL itself; the
 launcher detects your mapped drives every time it starts and mounts the ones
-that are currently connected, so they appear as buttons too (`/mnt/z`). A drive
-that is disconnected in Explorer is skipped; reconnect it and restart
-CrystalPilot. To have a share mounted permanently instead, add a line like
+that are currently connected, so they appear as buttons too (`/mnt/z`). Every
+other drive Windows has - a network drive Windows lists as *Disconnected* (it
+does so after a while without use), one connected after the start, a USB disk
+plugged in later - gets a button with a dashed outline: click it to connect it.
+If it cannot be reached, open it once in Explorer and click again. Windows
+paths (`C:\CCP4-9\9.0`, `\\server\share\data`) can be pasted into the folder
+browser's path bar, the project's data folder and the Environment screen. To
+have a share mounted permanently instead, add a line like
 `Z: /mnt/z drvfs defaults,noatime 0 0` to `/etc/fstab` inside Ubuntu.
 Frames can be read directly from a Windows drive. Reading large Eiger `.h5`
 datasets across the `/mnt` bridge is noticeably slower than from the Linux

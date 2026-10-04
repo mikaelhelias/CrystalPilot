@@ -57,7 +57,8 @@ Run the new **CrystalPilot-Setup-\<version\>.exe**. The installer finds the inst
 ## Where your files are
 
 - **Projects**: the projects folder inside the Linux runtime. From Explorer: the **CrystalPilot Projects** desktop shortcut, the Quick Access entry, the drive letter `P:\Projects\`, or the **Open folder** buttons in the interface. The raw path is `\\wsl.localhost\<runtime>\...`.
-- **Your Windows drives** are visible inside the program as `/mnt/c`, `/mnt/d`, …; connected network drives are mounted at start (`/mnt/z`). Frames can be read from there directly, but large Eiger data sets are much faster when copied into the projects folder first.
+- **Your Windows drives** are visible inside the program as `/mnt/c`, `/mnt/d`, …; connected network drives are mounted at start (`/mnt/z`). In the folder browser every drive Windows has gets a button. A drive that is not open inside the program yet — a network drive Windows lists as *Disconnected* (it does that after a while without use), one connected after the start, a USB disk plugged in later — has a dashed outline: click it to connect it. Frames can be read from there directly, but large Eiger data sets are much faster when copied into the projects folder first.
+- **Windows paths** as Explorer shows them (`C:\CCP4-9\9.0`, `\\server\share\data`) can be pasted into the folder browser's path bar, the project's data folder and the fields of the Environment screen.
 
 ## Removing CrystalPilot
 
@@ -71,7 +72,7 @@ Run the new **CrystalPilot-Setup-\<version\>.exe**. The installer finds the inst
 | The wizard asks for a restart | restart; it resumes after login |
 | XDS or neggia not found on the Components page | click **Get it**, save the file to your Downloads folder; the line turns green by itself |
 | The loading screen never switches | look at the console window for the error; run the installer again to repair the runtime |
-| Network drive missing inside the program | it was disconnected when CrystalPilot started: reconnect it in Explorer and restart CrystalPilot |
+| Network drive missing inside the program | click its dashed button in the folder browser; if it cannot be reached, open it once in Explorer and click again |
 | No network at the computer | use `CrystalPilot-Setup-<version>-offline.exe`, which carries the Linux runtime image (about 370 MB) |
 
 Running the installer again is always safe: it updates the program and keeps projects and settings.

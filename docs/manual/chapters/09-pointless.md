@@ -31,7 +31,7 @@ CORRECT proposes a space group from the merging statistics of the candidate symm
 
 | Symptom | What to do |
 |---|---|
-| "CCP4 not found" | install CCP4 and source `ccp4.setup-sh` before starting CrystalPilot (Linux), or run the Windows wizard again after installing CCP4 for Windows; set the bin folder in the XDSCONV tab if it is in an unusual place |
+| "CCP4 not found" | install CCP4 and source `ccp4.setup-sh` before starting CrystalPilot (Linux). On Windows, CrystalPilot finds a CCP4 for Windows installed on the computer's disks by itself (`C:\CCP4-9\9.0`, Program Files, your Downloads …); otherwise give its folder on the Environment screen — a Windows path is fine |
 | Input file not found | run CORRECT first; the tab reads the output folder of the last run |
 | POINTLESS proposes a different cell setting | accept it; XDS is re-run with the reindexed cell when you apply |
 | Two space groups with similar probability | process both (sub-folder mode, chapter 7) and refine; the systematic-absence table shows which reflections decide |
