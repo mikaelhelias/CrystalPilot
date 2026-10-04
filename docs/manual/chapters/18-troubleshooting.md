@@ -64,7 +64,7 @@ Input files you edit (`XDS.INP`, `XSCALE.INP`, `XDSCONV.INP`) are in the project
 
 ## Security in one paragraph
 
-The server answers only the browser tab that opened it: the page receives a per-launch token as a cookie, and every API call must carry it, so other web sites open in the same browser cannot drive CrystalPilot. By default it listens on this computer only and answers only requests addressed to `localhost`, `127.x.x.x` or `[::1]`, so a web site that points a name of its own at your computer is refused (add names with `XDS_GUI_ALLOWED_HOSTS`). If you start it with `--host 0.0.0.0` for colleagues, anyone who can reach the port can open it: do that on a trusted network and add `--restrict-browse`, which keeps every folder and file the interface lists, reads, runs in or writes inside the projects folder. The only things served without the token are the `/health` check, the manual under `/manual/` and the page's own assets.
+The server answers only the browser tab that opened it: the page receives a per-launch token as a cookie, and every API call must carry it, so other web sites open in the same browser cannot drive CrystalPilot. By default it listens on this computer only and answers only requests addressed to `localhost`, `127.x.x.x` or `[::1]`, so a web site that points a name of its own at your computer is refused (add names with `XDS_GUI_ALLOWED_HOSTS`). If you start it with `--host 0.0.0.0` for colleagues, anyone who can reach the port can open it: do that on a trusted network and add `--restrict-browse`, which keeps every folder and file the interface lists, reads, runs in or writes inside the projects folder. With it, the XDS, CCP4 and HDF5-reader (neggia) locations can only be set where the server is started (command line, environment or settings file), not from the page. The only things served without the token are the `/health` check, the manual under `/manual/` and the page's own assets.
 
 ## The log file
 
@@ -72,7 +72,7 @@ Everything CrystalPilot prints is also written to `<projects folder>/logs/crysta
 
 ## Reporting a problem to the author
 
-**⚠ Report a problem** in the header opens a short form. Write what happened and what you expected, then **Save report (.zip)**. The report goes to `<projects folder>/reports/` and holds your text, the program version, what the Environment screen found, the end of the program's log and any errors the page recorded. Tick the box to add the open project's `XDS.INP` and logs — it is off by default because they are your data, and the frames are never included. User names are removed from every path and the API token from every line.
+**⚠ Report a problem** in the header opens a short form. Write what happened and what you expected, then **Save report (.zip)**. The report goes to `<projects folder>/reports/` and holds your text, the program version, what the Environment screen found, the end of the program's log, any errors the page recorded, and the errors the program went on after without showing them (where, how often, the last message). Tick the box to add the open project's `XDS.INP` and logs — it is off by default because they are your data, and the frames are never included. User names are removed from every path and the API token from every line.
 
 CrystalPilot sends nothing by itself. **Open e-mail** starts your own mail program with the address, a subject and a short message already filled in; attach the saved zip and press send. "What the e-mail will say" shows the message before you open it.
 

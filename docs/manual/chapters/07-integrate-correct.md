@@ -22,6 +22,7 @@ The status line shows the folder where results will be read from; on Windows als
 ![Integrate & Correct, and CORRECT Only for quick re-runs.](images/07-02-integrate-button.png)
 
 3. Every program run has a time limit (4 hours by default; `step_timeout` in the settings file). When it is exceeded the run is stopped and the log says so.
+4. A run goes on when you close the page, reload it or lose the connection (a laptop that sleeps). Open the project again — in the same tab or another one — and the tab of the run shows it again: its log from the start, then the rest as it comes, with the **Stop** button. A connection that drops for a moment is picked up by itself. When a run ends while the page is in the background, a desktop notification says so; the browser asks once whether CrystalPilot may show them. This holds for every program the tabs start (XDS, XSCALE, XDSCONV, POINTLESS, AIMLESS, XDSCC12, Auto-Index); AutoPilot runs have their own list (chapter 14). A run is lost only when CrystalPilot itself stops.
 
 ## Read the CORRECT result
 

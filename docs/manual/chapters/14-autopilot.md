@@ -54,6 +54,8 @@ Each data set is marked:
 
 Every change is a comment starting with `! CrystalPilot:` in the project's `XDS.INP`, and a line in the log.
 
+**The crystal orientation of a beamline file.** Some beamline files carry `UNIT_CELL_A-AXIS`, `UNIT_CELL_B-AXIS` and `UNIT_CELL_C-AXIS`, the orientation their own processing found. They are kept, but they are wrong at times, and a wrong one can still give a run that finishes. So a run that kept them is checked: when its overall completeness is under 50 %, or a cell edge is more than 10 % off the file's `UNIT_CELL_CONSTANTS`, the data set is processed once more without the three lines, and the better run is kept — the one without them only when its completeness is at least 2 points higher. The first run is then in the project's `with_cell_axes` folder; otherwise it is put back as it was. The log says what was seen and which run was kept, and the table's attempt column shows it. When every run with the axes fails, one more run is made without them, as before.
+
 ## 3. Cut-offs
 
 | Choice | What it decides |
