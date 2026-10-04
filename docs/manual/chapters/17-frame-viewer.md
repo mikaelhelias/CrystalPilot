@@ -16,6 +16,12 @@
 - **Contrast**: the *lo%* and *hi%* percentile sliders; lower *hi%* to see weak spots, raise it to tame hot pixels. Colour maps: Grey (inverted, the default), Grey, Heat, Blues.
 - **Zoom** 0.25×–8× with the slider; **🔍 Mag** opens a draggable, resizable **magnifier** inset at 0.5×, 2×, 4× or 8× (✕ closes it).
 
+## The viewer in its own window
+
+**⧉ Own window** opens the frame viewer in a separate browser window — no project list, header or tabs, so the image gets the whole window; put it on a second screen or maximise it. It opens on the same project, frames, frame number, contrast and colour map, and works on its own from then on (the main window stays usable). The controls sit along the top as in the tab, and the image fills the rest, starting at **⤢ Fit** (the whole detector in the window). **⋯ More** shows the less-used settings: the geometry fields (px, dist, bcx, bcy) and their XDS.INP buttons, the XDS diagnostic images, the header and the file list.
+
+Keys in the own window: **←** / **→** previous / next frame, **+** / **−** zoom, **F** fit. If nothing opens, the browser blocked the window: allow pop-ups for the CrystalPilot page.
+
 ## Overlays
 
 ![Resolution rings and ice rings on the frame; the Rings, Ice, Spots and Save buttons.](images/17-02-frame-rings.png)

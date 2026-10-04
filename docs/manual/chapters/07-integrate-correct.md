@@ -83,7 +83,11 @@ They are meant to be read by someone who was not sitting next to you:
 - percentages use a fixed 0–100 axis, so two runs can be laid side by side and compared;
 - the overall row, the space group, the cell, and a line naming the program, the log and the date travel with the figure.
 
-**Any chart on screen**: click it to open it in a window. Drag the window by its title bar to move it and by the grip in its bottom-right corner to resize it (the chart is redrawn to fill it); it keeps its place and size for the next chart, and a double-click on the title bar puts it back in the middle. **⤓ PNG** in the corner of the window saves the chart. That saves the chart as it is — dark, every series together — drawn at a fixed size so it does not depend on your screen.
+**Any chart on screen**: click it to open it in a window. Drag the window by its title bar to move it and by the grip in its bottom-right corner to resize it (the chart is redrawn to fill it); it keeps its place and size for the next chart, and a double-click on the title bar puts it back in the middle. A chart that can be enlarged shows **⤢ click to enlarge** when the mouse is over it (on the ΔCC½ chart, where a drag selects frames, use **↗ expand** above it).
+
+**Zoom in the window**: the **mouse wheel** zooms in and out around the pointer, and the vertical axis follows the points in view. The **🔍 zoom tool** (on by default) zooms to a box you drag over the chart; a sideways drag zooms only the horizontal axis. **✋** moves the zoomed chart by dragging, and **⟲** or a double-click on the chart shows it whole again. Axes and grid are redrawn at every step. On the page itself the wheel keeps scrolling.
+
+**⤓ PNG** in the corner of the window saves the chart as it is shown, zoom included — dark, every series together — drawn at a fixed size so it does not depend on your screen.
 
 The figures need matplotlib, the same package the frame viewer uses; the Environment screen offers to install it if it is missing.
 
