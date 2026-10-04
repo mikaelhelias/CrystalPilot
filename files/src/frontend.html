@@ -19553,7 +19553,7 @@
             setTimeout(function() {
                 if (_chartModalFit()) return;
                 var containerW = Math.min(1060, window.innerWidth * 0.88);
-                drawFn(canvas, containerW, 420);
+                window._chartModalDraw(canvas, containerW, 420);   // the wrapper: zoom tools shown at once
             }, 60);
         }
 
