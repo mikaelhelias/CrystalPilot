@@ -562,11 +562,19 @@ _XDS_INTEGER_KEYS = {'NX', 'NY', 'OVERLOAD', 'MINIMUM_VALID_PIXEL_VALUE', 'DATA_
                      'MAXIMUM_NUMBER_OF_PROCESSORS', 'MAXIMUM_NUMBER_OF_JOBS'}
 
 
+def _same_path(a, b):
+    a, b = str(a or '').strip(), str(b or '').strip()
+    if not a or not b:
+        return a == b
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
 def _clean_inp_text(text, kind):
     """What XDS, XSCALE and XDSCONV cannot read, removed without changing a value:
     the byte-order mark Windows Notepad puts in front of a UTF-8 file (the
     programs stop with ILLEGAL KEYWORD), and in XDS.INP a whole number written
-    as a decimal in an integer keyword (NX= 4150.0 -> NX= 4150)."""
+    as a decimal in an integer keyword (NX= 4150.0 -> NX= 4150).  Under
+    --restrict-browse, LIB= becomes the HDF5 reader of the installation."""
     text = str(text or '').replace('﻿', '')
     if kind != 'xds':
         return text
@@ -582,6 +590,23 @@ def _clean_inp_text(text, kind):
             continue
         pairs, comment = XDSINPEditor._split_pairs(line)
         changed = False
+        if RESTRICT_BROWSE and any(p[0].upper() == 'LIB' for p in pairs):
+            # A shared installation: XDS loads the library LIB= names, so it is
+            # the HDF5 reader set where the server starts, whatever the file says.
+            kept = []
+            for key, value in pairs:
+                if key.upper() != 'LIB' or _same_path(value, NEGGIA_LIB):
+                    kept.append([key, value])
+                elif NEGGIA_LIB:
+                    kept.append([key, NEGGIA_LIB])
+                    comment = (comment + '  ' if comment else '') + '! CrystalPilot: the HDF5 reader of this installation'
+                    changed = True
+                else:
+                    out.append('!LIB= %s  ! CrystalPilot: no HDF5 reader is set up for this installation' % value.strip())
+                    changed = True
+            pairs = kept
+            if not pairs:
+                continue
         if any(p[0].upper() == 'STRONG_PIXEL' for p in pairs):
             kept = []
             for key, value in pairs:

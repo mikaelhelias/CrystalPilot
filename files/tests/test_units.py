@@ -1673,6 +1673,35 @@ def define_checks(m, scratch):
         assert "MAXIMUM_NUMBER" not in (root / "XDSCONV.INP").read_text(encoding="utf-8")   # no CPU keywords for XDSCONV
         assert "NX= 4150" in (root / "XDS.INP").read_text(encoding="utf-8").replace("4150.0", "x")
 
+    @check("--restrict-browse: LIB= in an XDS.INP is the HDF5 reader of the installation, other files untouched")
+    def _():
+        reader = scratch / "lib_lock" / "dectris-neggia.so"
+        reader.parent.mkdir(parents=True, exist_ok=True)
+        reader.write_bytes(b"x")
+        other = "/tmp/some/other-library.so"
+        text = "JOB= XYCORR\nNAME_TEMPLATE_OF_DATA_FRAMES= /d/x_??????.h5\nLIB= %s\nNX= 4150\n"
+        # an ordinary installation: whatever the file says
+        with patch.object(m, "RESTRICT_BROWSE", False), patch.object(m, "NEGGIA_LIB", str(reader)):
+            assert m._clean_inp_text(text % other, "xds") == text % other
+        with patch.object(m, "RESTRICT_BROWSE", True), patch.object(m, "NEGGIA_LIB", str(reader)):
+            same = text % reader
+            assert m._clean_inp_text(same, "xds") == same                      # the installation's reader: unchanged
+            locked = m._clean_inp_text(text % other, "xds")
+            assert m._parse_xdsinp_params(locked)["LIB"] == str(reader), locked
+            assert other not in locked.replace("!", "") or "! CrystalPilot" in locked
+            assert m._clean_inp_text(locked, "xds") == locked                 # a second pass changes nothing
+            assert m._parse_xdsinp_params(m._clean_inp_text("LIB=%s NX= 4150\n" % other, "xds")) == {"LIB": str(reader), "NX": "4150"}
+            # the run path: a file saved by hand is locked just before XDS starts
+            root = scratch / "lib_lock" / "run"
+            root.mkdir(exist_ok=True)
+            (root / "XDS.INP").write_text(text % other, encoding="utf-8")
+            m._write_cpu_keywords("xds_par", root)
+            assert m._parse_xdsinp_params((root / "XDS.INP").read_text(encoding="utf-8"))["LIB"] == str(reader)
+            assert m._clean_inp_text(text % other, "xscale") == text % other  # XSCALE / XDSCONV load no library
+        with patch.object(m, "RESTRICT_BROWSE", True), patch.object(m, "NEGGIA_LIB", ""):
+            none = m._clean_inp_text(text % other, "xds")
+            assert "LIB" not in m._parse_xdsinp_params(none) and ("!LIB= " + other) in none, none
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 def main():
