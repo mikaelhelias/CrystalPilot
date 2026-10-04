@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <script>
+    /* ?viewer=fv: the frame viewer alone, in its own window (fvOpenOwnWindow).
+       Set before anything is drawn, so the rest of the page never shows. */
+    if (/[?&]viewer=fv(&|$)/.test(location.search)) document.documentElement.classList.add('cp-viewer-only');
+    </script>
+    <script>
     /* Errors in the page, kept for "Report a problem": a report written after
        something broke has to carry what broke, including the failures the
        interface catches and shows nowhere.  Installed before any other script,
@@ -1564,6 +1569,21 @@
         }
 
     </style>
+    <style>
+        /* ── The frame viewer in its own window (?viewer=fv) ───────────── */
+        .fv-own-only { display: none !important; }
+        html.cp-viewer-only .fv-own-only { display: inline-flex !important; }
+        html.cp-viewer-only .fv-tab-only { display: none !important; }
+        html.cp-viewer-only:not(.fv-more) .fv-more-item { display: none !important; }
+        html.cp-viewer-only #splash, html.cp-viewer-only #envcheck, html.cp-viewer-only header.hero,
+        html.cp-viewer-only aside.sidebar, html.cp-viewer-only #empty-state, html.cp-viewer-only #main-tab-bar,
+        html.cp-viewer-only #tut-intro-card, html.cp-viewer-only footer.footer,
+        html.cp-viewer-only #project-details { display: none !important; }
+        html.cp-viewer-only .app-body { display: block; min-height: 0; }
+        html.cp-viewer-only .main { padding: 8px 12px; gap: 0; overflow: visible; }
+        html.cp-viewer-only body { overflow: hidden; }
+        html.cp-viewer-only #fv-img-wrap { height: calc(100vh - var(--fv-top, 240px) - 10px) !important; }
+    </style>
 </head>
 <body>
 
@@ -1630,7 +1650,10 @@
             var st = document.getElementById('splash-status'); if (st) st.textContent = 'Connected';
             var dot = document.getElementById('splash-dot'); if (dot) dot.className = 'splash-dot ok';
             var wait = Math.max(0, 1400 - (Date.now() - _splashT0));
-            setTimeout(function() { splashHide(); if (typeof envCheck === 'function') envCheck(false); }, wait);
+            setTimeout(function() {
+                splashHide();
+                if (typeof envCheck === 'function' && !document.documentElement.classList.contains('cp-viewer-only')) envCheck(false);
+            }, wait);
         }
         function _splashFailed() {
             var st = document.getElementById('splash-status'); if (st) st.textContent = 'Server not reachable \u2014 retrying\u2026 (click to continue anyway)';
@@ -2444,7 +2467,7 @@
             </div>
 
             <!-- ── outer main tabs (always visible) ─────────────── -->
-            <div style="display:flex; gap:0; border-bottom:2px solid var(--border2); margin-bottom:16px; align-items:end;">
+            <div id="main-tab-bar" style="display:flex; gap:0; border-bottom:2px solid var(--border2); margin-bottom:16px; align-items:end;">
                 <button id="main-tab-btn-dp" class="main-tab-btn" onclick="switchMainTab('dp')"
                         style="border-bottom-color:var(--accent); color:var(--accent);"><span class="pipe-num">1</span> Data Processing</button>
                 <span style="color:var(--border2); font-size:0.7rem; padding:0 2px 10px; user-select:none;">&#9654;</span>
@@ -2960,6 +2983,9 @@
                                                    oninput="fvSetZoom([0.25,0.5,1,2,4,8][parseInt(this.value)])"
                                                    style="width:90px; accent-color:var(--accent);">
                                             <span id="fv-zoom-label" style="font-family:var(--mono); font-size:0.78rem; color:var(--accent); min-width:2.2em;">0.5×</span>
+                                            <button class="btn-ghost btn-sm fv-own-only" id="fv-fit-btn" onclick="fvFit()"
+                                                    style="font-size:0.75rem; padding:3px 9px; margin-left:3px;"
+                                                    title="Fit the whole detector in the window (key F; + and − zoom, ← and → change the frame)">&#10530; Fit</button>
                                             <!-- magnifier toggle -->
                                             <button class="btn-ghost btn-sm" id="fv-mag-btn" onclick="fvToggleMag()"
                                                     style="font-size:0.7rem; padding:3px 7px; margin-left:4px;" title="Magnifier inset">🔍 Mag</button>
@@ -3004,8 +3030,15 @@
                                                     <div id="fv-save-status" style="font-family:var(--mono); font-size:0.77rem; color:var(--txt3); margin-top:4px; min-height:1em;"></div>
                                                 </div>
                                             </span>
+                                            <button class="btn-ghost btn-sm fv-tab-only" id="fv-own-window-btn" onclick="fvOpenOwnWindow()"
+                                                    style="font-size:0.75rem; padding:3px 9px; margin-left:3px;"
+                                                    title="Open the frame viewer in its own browser window, without the project list and menus: a bigger image, or one for a second screen">&#10697; Own window</button>
+                                            <button class="btn-ghost btn-sm fv-own-only" id="fv-more-btn" onclick="fvToggleMore()"
+                                                    style="font-size:0.75rem; padding:3px 9px; margin-left:3px;"
+                                                    title="Show or hide the geometry overrides, the XDS diagnostics, the header and the file list">&#8943; More</button>
                                             <span id="fv-loading" style="font-family:var(--mono); font-size:0.75rem; color:var(--warning); display:none;">⟳ Loading...</span>
                                             <!-- geometry overrides (editable, pre-filled from header/XDS.INP) -->
+                                            <span class="fv-more-item" style="display:contents;">
                                             <span style="font-family:var(--mono); font-size:0.79rem; color:var(--txt3); margin-left:8px;">px:</span>
                                             <input type="text" id="fv-override-qx" placeholder="mm/px" title="Pixel size (mm/px) — overrides header"
                                                    style="width:52px; background:rgba(255,255,255,0.05); border:1px solid var(--border2); color:var(--accent); border-radius:4px; padding:2px 5px; font-family:var(--mono); font-size:0.78rem; text-align:center;"
@@ -3032,13 +3065,14 @@
                                                     title="Read geometry (qx, dist, beam center) from XDS.INP — uses the file found via 📂, or looks for XDS.INP next to the loaded image"
                                                     style="font-size:0.7rem; padding:3px 7px; white-space:nowrap;">&#9889; Read XDS.INP Geometry</button>
                                             <span id="fv-xdsinp-path" style="display:none;"></span>
+                                            </span>
                                             <span id="fv-res-overlay" style="display:none; font-family:var(--mono); font-size:1.0rem; font-weight:600; color:#f6c90e; margin-left:auto; letter-spacing:0.03em;">—</span>
                                             <span id="fv-spot-count" style="display:none; font-family:var(--mono); font-size:0.78rem; color:#68d391; margin-left:8px;"></span>
                                         </div>
                                         <!-- status line -->
                                         <div id="fv-status" style="font-family:var(--mono); font-size:0.75rem; color:var(--danger); min-height:1.2em; margin-bottom:4px;"></div>
                                         <!-- XDS diagnostic image quick-load buttons -->
-                                        <div id="fv-diag-row" data-tier="advanced" style="display:flex; align-items:center; gap:4px; margin-bottom:5px; flex-wrap:wrap;">
+                                        <div id="fv-diag-row" class="fv-more-item" data-tier="advanced" style="display:flex; align-items:center; gap:4px; margin-bottom:5px; flex-wrap:wrap;">
                                             <span style="font-family:var(--mono); font-size:0.77rem; color:var(--txt3); opacity:0.7;">XDS diagnostics:</span>
                                             <button class="btn-ghost btn-sm" id="fv-diag-spot" onclick="fvLoadDiagCBF('SHOW_SPOT.cbf')"
                                                     style="font-size:0.77rem; padding:2px 7px; border:1px solid rgba(255,255,255,0.15); color:var(--txt3); opacity:0.75;"
@@ -3096,12 +3130,12 @@
                                             </div>
                                         </div>
                                         <!-- header info -->
-                                        <div id="fv-header-info" style="display:none; margin-top:10px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:10px;">
+                                        <div id="fv-header-info" class="fv-more-item" style="display:none; margin-top:10px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:10px;">
                                             <div style="font-family:var(--head); font-size:0.78rem; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--accent2); margin-bottom:6px;">Frame Header</div>
                                             <div id="fv-header-content" style="font-family:var(--mono); font-size:0.75rem; color:var(--txt2); display:grid; grid-template-columns:1fr 1fr; gap:3px 16px;"></div>
                                         </div>
                                         <!-- file list -->
-                                        <div id="fv-file-list-wrap" style="display:none; margin-top:10px;">
+                                        <div id="fv-file-list-wrap" class="fv-more-item" style="display:none; margin-top:10px;">
                                             <div style="font-family:var(--head); font-size:0.78rem; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;">
                                                 Found <span id="fv-file-count">0</span> frames
                                             </div>
@@ -3545,7 +3579,10 @@
 
                                 <!-- Chart -->
                                 <div class="param-group" style="margin-bottom:12px;">
-                                    <h4>ΔCC½ per Frame <span style="font-weight:400; font-size:0.78rem; color:var(--txt3);"> — click &amp; drag on the chart to select frames for exclusion</span></h4>
+                                    <h4>ΔCC½ per Frame <span style="font-weight:400; font-size:0.78rem; color:var(--txt3);"> — click &amp; drag on the chart to select frames for exclusion</span>
+                                        <span style="font-weight:400; font-size:0.79rem; color:var(--txt3); cursor:pointer; text-decoration:underline; text-underline-offset:2px; margin-left:8px;"
+                                              onclick="if (_dccResult) _openChartModal('\u0394CC\u00bd per Frame', function(c, w, h) { dccDrawChart(_dccResult, c, w, h); })"
+                                              title="Open the chart enlarged in a window">&#8599; expand</span></h4>
                                     <div id="dcc-chart-wrap" style="position:relative; width:100%; overflow-x:auto; background:rgba(0,0,0,0.2); border-radius:6px; padding:6px;">
                                         <canvas id="dcc-chart" style="width:100%; height:280px; cursor:crosshair;"></canvas>
                                     </div>
@@ -5148,6 +5185,16 @@
                 <span id="chart-modal-title" style="font-family:var(--head); font-size:0.8rem; font-weight:700;
                               letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);">Chart</span>
                 <span style="display:flex; gap:6px; align-items:center;">
+                    <span id="chart-modal-zoom" style="display:none; gap:4px; align-items:center;">
+                        <span style="font-size:0.72rem; color:var(--txt3); margin-right:2px;"
+                              title="Mouse wheel over the chart: zoom in or out around the pointer (the vertical axis follows the points in view)">wheel = zoom</span>
+                        <button id="chart-zoom-box" class="btn-ghost btn-sm" onclick="_chartZoomSetMode('box')"
+                                title="Zoom tool: drag a box over the part of the chart to see (a sideways drag zooms only the horizontal axis)">&#128269;</button>
+                        <button id="chart-zoom-pan" class="btn-ghost btn-sm" onclick="_chartZoomSetMode('pan')"
+                                title="Move: drag the zoomed chart">&#9995;</button>
+                        <button id="chart-zoom-reset" class="btn-ghost btn-sm" onclick="_chartZoomReset()"
+                                title="The whole chart again (or double-click the chart)">&#10226;</button>
+                    </span>
                     <button id="chart-modal-png" class="btn-ghost btn-sm" onclick="chartModalPng()"
                             title="Save this chart as a PNG image (the size shown here)">⤓ PNG</button>
                     <button class="btn-ghost btn-sm" onclick="document.getElementById('chart-modal').style.display='none'">✕</button>
@@ -10653,14 +10700,9 @@
                     setTimeout(function() {
                         var c = document.getElementById('colspot-chart');
                         if (!c) return;
-                        var d = window._colspotChartData;
-                        _drawChart(c, {
-                            title: 'Strong Pixels per Image (NSTRONG)',
-                            xValues: d.map(function(r){return r[0];}),
-                            xLabel: 'Image number', yLabel: 'Strong pixels',
-                            yMin: 0,
-                            series: [{data: d.map(function(r){return r[1];}), color: '#63b3ed', label: 'NSTRONG', width: 1.5}]
-                        });
+                        _colspotDraw(c);
+                        c.style.cursor = 'pointer';
+                        c.onclick = function() { _openChartModal('COLSPOT \u2014 Strong Pixels per Image (NSTRONG)', _colspotDraw); };
                     }, 50);
                 }
 
@@ -10733,14 +10775,9 @@
                     setTimeout(function() {
                         var c = document.getElementById('init-chart-bg');
                         if (!c) return;
-                        var d = window._initChartData;
-                        _drawChart(c, {
-                            title: 'Mean Background per Image',
-                            xValues: d.map(function(r){return r[0];}),
-                            xLabel: 'Image number', yLabel: 'Mean pixel value',
-                            yMin: 0,
-                            series: [{data: d.map(function(r){return r[1];}), color: '#4fd1c5', label: 'Background', width: 1.5}]
-                        });
+                        _initBgDraw(c);
+                        c.style.cursor = 'pointer';
+                        c.onclick = function() { _openChartModal('INIT \u2014 Mean Background per Image', _initBgDraw); };
                     }, 50);
                 }
 
@@ -12955,6 +12992,86 @@
             if (lbl) lbl.textContent = (z < 1 ? (z === 0.25 ? '0.25' : z.toFixed(1)) : z) + '×';
             // Sync overlay canvas size and position to the image
             _fvSyncOverlay();
+        }
+
+        // ── The frame viewer in its own window (?viewer=fv) ──────────────────
+        // "Own window" opens a separate browser window holding only the frame
+        // viewer - no project sidebar, header or tabs - on the same project,
+        // frames, frame number, contrast and colour map; after that it works on
+        // its own.  The image fills the window (Fit); the less-used settings wait
+        // behind "More".  Keys: left / right = frame, + / - = zoom, F = fit.
+        function fvOpenOwnWindow() {
+            var q = new URLSearchParams({viewer: 'fv'});
+            if (currentProject) q.set('project', currentProject);
+            var path = (document.getElementById('fv-file-path').value || '').trim();
+            if (path) q.set('path', path);
+            q.set('frame', String(_fvCurIdx || 0));
+            q.set('vmin', document.getElementById('fv-vmin').value);
+            q.set('vmax', document.getElementById('fv-vmax').value);
+            q.set('cmap', document.getElementById('fv-cmap').value);
+            var w = Math.min(1500, screen.availWidth || 1500), h = Math.min(1050, screen.availHeight || 1050);
+            var win = window.open(location.pathname + '?' + q.toString(), 'cp-frame-viewer-' + Date.now(),
+                                  'popup=yes,width=' + w + ',height=' + h);
+            if (!win) showToast('The browser blocked the new window: allow pop-ups for this page and click again', 'error');
+        }
+        function _fvOwnLayout() {      // the image takes the height left below the controls
+            var wrap = document.getElementById('fv-img-wrap');
+            if (!wrap) return;
+            document.documentElement.style.setProperty('--fv-top', Math.max(0, Math.round(wrap.getBoundingClientRect().top)) + 'px');
+        }
+        function fvToggleMore() {
+            document.documentElement.classList.toggle('fv-more');
+            _fvOwnLayout();
+        }
+        function fvFit() {
+            var img = document.getElementById('fv-image'), wrap = document.getElementById('fv-img-wrap');
+            if (!img || !img.naturalWidth || !wrap) return;
+            var z = Math.min((wrap.clientWidth - 4) / img.naturalWidth, (wrap.clientHeight - 4) / img.naturalHeight);
+            fvSetZoom(Math.max(0.05, z));
+        }
+        function _fvZoomStep(dir) {
+            var next = null;
+            _fvZoomLevels.forEach(function(z) {
+                if (dir > 0 && z > _fvZoom + 1e-9 && next === null) next = z;
+                if (dir < 0 && z < _fvZoom - 1e-9) next = z;
+            });
+            if (next !== null) fvSetZoom(next);
+        }
+        async function _fvOwnWindowStart() {
+            var q = new URLSearchParams(location.search);
+            document.title = 'Frame viewer' + (q.get('project') ? ' \u2014 ' + q.get('project') : '') + ' \u00b7 CrystalPilot';
+            try { if (q.get('project')) await loadProject(q.get('project')); } catch (e) {}
+            switchMainTab('fv');
+            ['vmin', 'vmax', 'cmap'].forEach(function(k) {
+                var el = document.getElementById('fv-' + k);
+                if (el && q.get(k) !== null) el.value = q.get(k);
+            });
+            if (q.get('path')) {
+                document.getElementById('fv-file-path').value = q.get('path');
+                var img = document.getElementById('fv-image');
+                var fitOnce = function() {
+                    img.removeEventListener('load', fitOnce);
+                    setTimeout(function() { _fvOwnLayout(); fvFit(); }, 50);
+                };
+                img.addEventListener('load', fitOnce);
+                await fvListFrames();
+                var f = parseInt(q.get('frame'), 10) || 0;
+                if (f > 0) fvGoToFrame(f);
+            }
+            _fvOwnLayout();
+        }
+        if (document.documentElement.classList.contains('cp-viewer-only')) {
+            window.addEventListener('load', function() { setTimeout(_fvOwnWindowStart, 300); });
+            window.addEventListener('resize', _fvOwnLayout);
+            document.addEventListener('keydown', function(e) {
+                var tag = e.target && e.target.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.ctrlKey || e.metaKey || e.altKey) return;
+                if (e.key === 'ArrowLeft') { e.preventDefault(); fvStep(-1); }
+                else if (e.key === 'ArrowRight') { e.preventDefault(); fvStep(1); }
+                else if (e.key === '+' || e.key === '=') { e.preventDefault(); _fvZoomStep(1); }
+                else if (e.key === '-' || e.key === '_') { e.preventDefault(); _fvZoomStep(-1); }
+                else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fvFit(); }
+            });
         }
 
         // ── Overlay canvas (resolution rings + spot overlay) ─────────────────
@@ -15736,18 +15853,22 @@
             return { ranges: kept, diagnostics: diagnostics };
         }
 
-        function dccDrawChart(data) {
-            var canvas = document.getElementById('dcc-chart');
+        /* target / tw / th: draw into another canvas at that size (the enlarged
+           chart window); without them, the chart on the page with its legend
+           and the drag-to-select frames. */
+        function dccDrawChart(data, target, tw, th) {
+            var canvas = target || document.getElementById('dcc-chart');
             if (!canvas) return;
             var wrap = document.getElementById('dcc-chart-wrap');
-            var W = wrap.clientWidth - 12;
-            var H = 280;
-            canvas.width = W * (window.devicePixelRatio || 1);
-            canvas.height = H * (window.devicePixelRatio || 1);
+            var W = tw || (wrap.clientWidth - 12);
+            var H = th || 280;
+            var dpr = (target && _chartExportDpr) || window.devicePixelRatio || 1;
+            canvas.width = W * dpr;
+            canvas.height = H * dpr;
             canvas.style.width = W + 'px';
             canvas.style.height = H + 'px';
             var ctx = canvas.getContext('2d');
-            ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+            ctx.scale(dpr, dpr);
 
             var frames = data.frames;
             if (!frames.length) return;
@@ -15901,6 +16022,7 @@
             ctx.textAlign = 'center';
             ctx.fillText('ΔCC½', 0, 0);
             ctx.restore();
+            if (target) return;        // the enlarged copy: no legend, no frame selection
 
             // Legend
             var legHtml = '<span style="color:#e2e8f0;">━</span> Overall ΔCC½';
@@ -19039,8 +19161,40 @@
         /* >0 while a chart is being drawn for a FILE: pixels per unit, so the
            image does not inherit this screen's pixel ratio (see chartModalPng). */
         var _chartExportDpr = 0;
+        /* COLSPOT and INIT per-image charts: on the page (no size given) and in
+           the enlarged window (its size). */
+        function _colspotDraw(canvas, w, h) {
+            var d = window._colspotChartData || [];
+            _drawChart(canvas, {
+                title: 'Strong Pixels per Image (NSTRONG)',
+                xValues: d.map(function(r){return r[0];}),
+                xLabel: 'Image number', yLabel: 'Strong pixels',
+                yMin: 0, width: w, height: h,
+                series: [{data: d.map(function(r){return r[1];}), color: '#63b3ed', label: 'NSTRONG', width: 1.5}]
+            });
+        }
+        function _initBgDraw(canvas, w, h) {
+            var d = window._initChartData || [];
+            _drawChart(canvas, {
+                title: 'Mean Background per Image',
+                xValues: d.map(function(r){return r[0];}),
+                xLabel: 'Image number', yLabel: 'Mean pixel value',
+                yMin: 0, width: w, height: h,
+                series: [{data: d.map(function(r){return r[1];}), color: '#4fd1c5', label: 'Background', width: 1.5}]
+            });
+        }
+        /* The part of a chart to show, set only while the enlarged chart window
+           draws (zoom): {x0, x1} in point index units, optionally yL / yR =
+           {min, max} after a box zoom; without yL / yR the vertical axes fit the
+           points in view.  null = the whole chart, exactly as on the page. */
+        var _chartView = null;
         function _drawChart(canvas, opts) {
             var dpr = _chartExportDpr || window.devicePixelRatio || 1;
+            var view = _chartView;
+            var nX = opts.xValues.length;
+            var x0 = 0, x1 = Math.max(1, nX - 1);
+            if (view) { x0 = view.x0; x1 = view.x1; }
+            function inView(i) { return !view || (i >= Math.floor(x0) && i <= Math.ceil(x1)); }
             var H = opts.height || 260;
             var W;
             if (opts.width) {
@@ -19073,7 +19227,7 @@
             var allLeft = [], allRight = [];
             opts.series.forEach(function(s) {
                 var target = s.yAxis === 'right' ? allRight : allLeft;
-                s.data.forEach(function(v) { if (v !== null && v !== undefined && isFinite(v)) target.push(v); });
+                s.data.forEach(function(v, i) { if (v !== null && v !== undefined && isFinite(v) && inView(i)) target.push(v); });
             });
             function niceRange(arr, forceMin, forceMax) {
                 if (!arr.length) return {min:0, max:1};
@@ -19089,12 +19243,19 @@
                 if (forceMax !== undefined && hi > forceMax) hi = forceMax;
                 return {min: lo, max: hi};
             }
-            var yRangeL = niceRange(allLeft, opts.yMin);
-            var yRangeR = allRight.length ? niceRange(allRight, opts.yMinR, opts.yMaxR) : yRangeL;
-            if (opts.yMax !== undefined) yRangeL.max = opts.yMax;
+            var yRangeL, yRangeR;
+            if (view) {
+                // zoomed: the vertical axes follow the points in view, or the box drawn
+                yRangeL = view.yL ? {min: view.yL.min, max: view.yL.max} : niceRange(allLeft);
+                yRangeR = allRight.length ? (view.yR ? {min: view.yR.min, max: view.yR.max} : niceRange(allRight)) : yRangeL;
+            } else {
+                yRangeL = niceRange(allLeft, opts.yMin);
+                yRangeR = allRight.length ? niceRange(allRight, opts.yMinR, opts.yMaxR) : yRangeL;
+                if (opts.yMax !== undefined) yRangeL.max = opts.yMax;
+            }
 
-            // Axis helpers
-            function xToPx(i) { return padL + (i / Math.max(1, opts.xValues.length - 1)) * plotW; }
+            // Axis helpers (x0 = 0, x1 = n - 1 when not zoomed: the page's mapping)
+            function xToPx(i) { return padL + ((i - x0) / Math.max(1e-9, x1 - x0)) * plotW; }
             function yToPxL(v) { return padT + (1 - (v - yRangeL.min) / (yRangeL.max - yRangeL.min)) * plotH; }
             function yToPxR(v) { return padT + (1 - (v - yRangeR.min) / (yRangeR.max - yRangeR.min)) * plotH; }
 
@@ -19107,6 +19268,16 @@
                 ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
             }
             var nGridX = Math.min(8, opts.xValues.length - 1);
+            // zoomed: vertical grid lines and labels on whole points in view
+            var xTicks = [];
+            if (view) {
+                var tStep = Math.max(1, Math.ceil((x1 - x0) / 8));
+                for (var ti = Math.ceil(x0); ti <= Math.floor(x1); ti += tStep) xTicks.push(ti);
+                xTicks.forEach(function(tx) {
+                    var gx = xToPx(tx);
+                    ctx.beginPath(); ctx.moveTo(gx, padT); ctx.lineTo(gx, padT + plotH); ctx.stroke();
+                });
+            } else
             for (var g = 0; g <= nGridX; g++) {
                 var gx = padL + (g / nGridX) * plotW;
                 ctx.beginPath(); ctx.moveTo(gx, padT); ctx.lineTo(gx, padT + plotH); ctx.stroke();
@@ -19122,6 +19293,7 @@
                 opts.annotations.forEach(function(ann) {
                     var ai = ann.xIndex;
                     if (ai < 0 || ai >= opts.xValues.length) return;
+                    if (view && (ai < x0 || ai > x1)) return;
                     var ax = xToPx(ai);
                     ctx.save();
                     ctx.strokeStyle = ann.color || 'rgba(252,129,129,0.4)';
@@ -19138,6 +19310,8 @@
                 });
             }
 
+            // Zoomed: nothing is drawn outside the plot frame
+            if (view) { ctx.save(); ctx.beginPath(); ctx.rect(padL, padT, plotW, plotH); ctx.clip(); }
             // Draw series (antialiased lines with optional smoothing for dense data)
             opts.series.forEach(function(s) {
                 if (!s.data || !s.data.length) return;
@@ -19150,10 +19324,12 @@
                 if (s.dash) ctx.setLineDash(s.dash);
                 // If data is very dense (>400 pts), draw a smoothed band
                 var step = 1;
-                if (s.data.length > 400) step = Math.floor(s.data.length / 400);
+                var nShown = view ? (x1 - x0) : s.data.length;
+                if (nShown > 400) step = Math.floor(nShown / 400);
+                var iFrom = view ? Math.max(0, Math.floor(x0) - step) : 0;
                 ctx.beginPath();
                 var first = true;
-                for (var i = 0; i < s.data.length; i += step) {
+                for (var i = iFrom; i < s.data.length; i += step) {
                     var v = s.data[i];
                     if (v === null || v === undefined || !isFinite(v)) { first = true; continue; }
                     var px = xToPx(i);
@@ -19168,7 +19344,7 @@
                     ctx.beginPath();
                     var fillFirst = true;
                     var fillStartX = 0, fillEndX = 0;
-                    for (var fi = 0; fi < s.data.length; fi += step) {
+                    for (var fi = iFrom; fi < s.data.length; fi += step) {
                         var fv = s.data[fi];
                         if (fv === null || fv === undefined || !isFinite(fv)) { fillFirst = true; continue; }
                         var fpx = xToPx(fi);
@@ -19232,6 +19408,7 @@
                 ctx.stroke();
                 ctx.restore();
             }
+            if (view) ctx.restore();       // the plot-frame clip
 
             // Horizontal reference lines (left Y axis)
             if (opts.hLines) {
@@ -19276,6 +19453,11 @@
             ctx.font = '500 14px "IBM Plex Mono", monospace';
             ctx.fillStyle = '#64748b';
             ctx.textAlign = 'center';
+            if (view) {
+                xTicks.forEach(function(tx) {
+                    ctx.fillText(opts.xTickFormat ? opts.xTickFormat(opts.xValues[tx]) : String(opts.xValues[tx]), xToPx(tx), H - padB + 18);
+                });
+            } else
             for (var g = 0; g <= nGridX; g++) {
                 var idx = Math.round(g / nGridX * (opts.xValues.length - 1));
                 var gx = padL + (g / nGridX) * plotW;
@@ -19345,11 +19527,21 @@
                 ctx.fillText(s.label, lx, ly);
                 lx -= tw + 26;
             });
+            // where things are, for the zoom of the enlarged chart window
+            canvas._chartLayout = {padL: padL, padT: padT, plotW: plotW, plotH: plotH, x0: x0, x1: x1, n: nX,
+                                   yL: {min: yRangeL.min, max: yRangeL.max}, yR: {min: yRangeR.min, max: yRangeR.max}};
         }
 
         function _openChartModal(title, drawFn) {
             var modal = document.getElementById('chart-modal');
-            window._chartModalDraw = drawFn;
+            _chartModalView = null;             // a new chart opens whole
+            _chartZoomWire();
+            window._chartModalDraw = function(c, w, h) {
+                c._chartLayout = null;          // set again by _drawChart: no layout = a chart that cannot zoom
+                _chartView = _chartModalView;
+                try { drawFn(c, w, h); } finally { _chartView = null; }
+                if (c.id === 'chart-modal-canvas') _chartZoomUi(!!c._chartLayout);
+            };
             document.getElementById('chart-modal-title').textContent = title;
             document.getElementById('chart-modal-canvas').style.display = 'block';
             _chartModalPngBtn(true);
@@ -19452,6 +19644,182 @@
         function _chartModalPngBtn(show) {
             var b = document.getElementById('chart-modal-png');
             if (b) b.style.display = show ? '' : 'none';
+            if (!show) _chartZoomUi(false);
+        }
+
+        // Every chart that enlarges on a click says so while the mouse is over it.
+        (function _chartHoverHint() {
+            var tip = null, on = null;
+            function enlarges(el) {
+                if (!el || el.tagName !== 'CANVAS' || el.id === 'chart-modal-canvas') return false;
+                var f = el.onclick;
+                return typeof f === 'function' && /Modal|expand/.test(String(f));
+            }
+            function hide() { if (tip) tip.style.display = 'none'; on = null; }
+            document.addEventListener('mouseover', function(e) {
+                var c = e.target;
+                if (!enlarges(c)) return;
+                if (!tip) {
+                    tip = document.createElement('div');
+                    tip.id = 'chart-hover-hint';
+                    tip.textContent = '\u2922 click to enlarge';
+                    tip.style.cssText = 'position:fixed; z-index:9000; pointer-events:none; padding:2px 8px; border-radius:5px;'
+                        + ' font-family:var(--mono); font-size:0.72rem; color:var(--accent); background:rgba(5,8,16,0.85);'
+                        + ' border:1px solid rgba(99,179,237,0.35); display:none;';
+                    document.body.appendChild(tip);
+                }
+                var r = c.getBoundingClientRect();
+                tip.style.display = 'block';
+                tip.style.left = Math.max(4, r.right - tip.offsetWidth - 8) + 'px';
+                tip.style.top = (r.top + 6) + 'px';
+                on = c;
+            });
+            document.addEventListener('mouseout', function(e) { if (on && e.target === on) hide(); });
+            window.addEventListener('scroll', hide, true);
+        })();
+
+        // ── Zoom in the enlarged chart window ───────────────────────────────
+        // Mouse wheel: zoom around the pointer; the vertical axes follow the
+        // points in view.  Zoom tool: drag a box (a sideways drag zooms only the
+        // horizontal axis).  Move: drag.  The whole chart: the reset button or a
+        // double-click.  The PNG button saves what is shown.  Charts on the page
+        // never zoom: the wheel keeps scrolling the page there.
+        var _chartModalView = null;
+        var _chartZoomTool = 'box';
+        function _chartZoomUi(show) {
+            var z = document.getElementById('chart-modal-zoom');
+            if (z) z.style.display = show ? 'inline-flex' : 'none';
+            var c = document.getElementById('chart-modal-canvas');
+            if (c) c.style.cursor = show ? (_chartZoomTool === 'pan' ? 'grab' : 'crosshair') : '';
+        }
+        function _chartZoomSetMode(mode) {
+            _chartZoomTool = mode;
+            var b = document.getElementById('chart-zoom-box'), m = document.getElementById('chart-zoom-pan');
+            if (b) b.style.borderColor = mode === 'box' ? 'var(--accent)' : '';
+            if (m) m.style.borderColor = mode === 'pan' ? 'var(--accent)' : '';
+            var c = document.getElementById('chart-modal-canvas');
+            if (c && c._chartLayout) c.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
+        }
+        function _chartZoomRedraw() {
+            var canvas = document.getElementById('chart-modal-canvas');
+            if (!canvas || typeof window._chartModalDraw !== 'function') return;
+            var w = parseFloat(canvas.style.width) || canvas.clientWidth;
+            var h = parseFloat(canvas.style.height) || canvas.clientHeight;
+            window._chartModalDraw(canvas, w, h);
+        }
+        function _chartZoomReset() { _chartModalView = null; _chartZoomRedraw(); }
+        function _chartZoomSet(view) {
+            var L = document.getElementById('chart-modal-canvas')._chartLayout;
+            if (!L) return;
+            var full = Math.max(1, L.n - 1);
+            var span = Math.max(Math.min(full, 2), Math.min(full, view.x1 - view.x0));
+            var a = Math.max(0, Math.min(full - span, view.x0));
+            view.x0 = a; view.x1 = a + span;
+            _chartModalView = (span >= full && !view.yL) ? null : view;
+            _chartZoomRedraw();
+        }
+        /* A mouse position in the canvas' own (CSS) pixels, the units of its
+           layout: the window can show the canvas smaller than it was drawn. */
+        function _chartZoomXY(canvas, e) {
+            var r = canvas.getBoundingClientRect();
+            var w = parseFloat(canvas.style.width) || r.width, h = parseFloat(canvas.style.height) || r.height;
+            return {x: (e.clientX - r.left) * w / r.width, y: (e.clientY - r.top) * h / r.height, sx: r.width / w, sy: r.height / h, r: r};
+        }
+        function _chartZoomWire() {
+            var canvas = document.getElementById('chart-modal-canvas');
+            if (!canvas || canvas._zoomWired) return;
+            canvas._zoomWired = true;
+            _chartZoomSetMode(_chartZoomTool);
+            var drag = null;
+            function band() {
+                var b = document.getElementById('chart-zoom-band');
+                if (!b) {
+                    b = document.createElement('div');
+                    b.id = 'chart-zoom-band';
+                    b.style.cssText = 'position:fixed; z-index:10001; pointer-events:none; display:none;'
+                                    + ' border:1px solid var(--accent); background:rgba(99,179,237,0.12);';
+                    document.body.appendChild(b);
+                }
+                return b;
+            }
+            function clampBox(L, a, b) {          // the dragged box, kept inside the plot frame
+                return {xa: Math.max(L.padL, Math.min(L.padL + L.plotW, Math.min(a.x, b.x))),
+                        xb: Math.max(L.padL, Math.min(L.padL + L.plotW, Math.max(a.x, b.x))),
+                        ya: Math.max(L.padT, Math.min(L.padT + L.plotH, Math.min(a.y, b.y))),
+                        yb: Math.max(L.padT, Math.min(L.padT + L.plotH, Math.max(a.y, b.y)))};
+            }
+            canvas.addEventListener('wheel', function(e) {
+                var L = canvas._chartLayout;
+                if (!L || canvas.style.display === 'none') return;
+                e.preventDefault();
+                var p = _chartZoomXY(canvas, e);
+                var f = Math.max(0, Math.min(1, (p.x - L.padL) / L.plotW));
+                var at = L.x0 + f * (L.x1 - L.x0);
+                var span = (L.x1 - L.x0) * (e.deltaY > 0 ? 1.25 : 0.8);
+                _chartZoomSet({x0: at - f * span, x1: at - f * span + span});    // no yL: the vertical axes follow
+            }, {passive: false});
+            canvas.addEventListener('mousedown', function(e) {
+                var L = canvas._chartLayout;
+                if (!L || e.button !== 0) return;
+                var p = _chartZoomXY(canvas, e);
+                if (p.x < L.padL || p.x > L.padL + L.plotW || p.y < L.padT || p.y > L.padT + L.plotH) return;
+                e.preventDefault();
+                drag = {p: p, L: L, zoomedY: !!(_chartModalView && _chartModalView.yL), next: null, raf: 0};
+                if (_chartZoomTool === 'pan') canvas.style.cursor = 'grabbing';
+            });
+            window.addEventListener('mousemove', function(e) {
+                if (!drag) return;
+                var L = drag.L, p = _chartZoomXY(canvas, e);
+                if (_chartZoomTool === 'pan') {
+                    var dx = (p.x - drag.p.x) / L.plotW * (L.x1 - L.x0);
+                    var v = {x0: L.x0 - dx, x1: L.x1 - dx};
+                    if (drag.zoomedY) {             // a box-zoomed chart moves up and down too
+                        var dy = (p.y - drag.p.y) / L.plotH;
+                        v.yL = {min: L.yL.min + dy * (L.yL.max - L.yL.min), max: L.yL.max + dy * (L.yL.max - L.yL.min)};
+                        v.yR = {min: L.yR.min + dy * (L.yR.max - L.yR.min), max: L.yR.max + dy * (L.yR.max - L.yR.min)};
+                    }
+                    drag.next = v;
+                    if (!drag.raf) drag.raf = requestAnimationFrame(function() {
+                        if (!drag) return;
+                        drag.raf = 0;
+                        if (drag.next) _chartZoomSet(drag.next);
+                    });
+                    return;
+                }
+                var k = clampBox(L, drag.p, p), b = band();
+                b.style.left = (p.r.left + k.xa * p.sx) + 'px';
+                b.style.top = (p.r.top + k.ya * p.sy) + 'px';
+                b.style.width = Math.max(1, (k.xb - k.xa) * p.sx) + 'px';
+                b.style.height = Math.max(1, (k.yb - k.ya) * p.sy) + 'px';
+                b.style.display = 'block';
+            });
+            window.addEventListener('mouseup', function(e) {
+                if (!drag) return;
+                var d = drag;
+                drag = null;
+                if (d.raf) cancelAnimationFrame(d.raf);
+                if (_chartZoomTool === 'pan') {
+                    if (d.next) _chartZoomSet(d.next);
+                    _chartZoomSetMode('pan');
+                    return;
+                }
+                band().style.display = 'none';
+                var L = d.L, k = clampBox(L, d.p, _chartZoomXY(canvas, e));
+                if (k.xb - k.xa < 6) return;        // a click, not a box
+                function ix(px) { return L.x0 + (px - L.padL) / L.plotW * (L.x1 - L.x0); }
+                var v = {x0: ix(k.xa), x1: ix(k.xb)};
+                if (k.yb - k.ya >= 6) {               // a box: both axes; a sideways drag: the vertical axes follow
+                    var yv = function(R, py) { return R.max - (py - L.padT) / L.plotH * (R.max - R.min); };
+                    v.yL = {min: yv(L.yL, k.yb), max: yv(L.yL, k.ya)};
+                    v.yR = {min: yv(L.yR, k.yb), max: yv(L.yR, k.ya)};
+                }
+                _chartZoomSet(v);
+            });
+            canvas.addEventListener('dblclick', function(e) {
+                if (!canvas._chartLayout) return;
+                e.preventDefault();
+                _chartZoomReset();
+            });
         }
         /**
          * Save the expanded chart as a PNG.  The chart is drawn on a transparent
