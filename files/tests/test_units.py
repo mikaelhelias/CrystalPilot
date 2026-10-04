@@ -15,6 +15,7 @@ triggered it here and a check that fails on the old behaviour.
 """
 import atexit
 import importlib.util
+import io
 import json
 import os
 import re
@@ -23,6 +24,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 FILES = HERE.parent
@@ -916,6 +918,44 @@ def define_checks(m, scratch):
         # commented axes: nothing extra
         assert len(m.batch_attempts({}, kwargs, "NAME_TEMPLATE_OF_DATA_FRAMES= x_????.cbf\n!UNIT_CELL_A-AXIS= 1 0 0\n")) == 1
 
+    @check("AutoPilot: a run that kept the file's cell axes and looks wrong is run again without them, the better one kept")
+    def _():
+        axes = "UNIT_CELL_A-AXIS= 78 0 0\nUNIT_CELL_B-AXIS= 0 78 0\nUNIT_CELL_C-AXIS= 0 0 37\n"
+        text = "NAME_TEMPLATE_OF_DATA_FRAMES= x_????.cbf\nSPACE_GROUP_NUMBER= 96\nUNIT_CELL_CONSTANTS= 78 78 37 90 90 90\n" + axes
+        good = {"completeness": "99.1%", "unit_cell": [78.2, 78.2, 37.1, 90, 90, 90]}
+        assert m.batch_axes_suspicious(text, text, good) == ""
+        assert "completeness 3.5" in m.batch_axes_suspicious(text, text, dict(good, completeness="3.5%"))
+        assert "cell edges" in m.batch_axes_suspicious(text, text, dict(good, unit_cell=[78.2, 156.4, 37.1, 90, 90, 90]))
+        assert m.batch_axes_suspicious(text, text, dict(good, unit_cell=[37.1, 78.2, 78.2, 90, 90, 90])) == ""   # another setting
+        assert m.batch_axes_suspicious(text, m._xdsinp_without_cell_axes(text), dict(good, completeness="3.5%")) == ""
+        name = "axes_check"
+        (m.PROJECTS_DIR / name).mkdir(parents=True, exist_ok=True)
+        p = m._pdir(name)
+        (p / "metadata.json").write_text('{"name": "%s"}' % name, encoding="utf-8")
+        log = io.StringIO()
+        for second, kept in ((99.0, "left out"), (3.6, "not better")):
+            (p / "XDS.INP").write_text(text, encoding="utf-8")
+            (p / "CORRECT.LP").write_text("first run", encoding="utf-8")
+            metrics = [dict(good, completeness="3.5%"), dict(good, completeness="%.1f%%" % second)]
+            seen = []
+            def rerun(new_text):
+                seen.append(new_text)
+                (p / "XDS.INP").write_text(new_text, encoding="utf-8")
+                (p / "CORRECT.LP").write_text("second run", encoding="utf-8")
+                return "success"
+            with patch.object(m, "batch_metrics", side_effect=lambda project: metrics.pop(0)):
+                note = m.batch_check_cell_axes(name, text, text, rerun, log)
+            assert kept in note, note
+            assert len(seen) == 1 and "UNIT_CELL_A-AXIS" not in m.xdsinp_values(seen[0]), seen
+            if kept == "left out":
+                assert (p / "CORRECT.LP").read_text() == "second run"
+                assert (p / "with_cell_axes" / "0" / "CORRECT.LP").read_text() == "first run"
+            else:
+                assert (p / "CORRECT.LP").read_text() == "first run"
+                assert "UNIT_CELL_A-AXIS" in m.xdsinp_values((p / "XDS.INP").read_text())
+                assert not (p / "with_cell_axes").exists()
+        assert "looks wrong (overall completeness 3.5 %)" in log.getvalue(), log.getvalue()
+
     @check("batch merge: consistent data sets in, the rest out with a reason, XSCALE.INP layout valid")
     def _():
         def project(name, sg, cell, isa):
@@ -1072,11 +1112,21 @@ def define_checks(m, scratch):
         (p / "metadata.json").write_text('{"name": "report test"}', encoding="utf-8")
         (p / "XDS.INP").write_text("JOB= XYCORR\n", encoding="utf-8")
         (p / "IDXREF.LP").write_text("!!! ERROR !!! INSUFFICIENT PERCENTAGE\n", encoding="utf-8")
+        # an error the program went on after is kept for the report (place, count, last message)
+        def failing_cache_write():
+            try:
+                raise OSError("cache disk full")
+            except OSError as e:
+                m._note_error(e)
+        failing_cache_write(); failing_cache_write()
+        assert "failing_cache_write" in m._handled_errors_text() and "x2  OSError: cache disk full" in m._handled_errors_text(), m._handled_errors_text()
         without = m.build_problem_report("IDXREF fails", project=name, include_project=False,
                                          page_errors=["TypeError: boom"])
         with zipfile.ZipFile(without["path"]) as zf:
             names = zf.namelist()
+            handled = zf.read("handled-errors.txt").decode() if "handled-errors.txt" in names else ""
         assert "REPORT.txt" in names and "environment.json" in names and "page-errors.txt" in names, names
+        assert "cache disk full" in handled, names
         assert not [n for n in names if n.startswith("project/")], "project files attached without the tick: %s" % names
         with_files = m.build_problem_report("IDXREF fails", project=name, include_project=True)
         with zipfile.ZipFile(with_files["path"]) as zf:

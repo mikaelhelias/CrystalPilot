@@ -15,15 +15,102 @@ _JOBS = {}                 # job id -> ProcessingJob
 _PROCS = {}                # id(Popen) -> process registration
 _BUSY_DIRS = {}            # canonical path -> (owner, acquisition count)
 _current_proc = None       # compatibility for callers inspecting the latest process
+_DONE_JOBS = {}            # job id -> finished ProcessingJob, kept for a page that comes back
+_DONE_KEEP = 20            # at most this many finished jobs ...
+_DONE_SECONDS = 1800       # ... for at most this long
+_JOB_EVENTS_MAX = 40000    # events kept per job; beyond it the oldest log lines are dropped
+_LOG_EVENTS = ('log', 'ai_log', 'ap_log')
 
 
 class ProcessingJob:
+    """One run.  The events its stream sends are kept (with increasing ids), so a
+    page that was closed or lost its connection can follow the run again from
+    any point (/api/jobs/stream)."""
     def __init__(self, project, kind):
         self.id = _secrets.token_hex(12)
         self.project = project
         self.kind = kind
         self.cancelled = threading.Event()
         self.outputs = {}
+        self.started = time.time()
+        self.finished = None
+        self.status = ''
+        self.title = ''
+        self.terminal = {'autopilot': 'ap_done', 'autoindex': 'ai_done'}.get(kind, 'done')
+        self.terminal_sent = False
+        self.followable = False     # it has a stream (a write_fn) whose events are kept
+        # AutoPilot wizard runs and merges run in their own threads and have their
+        # own progress display (Runs list); they are listed but not followed by a page.
+        self.background = threading.current_thread().name.startswith(('batch-', 'merge-'))
+        self.events = []            # [(id, event name, event text with its id line)]
+        self.next_id = 0
+        self.changed = threading.Condition(threading.Lock())
+
+    def record(self, event):
+        """Keep one event; returns its text with an SSE id line (before the blank line)."""
+        name = event.split('\n', 1)[0].partition(':')[2].strip() if event.startswith('event:') else ''
+        with self.changed:
+            n = self.next_id
+            self.next_id += 1
+            text = event[:-1] + 'id: %d\n\n' % n if event.endswith('\n\n') else event
+            self.events.append((n, name, text))
+            if name == self.terminal:
+                self.terminal_sent = True
+            if len(self.events) > _JOB_EVENTS_MAX:
+                half = len(self.events) // 2
+                self.events = [e for e in self.events[:half] if e[1] not in _LOG_EVENTS] + self.events[half:]
+            self.changed.notify_all()
+        return text
+
+    def events_from(self, first):
+        """The kept events with an id >= first (texts), the next id to ask for, and
+        whether the job has finished."""
+        with self.changed:
+            i = len(self.events)
+            while i > 0 and self.events[i - 1][0] >= first:
+                i -= 1
+            return [e[2] for e in self.events[i:]], max(first, self.next_id), self.finished is not None
+
+    def wait(self, after, timeout):
+        """Wait until an event with an id >= after exists or the job finishes."""
+        with self.changed:
+            if self.next_id <= after and self.finished is None:
+                self.changed.wait(timeout)
+
+    def finish(self):
+        with self.changed:
+            self.finished = time.time()
+            self.changed.notify_all()
+
+    def summary(self):
+        return {'id': self.id, 'project': self.project, 'kind': self.kind, 'title': self.title,
+                'started': self.started, 'finished': self.finished, 'running': self.finished is None,
+                'status': self.status or ('running' if self.finished is None else ''),
+                'followable': self.followable, 'background': self.background, 'events': self.next_id}
+
+
+def _prune_done_jobs():
+    """Finished jobs older than _DONE_SECONDS, or beyond the newest _DONE_KEEP, are forgotten."""
+    with _proc_lock:
+        now = time.time()
+        for job_id in [k for k, j in _DONE_JOBS.items() if now - (j.finished or now) > _DONE_SECONDS]:
+            _DONE_JOBS.pop(job_id, None)
+        while len(_DONE_JOBS) > _DONE_KEEP:
+            _DONE_JOBS.pop(next(iter(_DONE_JOBS)))
+
+
+def _job_list(project=None):
+    """Running jobs, then finished ones kept a while (newest first)."""
+    _prune_done_jobs()
+    with _proc_lock:
+        running = list(_JOBS.values())
+        done = [j for j in reversed(list(_DONE_JOBS.values())) if j.id not in _JOBS]
+    return [j.summary() for j in running + done if project is None or j.project == project]
+
+
+def _job_get(job_id):
+    with _proc_lock:
+        return _JOBS.get(job_id) or _DONE_JOBS.get(job_id)
 
 
 def _job_stopped():
@@ -112,9 +199,24 @@ def _processing_job(kind):
             # the browser starts the next step the moment it arrives, and must
             # not find them still reserved ("another program is already running").
             held = []
+            announce = []           # the page stream told the job's id once the run is registered
             original_writer = None
             if bound.arguments.get('write_fn'):
                 original_writer = bound.arguments['write_fn']
+                if previous is None:
+                    # the outermost run keeps what its stream sends; a page stream
+                    # (marked _sse_ids) gets each event with its id, other callers
+                    # (scripts, the AutoPilot wizard's log) the event unchanged
+                    page_writer = original_writer
+                    tagged = getattr(page_writer, '_sse_ids', False)
+                    announce[:] = [page_writer] if tagged else []
+                    def original_writer(event):
+                        text = job.record(event)
+                        page_writer(text if tagged else event)
+                    job.followable = True
+                    steps = bound.arguments.get('steps')
+                    if isinstance(steps, (list, tuple)) and steps:
+                        job.title = steps[0] if len(steps) == 1 else steps[0] + ' to ' + steps[-1]
                 stream_status = ['completed']
                 terminal = {'autopilot': 'ap_done', 'autoindex': 'ai_done'}.get(kind, 'done')
                 def write_event(event):
@@ -128,6 +230,8 @@ def _processing_job(kind):
                             stream_status[0] = status
                         if event_name == terminal:
                             payload.setdefault('status', 'stopped' if job.cancelled.is_set() else stream_status[0])
+                            if previous is None:
+                                job.status = str(payload.get('status') or '')
                             held.append('event: ' + terminal + '\ndata: ' + json.dumps(payload) + '\n\n')
                             return
                     original_writer(event)
@@ -137,6 +241,8 @@ def _processing_job(kind):
                     if previous is None:
                         with _proc_lock:
                             _JOBS[job.id] = job
+                        for writer in announce:
+                            writer('event: job\ndata: ' + json.dumps({'id': job.id, 'kind': kind}) + '\n\n')
                     return fn(*bound.args, **bound.kwargs)
             except DirectoryBusyError as e:
                 writer = bound.arguments.get('write_fn')
@@ -151,6 +257,8 @@ def _processing_job(kind):
             finally:
                 if previous is None:
                     with _proc_lock:
+                        if job.id in _JOBS and job.followable:
+                            _DONE_JOBS[job.id] = job     # before it leaves _JOBS: always findable
                         _JOBS.pop(job.id, None)
                 _JOB_LOCAL.job = previous
                 for event in held:
@@ -158,6 +266,11 @@ def _processing_job(kind):
                         original_writer(event)
                     except (BrokenPipeError, ConnectionResetError):
                         pass        # the browser has gone
+                if previous is None:
+                    if not job.status:
+                        job.status = 'stopped' if job.cancelled.is_set() else ('completed' if job.terminal_sent else 'error')
+                    job.finish()
+                    _prune_done_jobs()
         return run
     return decorate
 
@@ -256,8 +369,8 @@ def _kill_all_procs():
         try:
             if proc.poll() is None:
                 _kill_proc_tree(proc)
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
     return len(procs)
 
 

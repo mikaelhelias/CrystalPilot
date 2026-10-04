@@ -4,7 +4,7 @@ def _check_gemmi():
     if _cg_sys.modules.get("gemmi") is None and "gemmi" in _cg_sys.modules:
         del _cg_sys.modules["gemmi"]
     try: import importlib; importlib.invalidate_caches()
-    except Exception: pass
+    except Exception as _e: _note_error(_e)
     try:
         import site as _cg_s
         _u = _cg_s.getusersitepackages()
@@ -13,7 +13,7 @@ def _check_gemmi():
         for _sp in _cg_s.getsitepackages():
             if _sp not in _cg_sys.path:
                 _cg_sys.path.append(_sp)
-    except Exception: pass
+    except Exception as _e: _note_error(_e)
     try:
         import gemmi
         return True, gemmi.__version__
@@ -255,8 +255,8 @@ def _get_merged_mtz(xds):
             copy = i.clone()
             copy.merge_in_place(gemmi.DataType.Mean)
             return copy.prepare_merged_mtz(True), "merge_in_place"
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
         # Strategy 2: .merged() (returns new object)
         try:
@@ -264,8 +264,8 @@ def _get_merged_mtz(xds):
             i2.import_xds(xds)
             m = i2.merged(gemmi.DataType.Mean)
             return m.prepare_merged_mtz(True), "merged"
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     # Strategy 3: to_mtz (always available, may be unmerged)
     return xds.to_mtz(), "to_mtz"
@@ -686,8 +686,8 @@ def analyze_lattice_symmetry(input_hkl, max_obliq=3.0):
                     "centring": ctr,
                     "max_obliquity": obliq_try
                 })
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     # Find 2-fold ops (requires reduced cell via GruberVector)
     twofolds = []
@@ -702,8 +702,8 @@ def analyze_lattice_symmetry(input_hkl, max_obliq=3.0):
                     "operation": op.triplet(),
                     "obliquity": round(obliq_val, 2)
                 })
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     return {
         "success": True,
@@ -887,8 +887,8 @@ def compute_anomalous_scattering(element, wavelength_a, energy_ev=None, scan_ran
                 "fp": round(sp, 3),
                 "fpp": round(spp, 3),
             })
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     result["scan"] = scan
 
@@ -1463,8 +1463,8 @@ def analyze_anisotropy(input_hkl, n_shells=15):
                 result = np.linalg.lstsq(A, ln_arr, rcond=None)
                 slope = result[0][0]
                 b_factor = round(-slope / 2.0, 2)
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
 
         return shells, b_factor
 

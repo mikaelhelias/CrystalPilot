@@ -1084,21 +1084,21 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 tok_up = tok.upper()
                                 if tok_up.startswith('NX='):
                                     try: nx = int(tok.split('=')[1])
-                                    except Exception: pass
+                                    except Exception as _e: _note_error(_e)
                                 elif tok_up.startswith('NY='):
                                     try: ny = int(tok.split('=')[1])
-                                    except Exception: pass
+                                    except Exception as _e: _note_error(_e)
                                 elif tok_up.startswith('QX='):
                                     try: qx = float(tok.split('=')[1])
-                                    except Exception: pass
+                                    except Exception as _e: _note_error(_e)
                                 elif tok_up.startswith('QY='):
                                     try: qy = float(tok.split('=')[1])
-                                    except Exception: pass
+                                    except Exception as _e: _note_error(_e)
                             if ls_up.startswith('X-RAY_WAVELENGTH='):
                                 try: wavelength_spot = float(ls.split('=', 1)[1].strip().split()[0])
-                                except Exception: pass
-                    except Exception:
-                        pass
+                                except Exception as _e: _note_error(_e)
+                    except Exception as _e:
+                        _note_error(_e)
                 self.send_json({
                     "indexed": indexed,
                     "unindexed": unindexed,
@@ -1906,8 +1906,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                         if ds.ndim == 3:
                                             offsets.append((total, ds))
                                             total += ds.shape[0]
-                                    except Exception:
-                                        pass
+                                    except Exception as _e:
+                                        _note_error(_e)
                                 if offsets:
                                     nframes = total
                                     fi = min(frame_idx, nframes - 1)
@@ -1936,8 +1936,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                         if obj.shape[0] > best_size:
                                             best_size = obj.shape[0]
                                             best_ds   = obj
-                                except Exception:
-                                    pass
+                                except Exception as _e:
+                                    _note_error(_e)
                             f.visititems(_collect)
                             if best_ds is not None:
                                 nframes  = best_ds.shape[0]
@@ -1968,8 +1968,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             if tuple(_pm.shape) == tuple(data.shape):
                                 _pmv = _pm[()] != 0
                                 bad_mask = _pmv if bad_mask is None else (bad_mask | _pmv)
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
                         try:
                             _desc = f['/entry/instrument/detector/description'][()]
                             if hasattr(_desc, 'flat') and not isinstance(_desc, (bytes, str)):
@@ -1979,8 +1979,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             _desc = str(_desc).strip()
                             if _desc:
                                 header['detector_name'] = _desc
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
 
                         # ── Metadata ──────────────────────────────────────────
                         # Phase 1: try explicit known NeXus/Eiger paths.
@@ -2050,8 +2050,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                     return
                                 converted = _to_canonical(v, _h5units(ds), canon)
                                 header[canon] = str(round(converted, 6))
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
 
                         # Phase 1 — explicit paths (ordered: most common first)
                         _explicit = [
@@ -2104,8 +2104,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                     wl_angstrom = 12398.419 / eV
                                     header['wavelength'] = str(round(wl_angstrom, 6))
                                     break
-                                except Exception:
-                                    pass
+                                except Exception as _e:
+                                    _note_error(_e)
 
                         # Phase 1c — targeted subgroup walk
                         # visititems on the full file can abort if /entry/data
@@ -2153,22 +2153,22 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 units = _h5units(obj)
                                 converted = _to_canonical(v, units, canon)
                                 header[canon] = str(round(converted, 6))
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
 
                         # Walk safe subgroups first (avoids broken external links in /entry/data)
                         for _subgrp in ('entry/instrument', 'entry/sample'):
                             if _subgrp in f:
                                 try:
                                     f[_subgrp].visititems(_collect_geo)
-                                except Exception:
-                                    pass
+                                except Exception as _e:
+                                    _note_error(_e)
                         # Fallback: try full root walk (may fail on master files
                         # with broken external links, but catches oddly structured files)
                         try:
                             f.visititems(_collect_geo)
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
 
                         # Diagnostic: if key values still missing, log H5 tree to stderr
                         if 'detector_distance' not in header or 'wavelength' not in header:
@@ -2195,8 +2195,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                                         f"    {_subgrp}/{name}: <unreadable>\n"
                                                     )
                                         f[_subgrp].visititems(_dump)
-                                    except Exception:
-                                        pass
+                                    except Exception as _e:
+                                        _note_error(_e)
                             _sys2.stderr.flush()
                 else:
                     # ── Non-HDF5: use fabio ────────────────────────────────────
@@ -2342,7 +2342,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             m = _re.search(pat, txt, _re.IGNORECASE)
                             if m:
                                 try: return float(m.group(1)) * scale
-                                except Exception: pass
+                                except Exception as _e: _note_error(_e)
                             return None
                         if 'detector_distance' not in header:
                             v = _mini_flt(r'Detector_distance\s+([\d.eE+\-]+)', _mini, 1000.0)
@@ -2574,8 +2574,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 ds = edata[ck]
                                 if ds.ndim == 3:
                                     total += ds.shape[0]
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
                     if total == 0 and 'entry/data/data' in f:
                         ds = f['entry/data/data']
                         if ds.ndim == 3:
@@ -2588,16 +2588,16 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 if isinstance(obj, h5py.Dataset) and obj.ndim == 3:
                                     if obj.shape[0] > total:
                                         total = obj.shape[0]
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
                         f.visititems(_coll)
                     if total == 0:
                         # Data links unreachable: fall back to the declared count
                         try:
                             _spec = f['/entry/instrument/detector/detectorSpecific']
                             total = int(_spec['nimages'][()]) * int(_spec['ntrigger'][()])
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
                 self.send_json({"nframes": max(1, total)})
             except Exception as e:
                 self.send_json({"nframes": 1, "error": str(e)})
@@ -2876,18 +2876,18 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     if sys.modules.get(pkg) is None and pkg in sys.modules:
                         del sys.modules[pkg]
                     try: import importlib; importlib.invalidate_caches()
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
                     import site as _s
                     try:
                         u = _s.getusersitepackages()
                         if u and u not in sys.path:
                             sys.path.insert(0, u)
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
                     try:
                         for sp in _s.getsitepackages():
                             if sp not in sys.path:
                                 sys.path.append(sp)
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
                     try: __import__(pkg); return True
                     except ImportError: pass
                     # Last resort: verify with subprocess (avoids stale in-process state)
@@ -2901,13 +2901,13 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 import importlib as _il
                                 _il.import_module(pkg)
                                 return True
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
                             # Even importlib failed but subprocess proved it's installed.
                             # Mark success — _check_deps() at the end will do the
                             # authoritative re-check anyway.
                             return True
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
                     return False
 
                 def _pip_run(pkg, flags):
@@ -2985,7 +2985,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         try:
                             _bp, _ = _run_quiet(["brew", "--prefix"])
                             _brew_python = sys.executable.startswith(_bp.strip())
-                        except Exception: pass
+                        except Exception as _e: _note_error(_e)
                         if _brew_python:
                             brew_pkg = _brew_names[pip_pkg]
                             ev("log", {"text": f"[brew] brew install {brew_pkg}"})
@@ -3105,6 +3105,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_xds(project_name, steps, write_fn, run_folder=run_folder if run_folder else None, copy_gxparm=copy_gxparm)
 
         # SSE stream for Auto-Indexing
@@ -3119,6 +3120,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_ai(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_ai._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_autoindex(project_name, tier, write_fn_ai, force_cell=force_cell)
 
         # Cached auto-indexing results
@@ -3184,6 +3186,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_xs(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_xs._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_xscale(project_name, write_fn_xs, run_folder=run_folder if run_folder else None)
 
         # Get XDSCONV.INP file
@@ -3222,6 +3225,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_xc(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_xc._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_xdsconv(project_name, write_fn_xc, work_dir=work_dir_param or None, mtz_name=mtz_name_param or None)
 
         # SSE stream for gemmi MTZ conversion (intensity-only, no CCP4 needed)
@@ -3238,6 +3242,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_gm(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_gm._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_gemmi_mtz(
                 project_name, write_fn_gm,
                 work_dir=work_dir_param or None,
@@ -3284,18 +3289,18 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         if sys.modules.get("gemmi") is None and "gemmi" in sys.modules:
                             del sys.modules["gemmi"]
                         try: import importlib; importlib.invalidate_caches()
-                        except Exception: pass
+                        except Exception as _e: _note_error(_e)
                         import site as _s
                         try:
                             u = _s.getusersitepackages()
                             if u and u not in sys.path:
                                 sys.path.insert(0, u)
-                        except Exception: pass
+                        except Exception as _e: _note_error(_e)
                         try:
                             for sp in _s.getsitepackages():
                                 if sp not in sys.path:
                                     sys.path.append(sp)
-                        except Exception: pass
+                        except Exception as _e: _note_error(_e)
                         try: __import__("gemmi"); return True
                         except ImportError: pass
                         # Last resort: subprocess check
@@ -3304,7 +3309,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 [sys.executable, "-c", "import gemmi"],
                                 capture_output=True, timeout=30).returncode
                             if rc == 0: return True
-                        except Exception: pass
+                        except Exception as _e: _note_error(_e)
                         return False
 
                     def _gi_cmd_exists(cmd):
@@ -3326,8 +3331,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             grp_gi = _re_gi.search(r"pip (\d+)\.(\d+)", out_gi)
                             if grp_gi:
                                 pip_new_gi = tuple(int(x) for x in grp_gi.groups()) >= (22, 3)
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
 
                     installed = False
 
@@ -3390,8 +3395,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             if grp_gi2:
                                 pip_new_gi = tuple(int(x) for x in grp_gi2.groups()) >= (22, 3)
                                 bsp = ["--break-system-packages"] if pip_new_gi else []
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            _note_error(_e)
                         # Retry binary-only with upgraded pip
                         if has_sudo_gi:
                             rc = _gi_sudo_pip("gemmi", ["--only-binary=:all:"] + bsp, "pip-wheel-retry")
@@ -3442,6 +3447,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_ptl(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_ptl._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_pointless(
                 project_name, write_fn_ptl,
                 input_file=input_file or None,
@@ -3537,6 +3543,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_aml(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_aml._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_aimless(
                 project_name, write_fn_aml,
                 resolution_low=res_low or None,
@@ -3623,6 +3630,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             def write_fn_dcc(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_dcc._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_xdscc12(project_name, write_fn_dcc,
                            batch_width=batch_width, nbin=nbin)
 
@@ -3706,8 +3714,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                                 pass
                     tmpl = p.get("NAME_TEMPLATE_OF_DATA_FRAMES", "")
                     result["xdsinp"]["name_template"] = tmpl
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
 
             # ── Parse CORRECT.LP for ISa and stats if XSCALE not available ──
             correct_lp = _pfile(project_dir, "CORRECT.LP")
@@ -3734,8 +3742,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                         result["correct"]["wilson_moments"] = cm["wilson_moments"]
                     if cm.get("aliens"):
                         result["correct"]["aliens"] = cm["aliens"]
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
 
             # ── Parse XSCALE.LP (prefer over CORRECT.LP) ──────────
             # If lp_source_path is given, use that specific file instead
@@ -3765,8 +3773,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             result["correct"]["mosaicity"] = cm2.get("mosaicity")
                             # Clear xscale so CORRECT is used as primary
                             result["xscale"] = {}
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
             else:
                 xscale_candidates = []
                 root_lp = _pfile(project_dir, "XSCALE.LP", "xscale")
@@ -3796,8 +3804,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                             result["xscale"]["isa_table"] = xm["isa_table"]
                         if xm.get("resolution_range_low"):
                             result["xscale"]["resolution_range_low"] = xm["resolution_range_low"]
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
             # Exact R-pim from the unmerged reflections (asked for separately:
             # a 200 MB file on a network share takes a while to read).
@@ -3821,12 +3829,15 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             optimize = qs.get("optimize", ["1"])[0] == "1"
             dcc_half = qs.get("dcc_half", ["1"])[0] == "1"
             neggia_lib = qs.get("neggia_lib", [""])[0] or NEGGIA_LIB
+            if RESTRICT_BROWSE:
+                neggia_lib = NEGGIA_LIB     # a shared installation uses the reader set where the server starts
             if self._refuse_outside(template, base=_pdir(project_name) if project_name else None):
                 return
             self._begin_processing_stream(project_name, "ap_done")
             def write_fn_ap(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
+            write_fn_ap._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_autopilot(project_name, write_fn_ap, criterion=criterion, friedel=friedel, template=template, optimize=optimize, dcc_half=dcc_half, neggia_lib=neggia_lib)
 
         # Cached autopilot results
@@ -3838,6 +3849,55 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 self.send_json(result)
             except Exception as e:
                 self.send_json({"has_results": False, "error": str(e)})
+
+        # Runs of the server (running, and finished ones kept for a while), for a
+        # page that opens a project while a run started earlier is still going
+        elif path == "/api/jobs":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            project_name = qs.get("project", [""])[0] or None
+            self.send_json({"jobs": _job_list(project_name)})
+
+        # Follow a run again: its events from id `from` on (all of them by default),
+        # then the new ones as they come, until it ends.  Also honours the
+        # Last-Event-ID header an EventSource sends when it reconnects.
+        elif path == "/api/jobs/stream":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            job = _job_get(qs.get("id", [""])[0])
+            if job is None or not job.followable:
+                self.send_json({"error": "No such run (it ended more than %d minutes ago, or the server was restarted)" % (_DONE_SECONDS // 60)}, 404)
+                return
+            try:
+                first = int(qs.get("from", ["0"])[0])
+            except ValueError:
+                first = 0
+            last_seen = self.headers.get("Last-Event-ID")
+            if last_seen and last_seen.strip().isdigit():
+                first = max(first, int(last_seen) + 1)
+            self._stream_terminal = job.terminal
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self._headers_sent = True
+            while True:
+                texts, first, finished = job.events_from(first)
+                if texts:
+                    self.wfile.write("".join(texts).encode())
+                    self.wfile.flush()
+                    continue
+                if finished:
+                    if not job.terminal_sent:
+                        # the run ended without its last event (an unexpected error)
+                        tail = ("event: " + ("ap_error" if job.terminal == "ap_done" else "error_msg") + "\ndata: "
+                                + json.dumps({"message": "The run ended unexpectedly (see the server console)"}) + "\n\n"
+                                + "event: " + job.terminal + "\ndata: " + json.dumps({"status": job.status or "error"}) + "\n\n")
+                        self.wfile.write(tail.encode())
+                        self.wfile.flush()
+                    break
+                job.wait(first, 15)
+                if job.next_id <= first and job.finished is None:
+                    self.wfile.write(b": still running\n\n")   # keeps the connection, finds a closed page
+                    self.wfile.flush()
 
         # Autopilot status (lightweight check without streaming)
         elif path == "/api/autopilot/status":
@@ -4080,6 +4140,16 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 if not value or RESTRICT_BROWSE:
                     return value, ""
                 return _to_local_path(str(value))
+            # A shared installation (--restrict-browse) runs the programs set up where
+            # the server starts: a client that could point XDS, CCP4 or the HDF5 reader (a
+            # library XDS loads) at another file could run any program it likes.
+            if RESTRICT_BROWSE:
+                _current = {"xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN or "", "neggia_lib": NEGGIA_LIB or ""}
+                _changed = [k for k in _current if k in data and str(data.get(k) or "").strip() != _current[k]]
+                if _changed:
+                    self.send_json({"error": "This installation is shared (--restrict-browse): the XDS, CCP4 and HDF5-reader "
+                                             "locations are set where the server is started, not from the page"}, 403)
+                    return
             for _key in ("neggia_lib", "xds_path", "ccp4_bin"):
                 _local, _problem = _from_windows(data.get(_key))
                 if _problem:

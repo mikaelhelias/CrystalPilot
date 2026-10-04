@@ -24,6 +24,10 @@ for step in jobs:
     mode = control.get(step, 'ok')
     if mode == 'quiet':
         time.sleep(30)
+    if mode == 'wait':            # until the test writes 'release' (or 30 s)
+        deadline = time.time() + 30
+        while not Path('release').exists() and time.time() < deadline:
+            time.sleep(0.05)
     if mode == 'exit':
         raise SystemExit(7)
     if mode == 'exit_again' and Path('executed.jsonl').read_text().splitlines().count(json.dumps(step)) > 1:

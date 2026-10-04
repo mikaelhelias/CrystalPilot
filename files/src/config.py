@@ -48,6 +48,46 @@ import threading
 import signal
 import argparse
 
+
+# Errors the program handles by going on without what failed (an optional file
+# that cannot be read, a cache that cannot be written ...).  They are not shown,
+# but each place keeps its last error and a count (at most 300 places), so a
+# problem report can say what went wrong; XDS_GUI_DEBUG=1 also prints them.
+_HANDLED_ERRORS = {}
+_HANDLED_LOCK = threading.Lock()
+
+
+def _note_error(exc):
+    try:
+        tb = exc.__traceback__
+        site = "%s:%d" % (tb.tb_frame.f_code.co_name, tb.tb_lineno) if tb else "?"
+        inner = tb
+        while inner is not None and inner.tb_next is not None:
+            inner = inner.tb_next
+        text = "%s: %s" % (type(exc).__name__, str(exc)[:300])
+        if inner is not None and inner is not tb:
+            text += "  (in %s:%d)" % (inner.tb_frame.f_code.co_name, inner.tb_lineno)
+        del tb, inner
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with _HANDLED_LOCK:
+            entry = _HANDLED_ERRORS.get(site)
+            if entry:
+                entry[0] += 1
+                entry[1], entry[2] = text, stamp
+            elif len(_HANDLED_ERRORS) < 300:
+                _HANDLED_ERRORS[site] = [1, text, stamp]
+        if os.environ.get("XDS_GUI_DEBUG"):
+            print("[handled] " + site + " " + text)
+    except Exception:
+        pass
+
+
+def _handled_errors_text():
+    """The handled errors, newest first, for the problem report."""
+    with _HANDLED_LOCK:
+        rows = sorted(_HANDLED_ERRORS.items(), key=lambda kv: kv[1][2], reverse=True)
+    return "\n".join("%s  %-40s x%d  %s" % (v[2], k, v[0], v[1]) for k, v in rows)
+
 # ── Optional scientific deps (for frame viewer) ──────────────────────────────
 import os as _os, sys as _sys, site as _site
 
@@ -179,8 +219,8 @@ class _LogTee:
     def write(self, text):
         try:
             self._stream.write(text)
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
         if not text.strip():
             self._append(text)
             return text and len(text) or 0
@@ -201,8 +241,8 @@ class _LogTee:
                     # written must never interrupt a data-processing run.
                     self._path.parent.mkdir(parents=True, exist_ok=True)
                     self._write(text)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
 
     def _write(self, text):
         with open(self._path, "a", encoding="utf-8", errors="replace") as fh:
@@ -221,8 +261,8 @@ class _LogTee:
         try:
             if API_TOKEN and API_TOKEN in text:
                 return text.replace(API_TOKEN, "<token hidden: see the console>")
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
         return text
 
     def _rotate(self):
@@ -238,8 +278,8 @@ class _LogTee:
                     if older.exists():
                         older.unlink()
                     newer.rename(older)
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     def flush(self):
         try:
@@ -283,8 +323,8 @@ if VIEWER_READY or not any(e[3] == "matplotlib" for e in MISSING_DEPS):
     try:
         import matplotlib
         matplotlib.use("Agg")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
 # Configuration — defaults; overridden by CLI args / env vars in main()
 PROJECTS_DIR = Path(os.environ.get("XDS_GUI_PROJECTS", str(Path.cwd() / "projects")))
@@ -439,8 +479,8 @@ def _wsl_automount_root():
                         val = val.strip().strip('"').strip("'")
                         if val:
                             root = val if val.endswith("/") else val + "/"
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
     return root
 
 WSL_MOUNT_ROOT = _wsl_automount_root()
@@ -457,8 +497,8 @@ def _wsl_drives():
             for d in sorted(Path(WSL_MOUNT_ROOT).iterdir()):
                 if len(d.name) == 1 and d.name.isalpha() and d.is_dir() and os.path.ismount(str(d)):
                     drives.append(str(d))
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
     return drives
 
 
@@ -629,8 +669,8 @@ def _wsl_win_path(p):
             wd = subprocess.run(["wslpath", "-w", d], capture_output=True, text=True, timeout=10).stdout.strip()
             if wd:
                 return wd.rstrip("\\") + "\\" + base
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
     return p
 
 

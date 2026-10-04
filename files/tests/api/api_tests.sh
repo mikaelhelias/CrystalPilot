@@ -73,8 +73,16 @@ C=$(c -o "$TB/cp_api_out" -w '%{http_code}' "$U/api/projects/my%20proj/lp/CORREC
 c -N "$U/api/stream?project=my%20proj&step=XYCORR" > "$T/sse1.log" 2>&1 &
 sleep 2; CH=$(grep -o 'child=[0-9]*' "$T/sse1.log" | head -1 | cut -d= -f2)
 check "fake xds started, child known" "[ -n \"$CH\" ] && kill -0 $CH 2>/dev/null" "$(head -3 $T/sse1.log)"
+# the page goes away: the run goes on, and a new page follows it from its start
+pkill -f 'step=XYCORR' 2>/dev/null; sleep 1
+R=$(c "$U/api/jobs?project=my%20proj"); JID=$(echo "$R" | grep -o '"id": "[0-9a-f]*"' | head -1 | sed 's/.*: "//; s/"$//')
+check "/api/jobs: the run goes on without its page" "[ -n \"$JID\" ] && echo '$R' | grep -q '\"running\": true' && kill -0 $CH 2>/dev/null" "$R"
+timeout 3 "$CURL" -s -N -H "X-CrystalPilot-Token: $TOK" "$U/api/jobs/stream?id=$JID" > "$T/sse1b.log" 2>&1
+check "/api/jobs/stream replays the run from its start" "grep -q 'child=$CH' $T/sse1b.log && grep -q '^id: 0' $T/sse1b.log" "$(head -4 $T/sse1b.log)"
 R=$(c -X POST "$U/api/stop" -H 'Content-Type: application/json' -d '{"project_name":"my proj"}'); sleep 2
 check "stop reports one process" "echo '$R' | grep -q '\"stopped\": 1'" "$R"
+timeout 5 "$CURL" -s -N -H "X-CrystalPilot-Token: $TOK" "$U/api/jobs/stream?id=$JID" > "$T/sse1c.log" 2>&1
+check "/api/jobs/stream ends with the run's end" "grep -A1 'event: done' $T/sse1c.log | grep -q stopped" "$(tail -4 $T/sse1c.log)"
 check "stop killed the child too" "! kill -0 $CH 2>/dev/null && [ -z \"$(pgrep -f 'sleep 120')\" ]" "$(pgrep -af 'sleep 120')"
 timeout 40 "$CURL" -s -N -H "X-CrystalPilot-Token: $TOK" "$U/api/stream?project=my%20proj&step=INIT" > "$T/sse2.log" 2>&1
 check "timeout reported (step_timeout=8)" "grep -q 'time limit' $T/sse2.log && grep -q '\"status\": \"timeout\"' $T/sse2.log" "$(tail -3 $T/sse2.log)"

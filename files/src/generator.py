@@ -74,7 +74,7 @@ class XDSINPGenerator:
             v = header.get(key)
             if v is not None:
                 try: return float(v)
-                except Exception: pass
+                except Exception as _e: _note_error(_e)
             if fallback is not None:
                 warnings.append(f'{key} not found in image header, using default {fallback}')
             return fallback

@@ -1017,6 +1017,106 @@ def batch_attempts(strategy, kwargs, imported_text):
     return attempts
 
 
+def _num_value(value):
+    try:
+        return float(str(value).replace("%", "").replace("*", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def batch_axes_suspicious(imported_text, run_text, metrics):
+    """Why a run that kept a beamline file's UNIT_CELL_A/B/C-AXIS looks wrong ('' when it does not).
+
+    A wrong orientation in such a file can still give a run that "succeeds":
+    seen on one beamline file, a cell with an axis twice too long and 3.5 %
+    completeness.  Signs: overall completeness under 50 %, or a cell edge more
+    than 10 % off the file's UNIT_CELL_CONSTANTS (edges sorted, so a change of
+    setting does not count).
+    """
+    if not run_text or not any(k in xdsinp_values(run_text) for k in _CELL_AXES):
+        return ""
+    completeness = _num_value(metrics.get("completeness"))
+    if completeness is not None and completeness < 50:
+        return "overall completeness %.1f %%" % completeness
+    file_cell = [_num_value(x) for x in xdsinp_values(imported_text or "").get("UNIT_CELL_CONSTANTS", "").split()[:3]]
+    run_cell = [_num_value(x) for x in (metrics.get("unit_cell") or [])[:3]]
+    if len(file_cell) == 3 and len(run_cell) == 3 and all(file_cell) and all(run_cell):
+        if any(abs(r / f - 1) > 0.10 for r, f in zip(sorted(run_cell), sorted(file_cell))):
+            return "cell edges %s, the file's UNIT_CELL_CONSTANTS say %s" % (
+                " ".join("%.1f" % x for x in run_cell), " ".join("%.1f" % x for x in file_cell))
+    return ""
+
+
+_AXES_SNAPSHOT = "with_cell_axes"
+
+
+def _batch_output_dirs(project_dir):
+    """The project folder and the folders its latest XDS / XSCALE / XDSCONV output is in."""
+    dirs = [Path(project_dir)]
+    for kind in ("xds", "xscale", "xdsconv"):
+        d = Path(_project_out_dir(project_dir, kind))
+        if all(d.resolve() != x.resolve() for x in dirs):
+            dirs.append(d)
+    return dirs
+
+
+def _batch_snapshot(project_dir):
+    """Copy the files (not sub-folders) of the project's output folders aside; returns the record."""
+    snap = Path(project_dir) / _AXES_SNAPSHOT
+    if snap.exists():
+        shutil.rmtree(str(snap))
+    record = []
+    for i, d in enumerate(_batch_output_dirs(project_dir)):
+        target = snap / str(i)
+        target.mkdir(parents=True)
+        for f in d.iterdir():
+            if f.is_file() and not f.is_symlink():
+                shutil.copy2(str(f), str(target / f.name))
+        record.append((d, target))
+    return record
+
+
+def _batch_restore(record):
+    for d, target in record:
+        for f in target.iterdir():
+            shutil.copy2(str(f), str(d / f.name))
+
+
+def batch_check_cell_axes(project, imported_text, run_text, rerun, log):
+    """After a run that kept the imported UNIT_CELL_A/B/C-AXIS and looks wrong
+    (batch_axes_suspicious): run once more without them (rerun(xdsinp_text) ->
+    status) and keep that run only when it is clearly better (overall
+    completeness at least 2 points higher); otherwise the first run's files are
+    put back.  Returns the line for the data set's status, or ''."""
+    if not run_text or not any(k in xdsinp_values(run_text) for k in _CELL_AXES):
+        return ""
+    project_dir = _pdir(project)
+    before = batch_metrics(project)
+    why = batch_axes_suspicious(imported_text, run_text, before)
+    if not why:
+        return ""
+    _batch_log(log, "")
+    _batch_log(log, ">>> The run kept the XDS.INP's UNIT_CELL_A/B/C-AXIS and looks wrong (%s): "
+                    "one more run without them, the better one is kept" % why)
+    try:
+        record = _batch_snapshot(project_dir)
+    except OSError as exc:
+        _batch_log(log, ">>> Could not put the first run aside (%s) - it is kept as it is" % exc)
+        return "orientation check skipped: " + str(exc)
+    status = rerun(_xdsinp_without_cell_axes(run_text))
+    after = batch_metrics(project) if status in ("success", "completed", "done") else {}
+    old_c, new_c = _num_value(before.get("completeness")), _num_value(after.get("completeness"))
+    if new_c is not None and (old_c is None or new_c >= old_c + 2):
+        _batch_log(log, ">>> Kept the run without the file's cell axes: completeness %s -> %.1f %% "
+                        "(the first run is in %s)" % ("%.1f %%" % old_c if old_c is not None else "?", new_c, _AXES_SNAPSHOT))
+        return "file's cell axes left out (completeness %s -> %.1f %%)" % ("%.1f %%" % old_c if old_c is not None else "?", new_c)
+    _batch_restore(record)
+    shutil.rmtree(str(Path(project_dir) / _AXES_SNAPSHOT), ignore_errors=True)
+    _batch_log(log, ">>> The run without the cell axes is not better (%s) - the first run is put back"
+               % ("status " + status if not after else "completeness %s" % after.get("completeness")))
+    return "checked without the file's cell axes: not better"
+
+
 def _batch_attempts_as_imported(strategy, kwargs, imported_text):
     """batch_attempts without the extra run that leaves out the cell axes."""
     s = normalize_strategy(strategy)
@@ -1121,6 +1221,21 @@ def _batch_worker_run(batch_id):
                         status = str(final.get("status") or "failed")
                         if status in ("success", "completed", "done", "stopped") or stop.is_set() or _BATCH_ACTIVE["skip"]:
                             break
+                    if status in ("success", "completed", "done") and not (stop.is_set() or _BATCH_ACTIVE["skip"]):
+                        run_text = attempt["xdsinp"] if attempt.get("xdsinp") is not None else imported
+                        def rerun(text, attempt=attempt):
+                            item["attempt"] = "check: without the file's UNIT_CELL_A/B/C-AXIS"
+                            _batch_log(log, "")
+                            _batch_log(log, "=== Attempt %s ===" % item["attempt"])
+                            _write_inp(_pdir(project) / "XDS.INP", text)
+                            item["error"] = ""
+                            write_fn, result = _batch_event_reader(item, state, log)
+                            stream_autopilot(project, write_fn, template=None if item.get("existing") else run_item["template"],
+                                             neggia_lib=neggia, **attempt["kwargs"])
+                            return str(result.get("status") or "failed")
+                        note = batch_check_cell_axes(project, imported, run_text, rerun, log)
+                        if note:
+                            item["attempt"] = note
                 summary = final.get("summary") or {}
                 if status in ("success", "completed", "done"):
                     # a run that finished stays finished, even when Stop or Skip came in its last seconds
@@ -1194,8 +1309,8 @@ def batch_state(batch_id):
             if item.get("status") == "done" and not item.get("metrics") and not item.get("metrics_checked"):
                 try:
                     item["metrics"] = batch_metrics(item["project"])
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
                 item["metrics_checked"] = True
                 filled = True
         if filled:

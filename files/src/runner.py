@@ -319,8 +319,8 @@ def stream_xds(project_name, steps, write_fn, run_folder=None, copy_gxparm=False
                             shutil.copy2(str(src), str(dst))
                     shutil.copy2(str(prev_lp), str(work_dir / (lp_name + ".prev1")))
                     send("log", {"text": ">>> Saved previous " + lp_name + " as " + lp_name + ".prev1"})
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
 
         lines = _read_text_lenient(xds_inp).splitlines(keepends=True)
         new_lines, found = [], False
@@ -529,8 +529,8 @@ def stream_autoindex(project_name, tier, write_fn, force_cell=False):
         try:
             if base_dir.exists():
                 shutil.rmtree(str(base_dir))
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     def _run_trial(trial):
         """Execute a single COLSPOT+IDXREF trial in a temp subdirectory.
@@ -1295,8 +1295,8 @@ def stream_autoindex(project_name, tier, write_fn, force_cell=False):
     report_path = project_dir / "AUTOINDEX_REPORT.txt"
     try:
         report_path.write_text(report_text, encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
     # Save structured results as JSON for reload on tab switch
     # Strip large per-trial fields not needed by the frontend
@@ -1316,8 +1316,8 @@ def stream_autoindex(project_name, tier, write_fn, force_cell=False):
     json_path = project_dir / "AUTOINDEX_RESULTS.json"
     try:
         json_path.write_text(json.dumps(results_payload), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
     # Clean up trial directories (keep report + JSON)
     _cleanup_base()
@@ -1352,8 +1352,8 @@ def load_autoindex_cached_results(project_dir):
             if data.get('top5') and len(data['top5']) > 0:
                 result.update(data)
                 result['has_results'] = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     return result
 
@@ -1445,8 +1445,8 @@ def stream_xscale(project_name, write_fn, run_folder=None):
                     shutil.copy2(str(src), str(dst))
             shutil.copy2(str(prev_lp), str(work_dir / "XSCALE.LP.prev1"))
             send("log", {"text": ">>> Saved previous XSCALE.LP as XSCALE.LP.prev1"})
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     send("step_start", {"step": "XSCALE"})
 
@@ -1560,8 +1560,8 @@ def stream_xdsconv(project_name, write_fn, work_dir=None, mtz_name=None):
                                     base = Path(parts[0]).stem
                                     mtz_name = base + ".mtz"
                                 break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
                 temp_mtz = work_dir / "temp_f2mtz.mtz"
 
@@ -1816,8 +1816,8 @@ def stream_pointless(project_name, write_fn, input_file=None, chirality="CHIRAL"
     log_path = _pout(project_dir, "pointless.log")
     try:
         log_path.write_text("\n".join(captured_log), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
     # Check result
     status, error_msg = "completed", None
@@ -2006,8 +2006,8 @@ def stream_aimless(project_name, write_fn, resolution_low=None, resolution_high=
     aml_log_path = _pout(project_dir, "aimless.log")
     try:
         aml_log_path.write_text("\n".join(aml_log), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
     if rc != 0:
         send("step_done", {"step": "AIMLESS", "status": "failed", "error": "AIMLESS exited with code " + str(rc)})
@@ -2067,8 +2067,8 @@ def stream_aimless(project_name, write_fn, resolution_low=None, resolution_high=
             ctr_log_path = _pout(project_dir, "ctruncate.log")
             try:
                 ctr_log_path.write_text("\n".join(ctr_log), encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
 
             if rc != 0:
                 send("step_done", {"step": "CTRUNCATE", "status": "failed", "error": "CTRUNCATE exited with code " + str(rc)})
@@ -2643,8 +2643,8 @@ def stream_xdscc12(project_name, write_fn, batch_width=1, nbin=5):
     log_path = _pout(project_dir, "XDSCC12.LP")
     try:
         log_path.write_text("\n".join(captured_log), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
 
     # Check result
     status, error_msg = "completed", None
@@ -2755,8 +2755,8 @@ def download_xdscc12(write_fn):
             + ". It may not be compatible with your system."})
         try:
             dest.unlink()
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
         send("done", {})
         return
 
@@ -2789,8 +2789,8 @@ def load_aimless_cached_results(project_dir):
             if parsed and (parsed.get('rmeas_overall') is not None or parsed.get('rmerge_overall') is not None):
                 result['aimless'] = parsed
                 result['has_results'] = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     ctr_log = _pfile(project_dir, "ctruncate.log")
     if ctr_log.exists():
@@ -2799,8 +2799,8 @@ def load_aimless_cached_results(project_dir):
             parsed = _parse_ctruncate_log(text)
             if parsed:
                 result['ctruncate'] = parsed
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     return result
 
@@ -2828,8 +2828,8 @@ def load_pointless_cached_results(project_dir):
             elif parsed.get('space_groups'):
                 result['result'] = parsed
                 result['has_results'] = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     return result
 
@@ -3181,8 +3181,8 @@ def _ap_build_xscale_inp(work_dir, resolution, friedel, shells=None):
                         cell = line.split('=')[1].strip()
                     elif not line.startswith('!'):
                         break
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     lines = []
     lines.append("! XSCALE.INP generated by CrystalPilot AutoPilot")
@@ -3273,8 +3273,8 @@ def _ap_generate_xdsinp(project_dir, send, template=None, neggia_lib=''):
                             break
                 except Exception:
                     continue
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     if not template:
         send("ap_log", {"text": ">>> No diffraction images found in project directory"})
@@ -3623,8 +3623,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
             try:
                 _res_path = _pout(project_dir, "AUTOPILOT_RESULTS.json")
                 _res_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
             send("ap_done", {"status": "error", "summary": summary})
             return
 
@@ -3745,22 +3745,22 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                             try:
                                 d = json.loads(data_line)
                                 send("ap_log", {"text": "[AI] " + d.get('text', '')})
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
                         elif event_line == "ai_result" and data_line:
                             try:
                                 autoindex_results.append(json.loads(data_line))
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                _note_error(_e)
                         elif event_line == "ai_done" and data_line:
                             try:
                                 d = json.loads(data_line)
                                 if d.get('top5'):
                                     autoindex_results.extend(d['top5'])
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+                            except Exception as _e:
+                                _note_error(_e)
+                except Exception as _e:
+                    _note_error(_e)
 
             # an imposed space group and cell must survive the trials
             stream_autoindex(project_name, autoindex_tier, _ai_capture, force_cell=bool(space_group))
@@ -4071,8 +4071,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
             if ascii_mtime < correct_mtime - 2:  # 2s tolerance
                 ascii_stale = True
                 send("ap_log", {"text": ">>> WARNING: XDS_ASCII.HKL is older than CORRECT.LP — likely from a previous run"})
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
     elif not ascii_hkl.exists():
         send("ap_log", {"text": ">>> WARNING: XDS_ASCII.HKL not found — CORRECT may have failed silently"})
 
@@ -4227,8 +4227,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                                                 osc = float(m_osc.group(1))
                                                 if osc <= 0:
                                                     osc = 1.0
-                                        except Exception:
-                                            pass
+                                        except Exception as _e:
+                                            _note_error(_e)
 
                                         deltas = [f['delta_all'] for f in frames]
                                         n_total = len(deltas)
@@ -4461,8 +4461,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
         try:
             if ascii_hkl.stat().st_mtime < correct_lp_path.stat().st_mtime - 2:
                 ascii_stale = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     # ══════════════════════════════════════════════════════════════════════
     #  PHASE 4: XSCALE
@@ -4779,7 +4779,7 @@ def load_autopilot_cached_results(project_dir):
             if data.get('status'):
                 result.update(data)
                 result['has_results'] = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
 
     return result

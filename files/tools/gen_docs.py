@@ -64,7 +64,8 @@ GUIDE = [
     ("13 · Table 1", P("The " + B("Statistics") + " tab builds a publication Table 1 from XSCALE.LP or CORRECT.LP; copy as TSV or LaTeX, or export a .csv.")),
     ("14 · Tips", UL(["Work mode (Tutorial / Normal / Advanced / Expert) controls how much is shown; the cut-off preference sets the criterion autofill uses.",
                       "Everything reads and writes in the folder of the last run; the status line under the run-folder field shows it.",
-                      "The server answers only the browser tab that opened it; scripts need the token printed at start (" + C("X-CrystalPilot-Token") + "). " + C("--host 0.0.0.0") + " opens it to the network, " + C("--restrict-browse") + " confines the file browser.",
+                      "A run goes on when the page is closed or loses its connection: open the project again and its tab shows the run, log included. A run that ends while the page is in the background gives a desktop notification.",
+                      "The server answers only the browser tab that opened it; scripts need the token printed at start (" + C("X-CrystalPilot-Token") + "). " + C("--host 0.0.0.0") + " opens it to the network, " + C("--restrict-browse") + " confines the file browser and keeps the XDS, CCP4 and neggia locations as set at start.",
                       "Under Windows keep large Eiger data in the projects folder; the Windows drives are under " + C("/mnt/c") + ", " + C("/mnt/z") + "&hellip;",
                       "Parameter references: " + A(XDSDOC + "xds_parameters.html", "XDS.INP") + " · " + A(XDSDOC + "xscale_parameters.html", "XSCALE.INP") + " · " + A(XDSDOC + "xdsconv_parameters.html", "XDSCONV.INP") + "."])),
 ]

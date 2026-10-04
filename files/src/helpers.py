@@ -124,8 +124,8 @@ def _project_out_dir(project_dir, kind="xds"):
             p = Path(lrf)
             if p.is_dir():
                 return p
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
     return project_dir
 
 
@@ -238,8 +238,8 @@ def _drvfs_mount(source, mount_point):
     if not ok:
         try:
             os.rmdir(mount_point)       # leave no empty folder pretending to be a drive
-        except Exception:
-            pass
+        except Exception as _e:
+            _note_error(_e)
     return ok
 
 
@@ -641,8 +641,8 @@ def _report_redact(text):
     try:
         if API_TOKEN:
             text = text.replace(API_TOKEN, "<token>")
-    except Exception:
-        pass
+    except Exception as _e:
+        _note_error(_e)
     return _REPORT_USER_SEGMENT.sub(lambda mt: mt.group(1) + "<user>", text)
 
 
@@ -731,6 +731,9 @@ def build_problem_report(description, project="", include_project=False, page_er
         put("crystalpilot.log (last %d lines).txt" % REPORT_LOG_LINES, _report_log_tail())
         if page_errors:
             put("page-errors.txt", "\n\n".join(page_errors))
+        handled = _handled_errors_text()
+        if handled:
+            put("handled-errors.txt", "Errors the program went on after (place, count, last error), newest first\n\n" + handled + "\n")
         if include_project and project:
             project_dir = _pdir(project)
             out_dir = _project_out_dir(project_dir)

@@ -177,8 +177,8 @@ class ImageHeaderReader:
                                 header['ny'] = str(ds.shape[1])
                                 header['nx'] = str(ds.shape[2])
                             total_frames += ds.shape[0]
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
                 if total_frames > 0:
                     header['nframes'] = str(total_frames)
             if 'entry/data/data' in f and 'ny' not in header:
@@ -213,20 +213,20 @@ class ImageHeaderReader:
                 _thick = _h5scalar(_ds)
                 if _thick and _thick > 0:
                     header['sensor_thickness'] = str(round(_to_mm(_thick, _h5units(_ds)), 4))
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
             try:
                 _cut = _h5scalar(f[_spec + 'countrate_correction_count_cutoff'])
                 if _cut and _cut > 0:
                     header['overload'] = str(int(_cut))  # XDS OVERLOAD= for Eiger
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
             try:
                 _bits = _h5scalar(f[_det + 'bit_depth_readout'])
                 if _bits and _bits > 0:
                     header['bit_depth'] = str(int(_bits))
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
             # nimages × ntrigger is the declared frame count; use it when the
             # data links could not be followed (chunk files not copied yet).
             try:
@@ -235,8 +235,8 @@ class ImageHeaderReader:
                 _declared = int(_nimg * _ntrig) if _nimg else 0
                 if _declared > 0 and int(header.get('nframes', 0)) == 0:
                     header['nframes'] = str(_declared)
-            except Exception:
-                pass
+            except Exception as _e:
+                _note_error(_e)
 
             # Explicit NeXus paths — must match frame viewer's comprehensive list
             _paths = [
@@ -374,8 +374,8 @@ class ImageHeaderReader:
                             header['wavelength'] = str(round(wl, 6))
                             _debug_log.append(f'  -> wavelength = {wl:.6f} A from energy {eV} eV')
                             break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
             # Oscillation from NeXus — try many known paths (all known Eiger firmware
             # versions, DECTRIS SIMPLON API, NeXus NXtransformations, and beamline-
@@ -414,8 +414,8 @@ class ImageHeaderReader:
                         header['osc_range'] = str(round(v, 6))
                         _debug_log.append(f'  OSC_RANGE from {osc_path} = {v}')
                         break
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
 
             # Compute oscillation from total range / nimages if available
             if 'osc_range' not in header:
@@ -431,8 +431,8 @@ class ImageHeaderReader:
                                 header['osc_range'] = str(round(osc, 6))
                                 _debug_log.append(f'  OSC_RANGE from {total_path}/nframes = {total_v}/{nf} = {osc}')
                                 break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
             # Compute from omega/phi angle arrays if still missing
             if 'osc_range' not in header:
@@ -462,8 +462,8 @@ class ImageHeaderReader:
                                     header['osc_start'] = str(round(v0, 4))
                                     _debug_log.append(f'  OSC_RANGE from array endpoints {arr_path} total={total}/{npts} = {step}')
                                     break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
             # Oscillation start
             if 'osc_start' not in header:
@@ -480,8 +480,8 @@ class ImageHeaderReader:
                         if v is not None:
                             header['osc_start'] = str(round(v, 4))
                             break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        _note_error(_e)
 
             # Subgroup walk for anything still missing
             _geo_keys = {
@@ -537,12 +537,12 @@ class ImageHeaderReader:
                     elif canon == 'osc_range':
                         if not (0 < v < 90): return  # reject unreasonable oscillation
                     header[canon] = str(round(v, 6))
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _note_error(_e)
             for subgrp in ('entry/instrument', 'entry/sample'):
                 if subgrp in f:
                     try: f[subgrp].visititems(_walk)
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
 
             # Diagnostic: print oscillation status
             if 'osc_range' in header:
@@ -617,7 +617,7 @@ class ImageHeaderReader:
                 m = _re.search(pat, txt, _re.IGNORECASE)
                 if m:
                     try: return float(m.group(1)) * scale
-                    except Exception: pass
+                    except Exception as _e: _note_error(_e)
                 return None
             if 'detector_distance' not in header:
                 v = _mini_flt(r'Detector_distance\s+([\d.eE+\-]+)', _mini, 1000.0)

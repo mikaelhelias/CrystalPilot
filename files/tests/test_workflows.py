@@ -173,6 +173,41 @@ class Workflows(unittest.TestCase):
         self.control()
         self.assert_terminal(self.stream(step='INIT'),'completed')
 
+    def test_run_outlives_its_page_and_can_be_followed_again(self):
+        # the page that started the run goes away while the run is going
+        self.control(INIT='wait')
+        conn=http.client.HTTPConnection('127.0.0.1',self.server.server_address[1],timeout=15)
+        conn.request('GET','/api/stream?'+urllib.parse.urlencode({'project':self.name,'steps':'INIT,COLSPOT'}),
+                     headers={'X-CrystalPilot-Token':m.API_TOKEN})
+        response=conn.getresponse(); seen=b''
+        while b'starting INIT' not in seen:
+            seen+=response.fp.readline()
+        self.assertIn(b'event: job\ndata: ',seen)
+        self.assertIn(b'\nid: 0\n',seen)
+        conn.close()
+        try:
+            status,data=self.request('GET','/api/jobs?'+urllib.parse.urlencode({'project':self.name}))
+            self.assertEqual(status,200)
+            job=data['jobs'][0]
+            self.assertEqual((job['kind'],job['running'],job['followable'],job['title']),('xds',True,True,'INIT to COLSPOT'))
+            (self.p/'release').touch()
+            # a new page follows it: everything from the start, then the rest until the end
+            status,events=self.request('GET','/api/jobs/stream?id='+job['id'])
+            self.assertEqual(status,200)
+            self.assertEqual([d['step'] for e,d in events if e=='step_start'],['INIT','COLSPOT'])
+            self.assertEqual([d['step'] for e,d in events if e=='step_done'],['INIT','COLSPOT'])
+            self.assert_terminal(events,'completed')
+            # after a lost connection: only what came after the last event received
+            status,again=self.request('GET','/api/jobs/stream?id='+job['id'],headers={'Last-Event-ID':'0'})
+            self.assertEqual(again,events[1:])
+            status,data=self.request('GET','/api/jobs?'+urllib.parse.urlencode({'project':self.name}))
+            self.assertEqual((data['jobs'][0]['running'],data['jobs'][0]['status']),(False,'completed'))
+            self.assertEqual(self.request('GET','/api/jobs/stream?id=nosuchrun')[0],404)
+        finally:
+            (self.p/'release').touch()
+            deadline=time.monotonic()+10
+            while m._jobs_running(self.name) and time.monotonic()<deadline:time.sleep(.05)
+
     def test_timeout_is_terminal_and_releases_job(self):
         self.control(INIT='quiet')
         with patch.object(m,'XDS_STEP_TIMEOUT',.2):events=self.stream(steps='INIT,COLSPOT')
@@ -487,6 +522,14 @@ class Workflows(unittest.TestCase):
             status, _ = self.request("POST", "/api/batch/create", {"name": "x", "strategy": {},
                                      "datasets": [{"template": str(self.p / "a_????.cbf"), "xdsinp": str(outside / "XDS.INP")}]})
             self.assertEqual(status, 403)
+            # the program locations are set where the server starts: a client cannot point them elsewhere
+            before = (str(m.xds_runner.xds_path), m.CCP4_BIN, m.NEGGIA_LIB)
+            for key in ("xds_path", "ccp4_bin", "neggia_lib"):
+                status, body = self.request("POST", "/api/config", {key: str(outside)})
+                self.assertEqual(status, 403, (key, body))
+            self.assertEqual((str(m.xds_runner.xds_path), m.CCP4_BIN, m.NEGGIA_LIB), before)
+            # the same values sent back with another setting are accepted
+            self.assertEqual(self.request("POST", "/api/config", {"xds_path": before[0], "parallel": m.XDS_PARALLEL})[0], 200)
 
     # ── group C: Stop hits the program it belongs to ─────────────────────────
     def test_stop_with_a_kind_leaves_other_programs_of_the_project_running(self):
