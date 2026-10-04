@@ -268,6 +268,35 @@ async function main() {
     check("Charts: the expanded chart offers a PNG and produces one",
       !chartPng.missing && !chartPng.noChart && chartPng.shown && chartPng.w > 300 && chartPng.bytes > 2000,
       JSON.stringify(chartPng));
+    const chartZoom = await evalJs(`(async () => {
+      const canvas = Array.from(document.querySelectorAll('#main-tab-dp canvas')).find(c => c.onclick && c._chartLayout && c._chartLayout.n > 8);
+      if (!canvas) return { noChart: true };
+      const page = [canvas._chartLayout.x0, canvas._chartLayout.x1, canvas._chartLayout.n];
+      canvas.onclick(); await new Promise(r => setTimeout(r, 600));
+      const mc = document.getElementById('chart-modal-canvas');
+      const tools = getComputedStyle(document.getElementById('chart-modal-zoom')).display !== 'none';
+      let L = mc._chartLayout; const r = mc.getBoundingClientRect();
+      const sx = r.width / parseFloat(mc.style.width), sy = r.height / parseFloat(mc.style.height);
+      const at = (x, y) => ({ clientX: r.left + x * sx, clientY: r.top + y * sy, bubbles: true, cancelable: true });
+      mc.dispatchEvent(new WheelEvent('wheel', Object.assign(at(L.padL + L.plotW / 2, L.padT + L.plotH / 2), { deltaY: -100 })));
+      const wheel = [mc._chartLayout.x0, mc._chartLayout.x1];
+      L = mc._chartLayout;
+      const a = at(L.padL + L.plotW * 0.25, L.padT + L.plotH * 0.25), b = at(L.padL + L.plotW * 0.75, L.padT + L.plotH * 0.75);
+      mc.dispatchEvent(new MouseEvent('mousedown', Object.assign({}, a, { button: 0 })));
+      window.dispatchEvent(new MouseEvent('mousemove', b)); window.dispatchEvent(new MouseEvent('mouseup', b));
+      const box = [mc._chartLayout.x0, mc._chartLayout.x1];
+      mc.dispatchEvent(new MouseEvent('dblclick', at(L.padL + 10, L.padT + 10)));
+      const back = [mc._chartLayout.x0, mc._chartLayout.x1];
+      document.getElementById('chart-modal').style.display = 'none';
+      return { page, tools, wheel, box, back, pageAfter: [canvas._chartLayout.x0, canvas._chartLayout.x1] };
+    })()`);
+    check("Charts: the enlarged chart zooms (wheel, box), a double-click shows it whole, the page chart stays whole",
+      !chartZoom.noChart && chartZoom.tools && chartZoom.page[0] === 0 && chartZoom.page[1] === chartZoom.page[2] - 1
+        && chartZoom.wheel[1] - chartZoom.wheel[0] < chartZoom.page[1] - chartZoom.page[0]
+        && chartZoom.box[1] - chartZoom.box[0] < chartZoom.wheel[1] - chartZoom.wheel[0]
+        && chartZoom.back[0] === 0 && chartZoom.back[1] === chartZoom.page[1]
+        && chartZoom.pageAfter[0] === 0 && chartZoom.pageAfter[1] === chartZoom.page[1],
+      JSON.stringify(chartZoom));
 
     check("DP tab: history without JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
     await shot("03_dp_history");
@@ -275,6 +304,7 @@ async function main() {
 
     // ── Frame viewer on the real master file ─────────────────────────────
     mark = events.length;
+    let ownWindowUrl = null;
     await evalJs(`switchMainTab('fv')`); await sleep(1500);
     if (MASTER) {
       await evalJs(`(async () => { const p = document.getElementById('fv-file-path'); p.value = ${JSON.stringify(MASTER)}; await fvLoadFrame(); })()`);
@@ -284,6 +314,12 @@ async function main() {
       check("Frame viewer: real frame rendered from the master file", loaded, "status=" + st + " " + errorsSince(mark).join(" | "));
       await evalJs(`(() => { try { fvToggleRings(); } catch (e) {} })()`); await sleep(1500);
       await shot("04_frame_viewer");
+      ownWindowUrl = await evalJs(`(() => { fvGoToFrame(2); const real = window.open; let u = null;
+        window.open = function(url) { u = url; return {}; }; try { fvOpenOwnWindow(); } finally { window.open = real; } return u; })()`);
+      check("Frame viewer: Own window opens the viewer alone on this frame",
+        !!ownWindowUrl && (() => { const q = new URL(URL_ + ownWindowUrl).searchParams;
+          return q.get('viewer') === 'fv' && q.get('frame') === '2' && q.get('path') === MASTER; })(),
+        String(ownWindowUrl));
     } else {
       console.log("     (CP_UI_MASTER not set - frame render skipped)");
     }
@@ -405,6 +441,28 @@ async function main() {
     check("Environment screen lists XDS", /XDS/.test(envTxt), "");
     check("Environment screen: no JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
     await shot("08_environment");
+
+    // ── The frame viewer in its own window (last: it leaves the main page) ──
+    if (ownWindowUrl) {
+      mark = events.length;
+      await send("Page.navigate", { url: URL_ + ownWindowUrl });
+      let own = null;
+      for (let i = 0; i < 60; i++) {
+        await sleep(1000);
+        own = await evalJs(`(() => { const im = document.getElementById('fv-image'); const d = s => { const e = document.querySelector(s); return e ? getComputedStyle(e).display : 'missing'; };
+          return { only: document.documentElement.classList.contains('cp-viewer-only'), frame: typeof _fvCurIdx === 'number' ? _fvCurIdx : -1,
+                   loaded: !!(im && im.complete && im.naturalWidth > 100), zoom: typeof _fvZoom === 'number' ? _fvZoom : 0,
+                   shown: im ? [im.offsetWidth, im.offsetHeight] : [], box: [innerWidth, innerHeight],
+                   hidden: [d('header.hero'), d('aside.sidebar'), d('#main-tab-bar'), d('#fv-own-window-btn')], fit: d('#fv-fit-btn') }; })()`);
+        if (own && own.loaded && own.frame === 2 && own.zoom < 1) break;
+      }
+      check("Frame viewer own window: only the viewer, on the frame it was opened on, fitted to the window",
+        own && own.only && own.loaded && own.frame === 2 && own.hidden.every(x => x === 'none') && own.fit !== 'none'
+          && own.shown[0] <= own.box[0] && own.shown[1] <= own.box[1],
+        JSON.stringify(own));
+      check("Frame viewer own window: no JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
+      await shot("09_frame_viewer_own_window");
+    }
 
     fs.writeFileSync(path.join(OUT, "results.json"), JSON.stringify(results, null, 2));
     console.log(`RESULT: ${results.length - failed} passed, ${failed} failed  (screenshots in ${OUT})`);

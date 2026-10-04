@@ -1339,6 +1339,20 @@ def define_checks(m, scratch):
         assert "d.problem" in html, "the browser does not show why a drive could not be reached"
         assert "fetch(`${API}/drives`)" in html, "the drive row is not asked again when the browser opens (0.6.9c)"
 
+    @check("frontend: enlarged charts zoom; the frame viewer opens alone in its own window")
+    def _():
+        html = m.get_frontend_html()
+        for needle, why in (("_chartView = _chartModalView", "the enlarged chart window does not pass its zoom to the chart"),
+                            ("var view = _chartView;", "the chart drawing ignores the zoom"),
+                            ('id="chart-modal-zoom"', "no zoom tools in the chart window"),
+                            ("function fvOpenOwnWindow", "no Own window for the frame viewer"),
+                            ("/[?&]viewer=fv(&|$)/.test(location.search)", "the own window is not recognised before drawing"),
+                            ("html.cp-viewer-only aside.sidebar", "the own window still shows the project sidebar"),
+                            ('id="main-tab-bar"', "the tab bar cannot be hidden in the own window"),
+                            ("_openChartModal('COLSPOT", "the COLSPOT chart does not enlarge"),
+                            ("_openChartModal('INIT", "the INIT chart does not enlarge")):
+            assert needle in html, why
+
     # -- drives Windows has that WSL has not mounted (0.6.9c) ------------------
     NET_USE = ("New connections will be remembered.\r\n\r\n\r\n"
                "Status       Local     Remote                    Network\r\n\r\n"
