@@ -162,12 +162,12 @@ More: [linux/README-Linux.md](linux/README-Linux.md)
 CrystalPilot runs natively with the macOS build of XDS (Apple silicon `XDS-Apple_M1`, or Intel `XDS-OSX_64`) and the macOS neggia library for the same processor. Python 3.7 or newer is needed (`xcode-select --install`, or python.org).
 
 1. Unpack XDS (for example into `/Applications`) and put the neggia library next to `xds_par`.
-2. Get the repository (**Code → Download ZIP**, or `git clone`) and unzip it.
+2. Download `CrystalPilot-<version>-mac.tar.gz` from [Releases](../../releases) and double-click it to unpack it (or get the repository: **Code → Download ZIP**, or `git clone`).
 3. Double-click **mac/Install CrystalPilot.command** (the first time: right-click → **Open**), or in Terminal:
    ```bash
    bash mac/install-mac.sh
    ```
-   It builds the application, creates a private Python environment in `~/CrystalPilot`, finds XDS, the neggia library matching it (arm64 or x86_64) and CCP4 in `/Applications`, clears the download quarantine that stops macOS from running XDS, and installs **CrystalPilot** and **CrystalPilot Stop** in `~/Applications`.
+   It takes the application file from the package (from a copy of the repository it builds it), creates a private Python environment in `~/CrystalPilot`, finds XDS, the neggia library matching it (arm64 or x86_64) and CCP4 in `/Applications`, clears the download quarantine that stops macOS from running XDS, and installs **CrystalPilot** and **CrystalPilot Stop** in `~/Applications`.
 4. Start **CrystalPilot** from Launchpad, Spotlight or the Dock. It opens in your browser.
 
 More: [mac/README-Mac.md](mac/README-Mac.md)

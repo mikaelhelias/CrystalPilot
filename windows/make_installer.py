@@ -8,7 +8,7 @@
                                                   (the Ubuntu runtime image inside, no download at install time)
     py -3 windows\\make_installer.py --no-exe   -> the zip only
 
-What goes in: windows\\ (installer, launcher, splash, WSL scripts), linux\\,
+What goes in: windows\\ (installer, launcher, splash, WSL scripts), linux\\, mac\\,
 the newest files\\xds-gui-vNNN.py, the illustrated manual (HTML, PDF, search
 index), README.  Not: old builds, sources, tests, the projects folder.
 
@@ -75,6 +75,7 @@ def stage(dest, offline_image=None):
         if f.is_file() and f.name != "crystalpilot.cfg" and f.suffix.lower() in (".ps1", ".bat", ".sh", ".html", ".md", ".jpg", ".ico"):
             shutil.copy2(f, pkg / "windows" / f.name)
     shutil.copytree(ROOT / "linux", pkg / "linux", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(ROOT / "mac", pkg / "mac", ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
     (pkg / "files").mkdir()
     app = newest_app()
     shutil.copy2(app, pkg / "files" / app.name)
@@ -88,9 +89,10 @@ def stage(dest, offline_image=None):
     readme.write_text(
         "CrystalPilot " + ver + "\n\n"
         "Windows:  double-click windows\\CrystalPilot-Setup.bat  (or the CrystalPilot-Setup-" + ver + ".exe you got this from).\n"
-        "Linux:    bash linux/install-linux.sh\n\n"
+        "Linux:    bash linux/install-linux.sh\n"
+        "macOS:    double-click mac/Install CrystalPilot.command (the first time: right-click it, Open), or: bash mac/install-mac.sh\n\n"
         "The illustrated manual is in docs\\manual (CrystalPilot-Manual.pdf); the same manual opens from inside the program.\n"
-        "Read windows\\README-Windows.md or linux/README-Linux.md for the details.\n\n"
+        "Read windows\\README-Windows.md, linux/README-Linux.md or mac/README-Mac.md for the details.\n\n"
         "Copyright (C) 2026 Mikael Elias. Free software under the GNU General Public License v3 (see LICENSE), without any warranty.\n", encoding="utf-8")
     if offline_image:
         shutil.copy2(offline_image, pkg / "windows" / ROOTFS_NAME)
@@ -99,11 +101,21 @@ def stage(dest, offline_image=None):
 
 def make_linux_tar(pkg, out):
     """The Linux package: linux/ (installer), files/ (app), docs/manual - no Windows parts."""
+    return make_platform_tar(pkg, out, "linux")
+
+
+def make_mac_tar(pkg, out):
+    """The macOS package: mac/ (installer and Install CrystalPilot.command), files/ (app),
+    docs/manual.  A .tar.gz keeps the installers executable; Finder unpacks it with a double-click."""
+    return make_platform_tar(pkg, out, "mac")
+
+
+def make_platform_tar(pkg, out, platform):
     import tarfile
     if out.exists():
         out.unlink()
     with tarfile.open(out, "w:gz") as t:
-        for sub in ("linux", "files", "docs", "README.txt", "LICENSE"):
+        for sub in (platform, "files", "docs", "README.txt", "LICENSE"):
             src = pkg / sub
             if not src.exists():
                 continue
@@ -111,7 +123,7 @@ def make_linux_tar(pkg, out):
                 if not f.is_file():
                     continue
                 info = t.gettarinfo(str(f), (pkg.name + "/" + f.relative_to(pkg).as_posix()))
-                info.mode = 0o755 if f.suffix == ".sh" else 0o644
+                info.mode = 0o755 if f.suffix in (".sh", ".command") else 0o644
                 info.uid = info.gid = 0; info.uname = info.gname = ""
                 with open(f, "rb") as fh:
                     t.addfile(info, fh)
@@ -360,6 +372,8 @@ def main():
         print("package :", z, "(%.1f MB)" % (z.stat().st_size / 1e6))
         lt = make_linux_tar(pkg, dist / ("CrystalPilot-" + ver + "-linux.tar.gz"))
         print("linux   :", lt, "(%.1f MB)" % (lt.stat().st_size / 1e6))
+        mt = make_mac_tar(pkg, dist / ("CrystalPilot-" + ver + "-mac.tar.gz"))
+        print("macOS   :", mt, "(%.1f MB)" % (mt.stat().st_size / 1e6))
         # the single-file program: copied into the XDS folder and started with python3
         single = dist / ("crystalpilot-" + ver + ".py")
         shutil.copy2(newest_app(), single)

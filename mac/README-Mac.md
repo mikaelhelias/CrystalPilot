@@ -26,8 +26,9 @@ https://www.python.org/downloads/macos/ .
 
 ## Install
 
-Get the `mac` folder: the repository (**Code → Download ZIP** on GitHub, or
-`git clone`) or the release archive, and unzip it. Then either:
+Get the `mac` folder: the release archive `CrystalPilot-<version>-mac.tar.gz`
+(double-click it in Finder to unpack it), or the repository (**Code → Download
+ZIP** on GitHub, or `git clone`). Then either:
 
 - **In Finder:** double-click **Install CrystalPilot.command** in the `mac`
   folder. The first time, macOS may say it cannot verify the developer:
