@@ -461,6 +461,78 @@ def _wsl_drives():
             pass
     return drives
 
+
+def _parse_net_use(text):
+    r"""Mapped network drives in the output of Windows' `net use`:
+    [(letter, unc, status)].  The status is kept as Windows wrote it ("OK",
+    "Disconnected", "Unavailable" - translated on a non-English Windows); a
+    share idle for a while reads "Disconnected" and still opens at once."""
+    found = []
+    for line in (text or "").splitlines():
+        m = re.search(r"(?:^|\s)([A-Za-z]):\s+(\\\\\S.*)$", line)
+        if not m:
+            continue
+        unc = re.split(r"\s{2,}", m.group(2).strip())[0]
+        found.append((m.group(1).upper(), unc, line[:m.start(1)].strip()))
+    return found
+
+
+_WIN_DRIVES_CACHE = {"time": 0.0, "drives": None}
+
+
+def _windows_drives(max_age=10.0, cached_only=False):
+    r"""Every drive Windows has, mounted inside WSL or not:
+    [{'letter', 'kind' ('local' | 'network'), 'unc', 'status', 'path', 'mounted'}].
+
+    WSL mounts the fixed disks by itself and the launcher the network drives
+    that are connected when CrystalPilot starts; a share Windows lists as
+    "Disconnected" (idle, it reconnects when used), a drive connected later
+    and a USB disk plugged in later are missing from /mnt.  This asks Windows
+    (one PowerShell call, kept max_age seconds) so the folder browser can offer
+    them; a click mounts them (_to_local_path).  cached_only: no new call.
+    Empty outside WSL, or when Windows cannot be asked."""
+    import time as _time
+    if not IS_WSL:
+        return []
+    cached = _WIN_DRIVES_CACHE["drives"]
+    if cached_only:
+        return cached or []
+    now = _time.time()
+    if cached is not None and now - _WIN_DRIVES_CACHE["time"] < max_age:
+        return cached
+    exe = shutil.which("powershell.exe") or (WSL_MOUNT_ROOT + "c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+    # only the letters and the drive type of local disks: asking a network
+    # drive for its size waits for every unreachable server (24 s seen)
+    script = ("[IO.DriveInfo]::GetDrives() | ForEach-Object { $t = [string]$_.DriveType; "
+              "if (($t -eq 'Fixed' -or $t -eq 'Removable') -and $_.IsReady) { 'LOCALDRIVE ' + $_.Name.Substring(0, 1) } }; "
+              "& net.exe use")
+    try:
+        r = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                           text=True, errors="replace", timeout=20,
+                           cwd=(WSL_MOUNT_ROOT + "c") if os.path.isdir(WSL_MOUNT_ROOT + "c") else None)
+        out = r.stdout or ""
+    except Exception:
+        return cached or []
+    skip = os.environ.get("CRYSTALPILOT_DRIVE", "").strip()[:1].upper()     # the projects drive (a loop)
+    drives = {}
+    for line in out.splitlines():
+        m = re.match(r"^LOCALDRIVE ([A-Za-z])\s*$", line.strip())
+        if m:
+            drives[m.group(1).upper()] = {"kind": "local", "unc": "", "status": ""}
+    for letter, unc, status in _parse_net_use(out):
+        if re.match(r"^\\\\wsl(\$|\.localhost)\\", unc, re.I):
+            continue                # a letter that points back into a WSL runtime
+        drives[letter] = {"kind": "network", "unc": unc, "status": status}
+    result = []
+    for letter in sorted(drives):
+        if letter == skip:
+            continue
+        mp = WSL_MOUNT_ROOT + letter.lower()
+        d = dict(drives[letter], letter=letter, path=mp, mounted=os.path.ismount(mp))
+        result.append(d)
+    _WIN_DRIVES_CACHE.update(time=now, drives=result)
+    return result
+
 # CCP4 detection
 CCP4_PROGRAMS = ("pointless", "aimless", "ctruncate", "f2mtz", "cad")
 
@@ -609,7 +681,7 @@ def _ccp4_command(name, args, scratch, env=None):
     return [str(path)] + [str(a) for a in args], env
 
 
-def _find_ccp4_bin():
+def _find_ccp4_bin(windows=True):
     """Locate the CCP4 bin folder.  Returns the path or an empty string.
 
     CCP4 9 is installed by unpacking an archive wherever the user likes, so
@@ -659,7 +731,41 @@ def _find_ccp4_bin():
             for hit in sorted(_glob.glob(str(root / pat)), reverse=True):   # newest first
                 if _is_ccp4_bin(hit):
                     return hit
+
+    # 4. Under WSL, a CCP4 for Windows on this computer's own disks, looked for
+    # where the installer looks (C:\CCP4-9\9.0, Program Files, the users'
+    # folders).  Only the installer did this, once: a CCP4 installed later, or
+    # one it missed, was never found.  Network drives are left out (slow).
+    # windows=False: not now (asking Windows takes about a second; the start
+    # looks for it in the background instead, see runner.py).
+    if IS_WSL and windows:
+        return _find_windows_ccp4_bin()
     return ""
+
+
+def _find_windows_ccp4_bin(drives=None):
+    """The newest CCP4 for Windows bin folder on the local Windows disks, as a
+    WSL path, or ""."""
+    import glob as _glob
+    if drives is None:
+        drives = [d["path"] for d in _windows_drives() if d["kind"] == "local" and d["mounted"]]
+    hits = []
+    for drive in drives:
+        d = Path(drive)
+        bases = [d, d / "Program Files", d / "Program Files (x86)"]
+        for user in sorted(_glob.glob(str(d / "Users" / "*"))):
+            u = Path(user)
+            bases += [u, u / "Downloads", u / "Documents", u / "Desktop", u / "AppData" / "Local"]
+        for base in bases:
+            for pat in ("[Cc][Cc][Pp]4*/bin", "[Cc][Cc][Pp]4*/*/bin"):
+                for hit in _glob.glob(str(base / pat)):
+                    if _is_ccp4_bin(hit):
+                        rel = os.path.relpath(hit, str(base)).lower()
+                        # numbers compared as numbers (re.split alternates text, number, text ...)
+                        key = [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", rel))]
+                        hits.append((key, hit))
+    # newest by its own folder names (CCP4-9/9.0 before CCP4-8/8.0), whatever the drive
+    return max(hits)[1] if hits else ""
 
 
 # ── XDSCC12 detection ─────────────────────────────────────────────────────────

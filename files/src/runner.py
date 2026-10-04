@@ -136,7 +136,17 @@ def _outcome_message(outcome, label, timeout=None):
     return label + " could not be run: " + outcome.replace("error: ", "", 1)
 
 
-CCP4_BIN = CCP4_BIN or _find_ccp4_bin()
+CCP4_BIN = CCP4_BIN or _find_ccp4_bin(windows=False)
+if not CCP4_BIN and IS_WSL:
+    # A CCP4 for Windows on the Windows disks: asking Windows for its disks
+    # takes about a second, so it is looked for right after the start, not
+    # before it (a start without any CCP4 would wait for nothing).
+    def _ccp4_from_windows():
+        global CCP4_BIN
+        found = _find_windows_ccp4_bin()
+        if found and not CCP4_BIN:
+            CCP4_BIN = found
+    threading.Thread(target=_ccp4_from_windows, name="ccp4-windows-search", daemon=True).start()
 XDSCC12_BIN = _find_xdscc12()
 
 

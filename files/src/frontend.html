@@ -11870,14 +11870,42 @@
                 }
             }
             if (!_fbWslInfo.is_wsl) { box.style.display = 'none'; return; }
+            _fbRenderDrives(box, _fbWslInfo.drives, []);
+            // Then ask again what Windows has: a network drive Windows lists as
+            // "Disconnected" (idle - it reconnects when used), a drive connected
+            // after the start or a USB disk plugged in later is not mounted in
+            // Linux yet; it is offered too, and a click mounts it.
+            try {
+                const r = await fetch(`${API}/drives`);
+                const d = await r.json();
+                if (!d.is_wsl) return;
+                _fbWslInfo.drives = d.mounted || [];
+                _fbRenderDrives(box, _fbWslInfo.drives, (d.windows || []).filter(function(w) { return !w.mounted; }));
+            } catch (e) { /* the row from the start stays */ }
+        }
+        function _fbRenderDrives(box, mounted, notMounted) {
             box.innerHTML = '';
             box.appendChild(document.createTextNode('Windows drives:'));
-            _fbWslInfo.drives.forEach(function(d) {
+            mounted.forEach(function(d) {
                 const b = document.createElement('button');
                 b.className = 'fb-chip';
                 b.textContent = (d.split('/').filter(Boolean).pop() || d).toUpperCase() + ':';
                 b.title = d;
                 b.onclick = function() { fbNavigate(d); };
+                box.appendChild(b);
+            });
+            notMounted.forEach(function(w) {
+                const b = document.createElement('button');
+                b.className = 'fb-chip';
+                b.style.borderStyle = 'dashed';
+                b.textContent = w.letter + ':';
+                b.title = (w.unc ? w.unc + ' (network drive' + (w.status ? ', Windows says: ' + w.status : '') + ')' : 'Windows drive')
+                        + ' - not opened in Linux yet: click to connect it';
+                b.onclick = async function() {
+                    _fbSetStatus('Connecting to ' + w.letter + ': ...', 'var(--txt3)');
+                    await fbNavigate(w.letter + ':\\');
+                    _fbShowWslHint();          // the drive is mounted now: a normal chip
+                };
                 box.appendChild(b);
             });
             if (_fbWslInfo.projects) {

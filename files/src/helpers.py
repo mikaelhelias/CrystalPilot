@@ -258,9 +258,23 @@ def _to_local_path(path):
         letter = m.group(1).upper()
         rest = (m.group(2) or "").replace("\\", "/").lstrip("/")
         mp = WSL_MOUNT_ROOT + letter.lower()
-        if not os.path.ismount(mp) and not _drvfs_mount(letter + ":", mp):
-            return path, ("drive " + letter + ": is not available inside Linux - is it still "
-                          "connected?  Starting CrystalPilot again mounts the drives that are.")
+        if not os.path.ismount(mp):
+            import time as _time
+            started = _time.time()
+            ok = _drvfs_mount(letter + ":", mp)
+            # a mapped network drive the folder browser listed: try its share
+            # name too, as the launcher does - unless the letter timed out
+            unc = next((d["unc"] for d in _windows_drives(cached_only=True)
+                        if d["letter"] == letter and d["unc"]), "")
+            if not ok and unc and _time.time() - started < 10:
+                _MOUNT_TRIED.pop(mp, None)
+                ok = _drvfs_mount(unc, mp)
+            if not ok:
+                if unc:
+                    return path, ("the network drive " + letter + ": (" + unc + ") could not be reached - "
+                                  "open it once in Windows Explorer, then try again")
+                return path, ("drive " + letter + ": is not available inside Linux - is it still "
+                              "connected?  Starting CrystalPilot again mounts the drives that are.")
         return (mp + "/" + rest if rest else mp), ""
     if p.startswith("\\\\") and len(p) > 2:
         parts = [x for x in p[2:].replace("\\", "/").split("/") if x]

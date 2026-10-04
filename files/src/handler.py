@@ -1741,6 +1741,15 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             })
 
         # Directory listing for folder picker
+        # The folder browser's drive row: what is mounted, plus the drives
+        # Windows has that are not (a network share listed "Disconnected", a
+        # drive connected after the start) - asked again each time it opens.
+        elif path == "/api/drives":
+            if RESTRICT_BROWSE or not IS_WSL:
+                self.send_json({"is_wsl": IS_WSL and not RESTRICT_BROWSE, "mounted": [], "windows": []})
+                return
+            self.send_json({"is_wsl": True, "mounted": _wsl_drives(), "windows": _windows_drives()})
+
         elif path == "/api/ls":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             req_path = qs.get("path", [""])[0] or str(Path.home())
@@ -4064,6 +4073,20 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             # folder instead of the file) and has to exist.  Storing a path
             # that is then dropped without a word at the next start is what
             # made the reader path look like it was never saved.
+            # Under WSL a Windows path typed or pasted here (C:\CCP4-9\9.0,
+            # \\server\share\xds) is translated - and its drive mounted - the
+            # way the folder browser's path bar does it.
+            def _from_windows(value):
+                if not value or RESTRICT_BROWSE:
+                    return value, ""
+                return _to_local_path(str(value))
+            for _key in ("neggia_lib", "xds_path", "ccp4_bin"):
+                _local, _problem = _from_windows(data.get(_key))
+                if _problem:
+                    self.send_json({"error": _problem}, 400)
+                    return
+                if _local != data.get(_key):
+                    data[_key] = _local
             neggia = data.get("neggia_lib")
             if neggia is not None:
                 neggia = _clean_path_setting(neggia, NEGGIA_NAMES)
