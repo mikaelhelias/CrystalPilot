@@ -177,6 +177,42 @@ class ReviewRegressions(unittest.TestCase):
             except (ProcessLookupError,PermissionError):pass
             p.wait(); p.stdout.close()
 
+    def test_environment_fields_accept_windows_paths(self):
+        # under WSL a typed C:\CCP4-9 was refused ("No CCP4 programs") although
+        # the folder browser's path bar opened the same text
+        root=str(scratch/'cfgmnt')+'/'
+        bin_dir=Path(root)/'q'/'CCP4'/'bin'; bin_dir.mkdir(parents=True,exist_ok=True); (bin_dir/'f2mtz').write_text('x')
+        settings=m.SETTINGS_FILE.read_bytes() if m.SETTINGS_FILE.exists() else None
+        was=(m.IS_WSL,m.WSL_MOUNT_ROOT,m._drvfs_mount,m.CCP4_BIN,m.CCP4_BIN_SAVED)
+        m.IS_WSL,m.WSL_MOUNT_ROOT=True,root
+        try:
+            m._drvfs_mount=lambda source,mp:True
+            status,data=request('POST','/api/config',{'ccp4_bin':'Q:\\CCP4'})
+            self.assertEqual(status,200,data); self.assertEqual(Path(data['ccp4_bin']),bin_dir)
+            m._drvfs_mount=lambda source,mp:False
+            status,data=request('POST','/api/config',{'ccp4_bin':'R:\\CCP4'})
+            self.assertEqual(status,400,data); self.assertIn('R:',data['error'])
+            status,data=request('POST','/api/config',{'neggia_lib':'R:\\xds\\dectris-neggia.so'})
+            self.assertEqual(status,400,data); self.assertIn('R:',data['error'])
+        finally:
+            m.IS_WSL,m.WSL_MOUNT_ROOT,m._drvfs_mount,m.CCP4_BIN,m.CCP4_BIN_SAVED=was
+            if settings is None:
+                if m.SETTINGS_FILE.exists():m.SETTINGS_FILE.unlink()
+            else:m.SETTINGS_FILE.write_bytes(settings)
+
+    def test_drives_route_offers_unmounted_windows_drives_only_under_wsl(self):
+        status,data=request('GET','/api/drives')
+        self.assertEqual(status,200,data)
+        if not m.IS_WSL:self.assertEqual((data['is_wsl'],data['windows']),(False,[]))
+        net=[{'letter':'V','kind':'network','unc':'\\\\srv\\share','status':'Disconnected','path':'/mnt/v','mounted':False}]
+        with patch.object(m,'IS_WSL',True),patch.object(m,'_wsl_drives',return_value=['/mnt/c']),\
+             patch.object(m,'_windows_drives',return_value=net):
+            status,data=request('GET','/api/drives')
+            self.assertEqual((status,data['is_wsl'],data['mounted'],data['windows']),(200,True,['/mnt/c'],net))
+            with patch.object(m,'RESTRICT_BROWSE',True):
+                status,data=request('GET','/api/drives')
+                self.assertEqual((data['is_wsl'],data['mounted'],data['windows']),(False,[],[]))
+
     def test_a_save_answers_only_after_the_project_folder_is_free(self):
         # releasing is made slow: an answer sent before the release would
         # arrive while the folder is still reserved, and a next write sent at

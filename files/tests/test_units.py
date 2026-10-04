@@ -1337,6 +1337,133 @@ def define_checks(m, scratch):
         assert "d.replace('/mnt/', '')" not in html, "the drive buttons still assume /mnt"
         assert "filter(Boolean).pop()" in html, "the drive button label is not taken from the mount point"
         assert "d.problem" in html, "the browser does not show why a drive could not be reached"
+        assert "fetch(`${API}/drives`)" in html, "the drive row is not asked again when the browser opens (0.6.9c)"
+
+    # -- drives Windows has that WSL has not mounted (0.6.9c) ------------------
+    NET_USE = ("New connections will be remembered.\r\n\r\n\r\n"
+               "Status       Local     Remote                    Network\r\n\r\n"
+               "-------------------------------------------------------------------------------\r\n"
+               "Disconnected V:        \\\\fileserver.example.org\\groups\\lab \r\n"
+               "                                                Microsoft Windows Network\r\n"
+               "OK           Z:        \\\\nas01\\data      Microsoft Windows Network\r\n"
+               "Nicht verfügbar Y:     \\\\srv\\lab share        Microsoft Windows Network\r\n"
+               "             U:        \\\\srv\\home\r\n"
+               "OK           P:        \\\\wsl.localhost\\CrystalPilot\\root\\crystalpilot_projects\r\n"
+               "OK                     \\\\srv\\IPC$                Microsoft Windows Network\r\n"
+               "The command completed successfully.\r\n")
+
+    @check("windows drives: `net use` read whatever the status word (idle shares read Disconnected)")
+    def _():
+        got = m._parse_net_use(NET_USE)
+        want = [("V", "\\\\fileserver.example.org\\groups\\lab", "Disconnected"),
+                ("Z", "\\\\nas01\\data", "OK"),
+                ("Y", "\\\\srv\\lab share", "Nicht verfügbar"),
+                ("U", "\\\\srv\\home", ""),
+                ("P", "\\\\wsl.localhost\\CrystalPilot\\root\\crystalpilot_projects", "OK")]
+        assert got == want, got
+        assert m._parse_net_use("") == [] and m._parse_net_use(None) == []
+
+    @check("windows drives: local and network drives listed mounted or not; the projects drive and WSL links left out")
+    def _():
+        from unittest import mock
+        root = str(scratch / "drvmnt") + "/"
+        out = "LOCALDRIVE C\r\nLOCALDRIVE E\r\n" + NET_USE
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return type("R", (), {"stdout": out, "returncode": 0})()
+        was = (m.IS_WSL, m.WSL_MOUNT_ROOT, dict(m._WIN_DRIVES_CACHE), os.environ.get("CRYSTALPILOT_DRIVE"))
+        m.IS_WSL, m.WSL_MOUNT_ROOT = True, root
+        m._WIN_DRIVES_CACHE.update(time=0.0, drives=None)
+        os.environ["CRYSTALPILOT_DRIVE"] = "U:"
+        try:
+            assert m._windows_drives(cached_only=True) == [], "cached_only must not ask Windows"
+            assert not calls
+            with mock.patch.object(m.subprocess, "run", side_effect=fake_run), \
+                 mock.patch.object(m.os.path, "ismount", side_effect=lambda p: p == root + "c"):
+                drives = m._windows_drives()
+                again = m._windows_drives()                    # cached: no second call
+            assert len(calls) == 1, calls
+            assert again == drives
+            by = {d["letter"]: d for d in drives}
+            assert sorted(by) == ["C", "E", "V", "Y", "Z"], sorted(by)     # P: = WSL link, U: = projects drive
+            assert by["C"]["kind"] == "local" and by["C"]["mounted"] and by["C"]["path"] == root + "c"
+            assert by["E"]["kind"] == "local" and not by["E"]["mounted"]
+            assert by["V"]["kind"] == "network" and by["V"]["status"] == "Disconnected" and not by["V"]["mounted"]
+            assert by["V"]["unc"] == "\\\\fileserver.example.org\\groups\\lab"
+            assert m._windows_drives(cached_only=True) == drives
+            m.IS_WSL = False
+            assert m._windows_drives() == [], "outside WSL there are no Windows drives"
+        finally:
+            m.IS_WSL, m.WSL_MOUNT_ROOT = was[0], was[1]
+            m._WIN_DRIVES_CACHE.clear(); m._WIN_DRIVES_CACHE.update(was[2])
+            if was[3] is None:
+                os.environ.pop("CRYSTALPILOT_DRIVE", None)
+            else:
+                os.environ["CRYSTALPILOT_DRIVE"] = was[3]
+
+    @check("windows drives: a network letter that will not mount is tried by its share name, unless it timed out")
+    def _():
+        from unittest import mock
+        root = str(scratch / "drvmnt2") + "/"
+        was = (m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount, dict(m._WIN_DRIVES_CACHE))
+        m.IS_WSL, m.WSL_MOUNT_ROOT = True, root
+        m._WIN_DRIVES_CACHE.update(time=time.time(), drives=[
+            {"letter": "V", "kind": "network", "unc": "\\\\fileserver.example.org\\groups\\lab", "status": "Disconnected",
+             "path": root + "v", "mounted": False}])
+        tried = []
+        try:
+            m._drvfs_mount = lambda source, mp: tried.append(source) or source.startswith("\\\\")
+            got, problem = m._to_local_path("V:\\data\\x1")
+            assert got == root + "v/data/x1" and not problem, (got, problem)
+            assert tried == ["V:", "\\\\fileserver.example.org\\groups\\lab"], tried
+            # both fail: the message names the share and Explorer
+            tried.clear(); m._drvfs_mount = lambda source, mp: tried.append(source) and False
+            got, problem = m._to_local_path("V:\\data")
+            assert got == "V:\\data" and "fileserver.example.org" in problem and "Explorer" in problem, problem
+            assert len(tried) == 2, tried
+            # the letter timed out (the server does not answer): no second wait
+            tried.clear()
+            with mock.patch("time.time", side_effect=[100.0, 111.0]):
+                got, problem = m._to_local_path("V:\\data")
+            assert tried == ["V:"], tried
+            # a local letter is never retried by a share name
+            tried.clear()
+            got, problem = m._to_local_path("E:\\data")
+            assert tried == ["E:"] and problem and "E:" in problem, (tried, problem)
+        finally:
+            m.IS_WSL, m.WSL_MOUNT_ROOT, m._drvfs_mount = was[0], was[1], was[2]
+            m._WIN_DRIVES_CACHE.clear(); m._WIN_DRIVES_CACHE.update(was[3])
+
+    @check("CCP4: a CCP4 for Windows on the Windows disks is found (newest), only under WSL, only as the last resort")
+    def _():
+        base = scratch / "ccp4win"
+        for rel in ("c/CCP4-9/9.0/bin/f2mtz.exe", "f/CCP4-8/8.0/bin/f2mtz.exe",
+                    "c/Users/someone/Downloads/CCP4-10/bin/pointless.exe",
+                    "c/Program Files/CCP4-7/bin/cad.exe", "c/CCP4-11-empty/bin/readme.txt"):
+            (base / rel).parent.mkdir(parents=True, exist_ok=True)
+            (base / rel).write_text("x")
+        was = (m.IS_WSL, m._CCP4_EXE_OK, m._find_windows_ccp4_bin)
+        m._CCP4_EXE_OK = True
+        try:
+            got = m._find_windows_ccp4_bin([str(base / "c"), str(base / "f")])
+            assert got == str(base / "c/Users/someone/Downloads/CCP4-10/bin"), got   # 10 > 9 > 8 > 7, numbers as numbers
+            os.remove(str(base / "c/Users/someone/Downloads/CCP4-10/bin/pointless.exe"))
+            got = m._find_windows_ccp4_bin([str(base / "c"), str(base / "f")])
+            assert got == str(base / "c/CCP4-9/9.0/bin"), got
+            assert m._find_windows_ccp4_bin([]) == ""
+            called = []
+            m._find_windows_ccp4_bin = lambda drives=None: called.append(1) or "WIN"
+            m.IS_WSL = False
+            assert m._find_ccp4_bin() != "WIN" and not called, "Linux / macOS must never look for Windows CCP4"
+            m.IS_WSL = True
+            m._find_ccp4_bin(windows=False)
+            assert not called, "the start-up search must not wait for Windows (it runs in the background)"
+            src = m.get_frontend_html.__globals__.get("__file__", "")
+            text = Path(src).read_text(encoding="utf-8", errors="replace") if src else ""
+            assert "CCP4_BIN = CCP4_BIN or _find_ccp4_bin(windows=False)" in text, "start-up asks Windows again"
+        finally:
+            m.IS_WSL, m._CCP4_EXE_OK, m._find_windows_ccp4_bin = was
 
     @check("resources: 4 CPU cores by default, clamped to the machine; RAM 0 = no limit")
     def _():
