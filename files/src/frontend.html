@@ -12431,7 +12431,10 @@
             }
         }
 
-        async function fvListFrames() {
+        /* startIdx (optional): show that frame first instead of the first one,
+           when the series is long enough - the own window opens on the frame it
+           was opened from without waiting for frame 1 over a slow share. */
+        async function fvListFrames(startIdx) {
             const tmpl = document.getElementById('fv-file-path').value.trim();
             if (!tmpl) { document.getElementById('fv-status').textContent = 'Enter a path / template first'; return; }
             // Invalidate spot cache — new frames may be from a different directory
@@ -12493,6 +12496,8 @@
                 _fvH5Map = null;
             }
 
+            const known = _fvH5Map ? _fvNframes : (_fvFiles.length > 1 ? _fvFiles.length : 0);
+            if (startIdx > 0 && known > startIdx) _fvCurIdx = startIdx;
             fvLoadFrame();
         }
 
@@ -13023,13 +13028,19 @@
             document.documentElement.classList.toggle('fv-more');
             _fvOwnLayout();
         }
+        var _fvFitMode = false;      // own window: keep fitting each new image until a zoom is chosen
         function fvFit() {
+            _fvFitMode = true;
+            _fvFitNow();
+        }
+        function _fvFitNow() {
             var img = document.getElementById('fv-image'), wrap = document.getElementById('fv-img-wrap');
             if (!img || !img.naturalWidth || !wrap) return;
             var z = Math.min((wrap.clientWidth - 4) / img.naturalWidth, (wrap.clientHeight - 4) / img.naturalHeight);
             fvSetZoom(Math.max(0.05, z));
         }
         function _fvZoomStep(dir) {
+            _fvFitMode = false;
             var next = null;
             _fvZoomLevels.forEach(function(z) {
                 if (dir > 0 && z > _fvZoom + 1e-9 && next === null) next = z;
@@ -13046,23 +13057,23 @@
                 var el = document.getElementById('fv-' + k);
                 if (el && q.get(k) !== null) el.value = q.get(k);
             });
+            _fvOwnLayout();
+            _fvFitMode = true;
+            document.getElementById('fv-image').addEventListener('load', function() {
+                if (_fvFitMode) setTimeout(function() { _fvOwnLayout(); _fvFitNow(); }, 30);
+            });
+            var slider = document.getElementById('fv-zoom-slider');
+            if (slider) slider.addEventListener('input', function() { _fvFitMode = false; });
             if (q.get('path')) {
                 document.getElementById('fv-file-path').value = q.get('path');
-                var img = document.getElementById('fv-image');
-                var fitOnce = function() {
-                    img.removeEventListener('load', fitOnce);
-                    setTimeout(function() { _fvOwnLayout(); fvFit(); }, 50);
-                };
-                img.addEventListener('load', fitOnce);
-                await fvListFrames();
                 var f = parseInt(q.get('frame'), 10) || 0;
-                if (f > 0) fvGoToFrame(f);
+                await fvListFrames(f);
+                if (f > 0 && _fvCurIdx !== f) fvGoToFrame(f);
             }
-            _fvOwnLayout();
         }
         if (document.documentElement.classList.contains('cp-viewer-only')) {
             window.addEventListener('load', function() { setTimeout(_fvOwnWindowStart, 300); });
-            window.addEventListener('resize', _fvOwnLayout);
+            window.addEventListener('resize', function() { _fvOwnLayout(); if (_fvFitMode) _fvFitNow(); });
             document.addEventListener('keydown', function(e) {
                 var tag = e.target && e.target.tagName;
                 if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.ctrlKey || e.metaKey || e.altKey) return;

@@ -447,7 +447,7 @@ async function main() {
       mark = events.length;
       await send("Page.navigate", { url: URL_ + ownWindowUrl });
       let own = null;
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 150; i++) {        // Eiger frames over a network share take a while
         await sleep(1000);
         own = await evalJs(`(() => { const im = document.getElementById('fv-image'); const d = s => { const e = document.querySelector(s); return e ? getComputedStyle(e).display : 'missing'; };
           return { only: document.documentElement.classList.contains('cp-viewer-only'), frame: typeof _fvCurIdx === 'number' ? _fvCurIdx : -1,
