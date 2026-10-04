@@ -31,7 +31,7 @@ OUT_PDF = HERE / "CrystalPilot-Manual.pdf"
 OUT_INDEX = HERE / "CrystalPilot-Manual.index.json"
 SPLASH = ROOT / "windows" / "splash.html"          # the loading screen: cover picture and cover text come from it
 COVER_PNG = IMAGES / "00-loading-screen.png"
-WRITTEN_WITH = "Anthropic Claude Fable 5.1"   # sections as plain text: the app's Docs search reads it
+WRITTEN_WITH = "Anthropic Claude Fable 5.1"   # named in the colophon
 
 
 def version():

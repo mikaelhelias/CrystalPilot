@@ -23,6 +23,7 @@
 /files/src/src_FILEMAP.md
 /files/src/AUTOPILOT_OPTIMIZE_SPEC*.md
 /files/tests/ui/out/
+/files/tests/INTERFACE_MAP.md
 
 # built manual and installer settings (published on Releases / per installation)
 /docs/manual/CrystalPilot-Manual.html

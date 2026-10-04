@@ -57,9 +57,9 @@ drives the real interface in headless Edge (`ui/ui_pass.js`):
 every main tab is opened, the LP charts, XSCALE/XDSCONV logs, frame viewer on
 the real master file, CCP4 panels, Table 1 and history are triggered, and any
 JavaScript exception, blank chart or unrendered frame fails the run.
-Screenshots land in `tests/ui/out/`. `INTERFACE_MAP.md` lists the program's
-abilities and related test references. The route inventory checks textual
-references only; it does not prove that each route or failure path executes.
+Screenshots land in `tests/ui/out/`. The route inventory checks that every
+server route is named in the test sources; it does not prove that each route
+or failure path executes.
 
 ## Fixtures
 
