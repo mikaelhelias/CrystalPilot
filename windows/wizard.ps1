@@ -82,21 +82,28 @@ function Invoke-WslLines {
     # Run wsl.exe and return its output lines (empty array on failure); never throws.
     # The window keeps painting while it waits: the first call can take many seconds
     # (the runtime starts), and a plain call froze the wizard for that long.
+    # On failure $script:WslLastError says what wsl.exe answered (for the install log).
     param([string[]]$WslArgs)
+    $script:WslLastError = ""
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = "wsl.exe"; $psi.Arguments = ConvertTo-ArgString $WslArgs
         $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
         $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-        $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
         $psi.EnvironmentVariables["WSL_UTF8"] = "1"
         $p = [System.Diagnostics.Process]::Start($psi)
-        $out = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
+        $out = $p.StandardOutput.ReadToEndAsync(); $err = $p.StandardError.ReadToEndAsync()
         while (-not $p.WaitForExit(50)) { & $script:Pump }
         $p.WaitForExit()
-        if ($p.ExitCode -ne 0) { return @() }
+        if ($p.ExitCode -ne 0) {
+            $said = ((([string]$out.Result + " " + [string]$err.Result) -replace "`0", "") -replace "\s+", " ").Trim()
+            if ($said.Length -gt 600) { $said = $said.Substring(0, 600) + " ..." }
+            $script:WslLastError = "wsl.exe " + $psi.Arguments + " ended with exit code " + $p.ExitCode + $(if ($said) { ": " + $said } else { " and said nothing" })
+            return @()
+        }
         $text = [string]$out.Result
-    } catch { return @() }
+    } catch { $script:WslLastError = "wsl.exe could not be run: " + $_.Exception.Message; return @() }
     return @(($text -replace "`0", "") -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object { $_.Trim() })
 }
 function ConvertTo-ArgString([string[]]$list) {
@@ -675,7 +682,11 @@ function Invoke-Install {
             }
         }
         $probe = @(Invoke-WslLines @("-d", $distro, "-e", "sh", "-c", "echo WSLOK"))
-        if (-not ($probe -join "").Contains("WSLOK")) { throw "The runtime '$distro' does not start. Try 'wsl --shutdown' and run the installer again." }
+        if (-not ($probe -join "").Contains("WSLOK")) {
+            $why = if ($script:WslLastError) { $script:WslLastError } else { "it answered: " + (($probe -join " ") -replace "\s+", " ") }
+            & $Log ("The runtime '$distro' does not start. " + $why)
+            throw "The runtime '$distro' does not start ($why). Try 'wsl --shutdown' and run the installer again."
+        }
 
         # ── 3. Files on the Windows side ───────────────────────────────────
         $inst = [string]$state.installDir
