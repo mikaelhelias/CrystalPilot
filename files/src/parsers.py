@@ -825,153 +825,7 @@ class LPParser:
         if sysabs:
             metrics['systematic_absences'] = sysabs
 
-        # ── Per-axis screw axis pattern analysis ───────────────────────
-        # Group reflections by axis (h00, 0k0, 00l), then for each axis
-        # test periodicities 2,3,4,6. Compare mean |I/sigma| of
-        # "should-be-absent" vs "allowed" index classes.
-        if sysabs:
-            axis_groups = {'h00': [], '0k0': [], '00l': []}
-            for r in sysabs:
-                if r['isig'] is None:
-                    continue
-                star = r.get('expected_absent', False)
-                if r['k'] == 0 and r['l'] == 0 and r['h'] != 0:
-                    axis_groups['h00'].append((abs(r['h']), r['isig'], star))
-                elif r['h'] == 0 and r['l'] == 0 and r['k'] != 0:
-                    axis_groups['0k0'].append((abs(r['k']), r['isig'], star))
-                elif r['h'] == 0 and r['k'] == 0 and r['l'] != 0:
-                    axis_groups['00l'].append((abs(r['l']), r['isig'], star))
-
-            axis_analysis = {}
-            for axis_name, refls in axis_groups.items():
-                if len(refls) < 3:
-                    continue
-                # Test periodicities 2, 3, 4, 6
-                # Detection uses multiple complementary criteria:
-                # 1. Ratio of mean|I/σ| absent vs allowed (classic approach)
-                # 2. Fraction of absent-class reflections that are weak (|I/σ| ≤ 2)
-                # 3. Mean raw I/σ of absent class near zero (truly absent → symmetric around 0)
-                # 4. Contrast: mean|I/σ| of allowed class significantly exceeds absent class
-                best_period = None
-                best_score = -1  # composite score, higher = stronger evidence
-                best_detail = None
-                best_confidence = None
-                for period in [2, 3, 4, 6]:
-                    allowed_raw = [isig for (idx, isig, _st) in refls if idx % period == 0]
-                    absent_raw = [isig for (idx, isig, _st) in refls if idx % period != 0]
-                    if len(allowed_raw) < 1 or len(absent_raw) < 2:
-                        continue
-                    mean_allowed = sum(abs(v) for v in allowed_raw) / len(allowed_raw)
-                    mean_absent_abs = sum(abs(v) for v in absent_raw) / len(absent_raw)
-                    mean_absent_raw = sum(v for v in absent_raw) / len(absent_raw)
-                    # Fraction of absent reflections with |I/σ| ≤ 2 (weak/noise)
-                    n_weak = sum(1 for v in absent_raw if abs(v) <= 2.0)
-                    frac_weak = n_weak / len(absent_raw)
-                    # Fraction with I/σ ≤ 1 (very weak / negative)
-                    n_vweak = sum(1 for v in absent_raw if v <= 1.0)
-                    frac_vweak = n_vweak / len(absent_raw)
-
-                    # Star-annotation check: if XDS marks odd-index as *
-                    # (expected absent), check how many of those are weak
-                    star_absent = [(isig, st) for (idx, isig, st) in refls
-                                   if idx % period != 0 and st]
-                    n_star_weak = sum(1 for (v, _) in star_absent if abs(v) <= 3.0)
-                    frac_star_weak = (n_star_weak / len(star_absent)) if star_absent else 0
-
-                    if mean_allowed < 0.5:
-                        continue  # Allowed class too weak to judge anything
-
-                    ratio = mean_absent_abs / mean_allowed if mean_allowed > 0 else 999
-
-                    # Score each criterion independently (0 or 1), then combine
-                    score = 0.0
-
-                    # Criterion 1: ratio-based (absent much weaker than allowed)
-                    if ratio < 0.25:
-                        score += 2.0
-                    elif ratio < 0.50:
-                        score += 1.0
-                    elif ratio < 0.70:
-                        score += 0.5
-
-                    # Criterion 2: most absent reflections are weak
-                    if frac_weak >= 0.75:
-                        score += 2.0
-                    elif frac_weak >= 0.55:
-                        score += 1.0
-                    elif frac_weak >= 0.40:
-                        score += 0.5
-
-                    # Criterion 3: mean raw I/σ of absent class near zero
-                    # (truly absent reflections have noise-like distribution around 0)
-                    if abs(mean_absent_raw) < 0.5:
-                        score += 1.5
-                    elif abs(mean_absent_raw) < 1.0:
-                        score += 1.0
-                    elif abs(mean_absent_raw) < 1.5:
-                        score += 0.5
-
-                    # Criterion 4: clear separation — allowed mean exceeds absent mean
-                    contrast = mean_allowed - mean_absent_abs
-                    if contrast > 2.0:
-                        score += 1.5
-                    elif contrast > 1.0:
-                        score += 1.0
-                    elif contrast > 0.5:
-                        score += 0.5
-
-                    # Criterion 5: XDS star annotations — if XDS marks reflections
-                    # as expected-absent (*) and most of those are indeed weak
-                    if len(star_absent) >= 3:
-                        if frac_star_weak >= 0.80:
-                            score += 2.0
-                        elif frac_star_weak >= 0.60:
-                            score += 1.0
-
-                    # Determine confidence from composite score
-                    # Max possible score = 9.0 (with star annotations)
-                    if score >= 4.0:
-                        confidence = 'high'
-                    elif score >= 2.5:
-                        confidence = 'suggestive'
-                    else:
-                        confidence = None
-
-                    if confidence and score > best_score:
-                        best_period = period
-                        best_score = score
-                        best_confidence = confidence
-                        best_detail = {
-                            'period': period,
-                            'confidence': confidence,
-                            'n_allowed': len(allowed_raw),
-                            'n_absent': len(absent_raw),
-                            'mean_isig_allowed': round(mean_allowed, 1),
-                            'mean_isig_absent': round(mean_absent_abs, 1),
-                            'mean_isig_absent_raw': round(mean_absent_raw, 1),
-                            'frac_weak_absent': round(frac_weak, 2),
-                            'ratio': round(ratio, 3),
-                            'score': round(score, 1)
-                        }
-                if best_detail:
-                    axis_analysis[axis_name] = best_detail
-                else:
-                    # No screw detected — report summary for context
-                    all_isig = [isig for (_, isig, _st) in refls]
-                    axis_analysis[axis_name] = {
-                        'period': 0,
-                        'n_reflections': len(refls),
-                        'mean_isig': round(sum(abs(v) for v in all_isig) / len(all_isig), 1) if all_isig else 0
-                    }
-
-            if axis_analysis:
-                metrics['axis_analysis'] = axis_analysis
-
-            # Check if any * annotations exist (XDS-assigned expected absences)
-            has_star_annotations = any(r['expected_absent'] for r in sysabs)
-            metrics['has_star_annotations'] = has_star_annotations
-
-        # ── Expected vs detected screw axes + SG suggestion ───────────
+        # ── Screw axes of the chiral space groups ─────────────────────
         # Lookup: for each chiral SG, which screw axes are expected on h00/0k0/00l?
         # Key = SG number, Value = dict of axis -> expected period (0=none, 2=2₁, etc.)
         # Only covers protein-relevant chiral space groups with screw axes along principal axes.
@@ -999,13 +853,13 @@ class LPParser:
             77: {'h00':0,'0k0':0,'00l':2, 'name':'P4₂'},
             78: {'h00':0,'0k0':0,'00l':4, 'name':'P4₃'},
             89: {'h00':0,'0k0':0,'00l':0, 'name':'P422'},
-            90: {'h00':0,'0k0':0,'00l':0, 'name':'P42₁2'},
+            90: {'h00':2,'0k0':2,'00l':0, 'name':'P42₁2'},     # 2₁ along a and b: h00 h=2n, 0k0 k=2n
             91: {'h00':0,'0k0':0,'00l':4, 'name':'P4₁22'},
-            92: {'h00':0,'0k0':0,'00l':4, 'name':'P4₁2₁2'},
+            92: {'h00':2,'0k0':2,'00l':4, 'name':'P4₁2₁2'},
             93: {'h00':0,'0k0':0,'00l':2, 'name':'P4₂22'},
-            94: {'h00':0,'0k0':0,'00l':2, 'name':'P4₂2₁2'},
+            94: {'h00':2,'0k0':2,'00l':2, 'name':'P4₂2₁2'},
             95: {'h00':0,'0k0':0,'00l':4, 'name':'P4₃22'},
-            96: {'h00':0,'0k0':0,'00l':4, 'name':'P4₃2₁2'},
+            96: {'h00':2,'0k0':2,'00l':4, 'name':'P4₃2₁2'},
             # Tetragonal I (I-centering: h+k+l=2n; observed 00l has only even l)
             79: {'h00':0,'0k0':0,'00l':0, 'name':'I4'},
             80: {'h00':0,'0k0':0,'00l':4, 'name':'I4₁'},       # 4₁ screw: l=4n (period 4 in even-only 00l series)
@@ -1083,6 +937,179 @@ class LPParser:
             'F m -3 m': [209, 210],
         }
 
+        # ── Per-axis screw axis pattern analysis ───────────────────────
+        # Group reflections by axis (h00, 0k0, 00l), then for each axis
+        # test the periodicities a screw axis along it can have in the
+        # Laue group of the space group (2,3,4,6 when it is unknown).
+        # Compare mean |I/sigma| of "should-be-absent" vs "allowed" index classes.
+        def _screw_score(refls, period):
+            """Score the absence pattern of one period; None when it cannot be judged.
+            Detection uses multiple complementary criteria:
+            1. Ratio of mean|I/σ| absent vs allowed (classic approach)
+            2. Fraction of absent-class reflections that are weak (|I/σ| ≤ 2)
+            3. Mean raw I/σ of absent class near zero (truly absent → symmetric around 0)
+            4. Contrast: mean|I/σ| of allowed class significantly exceeds absent class
+            5. XDS star annotations on the absent class"""
+            allowed_raw = [isig for (idx, isig, _st) in refls if idx % period == 0]
+            absent_raw = [isig for (idx, isig, _st) in refls if idx % period != 0]
+            if len(allowed_raw) < 1 or len(absent_raw) < 2:
+                return None
+            mean_allowed = sum(abs(v) for v in allowed_raw) / len(allowed_raw)
+            mean_absent_abs = sum(abs(v) for v in absent_raw) / len(absent_raw)
+            mean_absent_raw = sum(v for v in absent_raw) / len(absent_raw)
+            # Fraction of absent reflections with |I/σ| ≤ 2 (weak/noise)
+            n_weak = sum(1 for v in absent_raw if abs(v) <= 2.0)
+            frac_weak = n_weak / len(absent_raw)
+
+            # Star-annotation check: if XDS marks odd-index as *
+            # (expected absent), check how many of those are weak
+            star_absent = [(isig, st) for (idx, isig, st) in refls
+                           if idx % period != 0 and st]
+            n_star_weak = sum(1 for (v, _) in star_absent if abs(v) <= 3.0)
+            frac_star_weak = (n_star_weak / len(star_absent)) if star_absent else 0
+
+            if mean_allowed < 0.5:
+                return None  # Allowed class too weak to judge anything
+
+            ratio = mean_absent_abs / mean_allowed if mean_allowed > 0 else 999
+
+            # Score each criterion independently, then combine
+            score = 0.0
+
+            # Criterion 1: ratio-based (absent much weaker than allowed)
+            if ratio < 0.25:
+                score += 2.0
+            elif ratio < 0.50:
+                score += 1.0
+            elif ratio < 0.70:
+                score += 0.5
+
+            # Criterion 2: most absent reflections are weak
+            if frac_weak >= 0.75:
+                score += 2.0
+            elif frac_weak >= 0.55:
+                score += 1.0
+            elif frac_weak >= 0.40:
+                score += 0.5
+
+            # Criterion 3: mean raw I/σ of absent class near zero
+            # (truly absent reflections have noise-like distribution around 0)
+            if abs(mean_absent_raw) < 0.5:
+                score += 1.5
+            elif abs(mean_absent_raw) < 1.0:
+                score += 1.0
+            elif abs(mean_absent_raw) < 1.5:
+                score += 0.5
+
+            # Criterion 4: clear separation — allowed mean exceeds absent mean
+            contrast = mean_allowed - mean_absent_abs
+            if contrast > 2.0:
+                score += 1.5
+            elif contrast > 1.0:
+                score += 1.0
+            elif contrast > 0.5:
+                score += 0.5
+
+            # Criterion 5: XDS star annotations — if XDS marks reflections
+            # as expected-absent (*) and most of those are indeed weak
+            if len(star_absent) >= 3:
+                if frac_star_weak >= 0.80:
+                    score += 2.0
+                elif frac_star_weak >= 0.60:
+                    score += 1.0
+
+            # Determine confidence from composite score
+            # Max possible score = 9.0 (with star annotations)
+            if score >= 4.0:
+                confidence = 'high'
+            elif score >= 2.5:
+                confidence = 'suggestive'
+            else:
+                confidence = None
+            return {
+                'period': period,
+                'confidence': confidence,
+                'n_allowed': len(allowed_raw),
+                'n_absent': len(absent_raw),
+                'mean_isig_allowed': round(mean_allowed, 1),
+                'mean_isig_absent': round(mean_absent_abs, 1),
+                'mean_isig_absent_raw': round(mean_absent_raw, 1),
+                'frac_weak_absent': round(frac_weak, 2),
+                'ratio': round(ratio, 3),
+                'score': round(score, 1),
+                '_score': score,
+            }
+
+        # Periods a screw axis along each axis can have in the Laue group of
+        # the space group (P4/mmm: 2 or 4 along c, 2 along a; P6/mmm: 2, 3 or 6
+        # along c).  An axis no group of the Laue group has a screw on (a and b
+        # in P6/mmm, all axes in R32) is not tested: a pattern there is noise.
+        # An unknown space group keeps the full set.
+        axis_periods = {ax: [2, 3, 4, 6] for ax in ('h00', '0k0', '00l')}
+        for _sgs in laue_groups.values():
+            if metrics.get('space_group') in _sgs:
+                for ax in axis_periods:
+                    axis_periods[ax] = sorted({sg_screw_table[g][ax] for g in _sgs if g in sg_screw_table} - {0})
+                break
+
+        if sysabs:
+            axis_groups = {'h00': [], '0k0': [], '00l': []}
+            for r in sysabs:
+                if r['isig'] is None:
+                    continue
+                star = r.get('expected_absent', False)
+                if r['k'] == 0 and r['l'] == 0 and r['h'] != 0:
+                    axis_groups['h00'].append((abs(r['h']), r['isig'], star))
+                elif r['h'] == 0 and r['l'] == 0 and r['k'] != 0:
+                    axis_groups['0k0'].append((abs(r['k']), r['isig'], star))
+                elif r['h'] == 0 and r['k'] == 0 and r['l'] != 0:
+                    axis_groups['00l'].append((abs(r['l']), r['isig'], star))
+
+            axis_analysis = {}
+            for axis_name, refls in axis_groups.items():
+                if len(refls) < 3:
+                    continue
+                periods = axis_periods[axis_name]
+                best_detail = None
+                for period in periods:
+                    d = _screw_score(refls, period)
+                    if d and d['confidence'] and (best_detail is None or d['_score'] > best_detail['_score']):
+                        best_detail = d
+                # A 4-fold or 6-fold screw also forbids every reflection a 2-fold
+                # (or 3-fold) forbids, so the smaller period scores as well and wins
+                # the comparison above.  Take the larger period when the reflections
+                # that only it forbids (0,0,2 0,0,6 ... for 4 over 2) are absent too.
+                if best_detail:
+                    for period in (4, 6):
+                        small = best_detail['period']
+                        if period in periods and period > small and period % small == 0:
+                            sub = [r for r in refls if r[0] % small == 0]
+                            d = _screw_score(sub, period)
+                            if d and d['_score'] >= 4.0:
+                                full = _screw_score(refls, period) or d
+                                full['confidence'] = best_detail['confidence']
+                                best_detail = full
+                                break
+                if best_detail:
+                    best_detail.pop('_score', None)
+                    axis_analysis[axis_name] = best_detail
+                else:
+                    # No screw detected — report summary for context
+                    all_isig = [isig for (_, isig, _st) in refls]
+                    axis_analysis[axis_name] = {
+                        'period': 0,
+                        'n_reflections': len(refls),
+                        'mean_isig': round(sum(abs(v) for v in all_isig) / len(all_isig), 1) if all_isig else 0
+                    }
+
+            if axis_analysis:
+                metrics['axis_analysis'] = axis_analysis
+
+            # Check if any * annotations exist (XDS-assigned expected absences)
+            has_star_annotations = any(r['expected_absent'] for r in sysabs)
+            metrics['has_star_annotations'] = has_star_annotations
+
+        # ── Expected vs detected screw axes + SG suggestion ───────────
         current_sg = metrics.get('space_group')
         axis_an = metrics.get('axis_analysis', {})
 

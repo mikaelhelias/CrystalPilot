@@ -1594,6 +1594,70 @@ def define_checks(m, scratch):
         import inspect
         assert inspect.signature(m.stream_autopilot).parameters["sg_from_absences"].default is True
 
+    @check("screw axes: P4(1)2(1)2 has 2(1) on h00; 4(1) and 6(1) are not read as 2(1); axes without reflections are not judged")
+    def _():
+        import random
+        base = fixture("real/CORRECT.LP").split("\n")
+        top = next(i for i, l in enumerate(base) if "H    K    L  RESOLUTION" in l)
+        end = next(i for i, l in enumerate(base) if "COMPLETENESS AND QUALITY" in l)
+
+        def lp(sg, axes, rng=None):
+            """CORRECT.LP whose axial table has, per axis, n reflections of which only
+            every period-th one is present (noisy intensities when rng is given)."""
+            rows = []
+            for ax, (n, period) in axes.items():
+                for i in range(1, n + 1):
+                    hkl = {"h00": (i, 0, 0), "0k0": (0, i, 0), "00l": (0, 0, i)}[ax]
+                    absent = i % period != 0
+                    if rng:
+                        isig = rng.gauss(0, 1) if absent else rng.expovariate(1 / 12.0) + rng.gauss(0, 1)
+                    else:
+                        isig = 0.3 if absent else 31.0
+                    rows.append("%5d%5d%5d%10.3f  %11.4E %11.4E %12.2f %11d%s"
+                                % (hkl + (100.0 / i, isig, 1.0, isig, 4, "*" if absent else " ")))
+            head = [" SPACE_GROUP_NUMBER=   %d" % sg if "SPACE_GROUP_NUMBER=" in l else l for l in base[:top + 1]]
+            return LP.parse_correct("\n".join(head + [""] + rows + [""] + base[end:]))
+
+        def periods(r):
+            return {ax: a["period"] for ax, a in r["axis_analysis"].items()}
+
+        # the 2(1) axes along a and b of the tetragonal groups with 2(1) in the symbol
+        p41212 = {"h00": (30, 2), "00l": (40, 4)}
+        r = lp(92, p41212)
+        assert periods(r) == {"h00": 2, "00l": 4}, periods(r)
+        assert r["expected_screws"] == {"h00": 2, "0k0": 2, "00l": 4}, r["expected_screws"]
+        assert [s["name"] for s in r["sg_suggestions"]] == ["P4₁2₁2", "P4₃2₁2"], r["sg_suggestions"]
+        assert "agree" in m._sg_from_absences_choice(r)[1]
+        for sg, c in ((90, 0), (94, 2), (96, 4)):
+            r = lp(sg, {"h00": (30, 2), "00l": (40, c or 1)})
+            assert r["expected_screws"] == dict({"h00": 2, "0k0": 2}, **({"00l": c} if c else {})), (sg, r["expected_screws"])
+            assert sg in [s["sg_number"] for s in r["sg_suggestions"]], (sg, r["sg_suggestions"])
+        # AutoPilot from XDS's screw-less choices
+        choice, other = m._sg_from_absences_choice(lp(89, p41212))
+        assert choice["sg_number"] == 92 and other == ["P4₃2₁2"], (choice, other)
+        choice, other = m._sg_from_absences_choice(lp(89, {"h00": (30, 2), "00l": (40, 1)}))
+        assert choice["sg_number"] == 90, choice
+        choice, other = m._sg_from_absences_choice(lp(75, {"00l": (40, 4)}))
+        assert choice["sg_number"] == 76 and other == ["P4₃"], (choice, other)   # was P4(2)
+        choice, other = m._sg_from_absences_choice(lp(168, {"00l": (60, 6)}))
+        assert choice["sg_number"] == 169 and other == ["P6₅"], (choice, other)  # was P6(3)
+        assert periods(lp(177, {"00l": (45, 3)})) == {"00l": 3}
+        assert periods(lp(89, {"h00": (30, 2), "00l": (40, 2)})) == {"h00": 2, "00l": 2}   # a 2(1) stays a 2(1)
+        assert periods(lp(19, {"h00": (30, 2), "0k0": (30, 2), "00l": (30, 2)})) == {"h00": 2, "0k0": 2, "00l": 2}
+        # no chiral group of the Laue group has a screw on the axis: not tested (noise there was "unexpected?")
+        assert periods(lp(177, {"h00": (30, 2), "00l": (40, 1)})) == {"h00": 0, "00l": 0}
+        assert periods(lp(155, {"h00": (30, 2), "00l": (40, 4)})) == {"h00": 0, "00l": 0}
+        # noisy intensities: 4(1) and 6(1) found every time (the old rule read them as 2(1) nearly always)
+        rng = random.Random(3)
+        for _ in range(20):
+            assert periods(lp(75, {"00l": (40, 4)}, rng)) == {"00l": 4}
+            assert periods(lp(168, {"00l": (60, 6)}, rng)) == {"00l": 6}
+            assert periods(lp(75, {"00l": (40, 2)}, rng)) == {"00l": 2}
+        # an expected axis with no reflections in the table is "no data", not "not detected"
+        html = m.get_frontend_html()
+        count = html[html.index("var nNotDetected = 0"):html.index("if (nHardMismatch > 0 || nNotDetected > 0)")]
+        assert "if (axisAn[axc] === undefined) continue;" in count and "totalExp++" in count
+
     @check("resources: XDS.INP / XSCALE.INP carry the CPU cores by default and follow a change of the setting")
     def _():
         was, was_dir = m.CPU_CORES, m.PROJECTS_DIR

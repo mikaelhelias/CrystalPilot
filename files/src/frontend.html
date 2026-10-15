@@ -9428,9 +9428,13 @@
                         }
                         html += '</table>';
                         // Count discrepancies: separate hard (high-confidence) from soft (suggestive-only)
+                        // Axes without reflections in the table ("no data") are not judged
                         var nNotDetected = 0, nHardMismatch = 0, nSoftMismatch = 0, nConfirmed = 0;
+                        var totalExp = 0;
                         for (var aic = 0; aic < axes.length; aic++) {
                             var axc = axes[aic];
+                            if (axisAn[axc] === undefined) continue;
+                            if (expScrews[axc]) totalExp++;
                             var ec = expScrews[axc] || 0;
                             var dc = detScrews[axc] || 0;
                             var sc = sugScrews[axc] || 0;
@@ -9441,7 +9445,6 @@
                         }
                         // Hard mismatches or not-detected expected axes: strong warning
                         if (nHardMismatch > 0 || nNotDetected > 0) {
-                            var totalExp = Object.keys(expScrews).length;
                             html += '<div style="background:#4a2020; border-left:3px solid #fc8181; padding:4px 8px; margin:4px 0; font-size:0.78rem;">'
                                 + '⚠ <b>The assigned space group ' + sgName + ' may be incorrect.</b> ';
                             if (nNotDetected > 0 && nHardMismatch === 0) {
