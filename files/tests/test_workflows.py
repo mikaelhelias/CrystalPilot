@@ -262,6 +262,20 @@ class Workflows(unittest.TestCase):
         self.assertEqual(self.request('GET',self.url)[1]['completed_steps'],[s for s in m.XDS_PIPELINE if s!='XPLAN'])
         self.assertEqual(json.loads((self.p/'AUTOPILOT_RESULTS.json').read_text())['status'],'completed')
 
+    def test_autopilot_takes_the_screw_axes_from_the_absences(self):
+        # XDS chooses P422; h00 shows a 2(1) and 00l a 4(1): CORRECT runs again in P4(1)2(1)2
+        self.control(axial='P41212')
+        events=self.stream('/api/autopilot/stream',optimize='0',dcc_half='0')
+        self.assert_terminal(events,'completed','ap_done')
+        log='\n'.join(d.get('text','') for e,d in events if e=='ap_log')
+        self.assertIn('0,0,l only every 4th present',log)
+        self.assertIn('h,0,0 only every 2nd present',log)
+        self.assertIn('P4₁2₁2 (#92), not P422 (#89)',log)
+        self.assertIn('enantiomorph P4₃2₁2',log)
+        final=[d['summary'] for e,d in events if e=='ap_done'][0]
+        self.assertEqual(final['space_group'],92)
+        self.assertIn('P4₁2₁2',final['sg_note'])
+
     def test_external_folder_workflow_records_outputs_and_serves_metrics(self):
         folder=self.p/'external run'
         self.assert_terminal(self.stream(steps='INTEGRATE,CORRECT',run_folder=str(folder)),'completed')

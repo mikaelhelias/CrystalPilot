@@ -45,6 +45,24 @@ for step in jobs:
         Path('XPLAN.LP').write_text('Simulated successful XPLAN\n')
     else:
         shutil.copyfile(source, step + '.LP')
+    if step == 'CORRECT' and control.get('axial') == 'P41212':
+        # axial reflections of a P4(1)2(1)2 crystal: h00 only h=2n, 00l only l=4n.
+        # XDS's own choice (no SPACE_GROUP_NUMBER) is the group without screws, P422.
+        given = re.search(r'^\s*SPACE_GROUP_NUMBER\s*=\s*(\d+)', inp.read_text(), re.M)
+        sg = int(given.group(1)) if given and int(given.group(1)) else 89
+        lines = Path('CORRECT.LP').read_text().split('\n')
+        top = next(i for i, l in enumerate(lines) if 'H    K    L  RESOLUTION' in l)
+        end = next(i for i, l in enumerate(lines) if 'COMPLETENESS AND QUALITY' in l)
+        rows = []
+        for hkl, n, period in (((1, 0, 0), 30, 2), ((0, 0, 1), 40, 4)):
+            for i in range(1, n + 1):
+                absent = i % period != 0
+                isig = 0.3 if absent else 31.0
+                rows.append('%5d%5d%5d%10.3f  %11.4E %11.4E %12.2f %11d%s' % (
+                    hkl[0] * i, hkl[1] * i, hkl[2] * i, 100.0 / i, isig, 1.0, isig, 4,
+                    '*' if absent and sg == 92 else ' '))
+        lines = [' SPACE_GROUP_NUMBER=   %d' % sg if 'SPACE_GROUP_NUMBER=' in l else l for l in lines]
+        Path('CORRECT.LP').write_text('\n'.join(lines[:top + 1] + [''] + rows + [''] + lines[end:]))
     if step == 'CORRECT':
         header = "!FORMAT=XDS_ASCII MERGE=FALSE FRIEDEL'S_LAW=TRUE\n!SPACE_GROUP_NUMBER=20\n!UNIT_CELL_CONSTANTS=98.56 119.66 161.55 90 90 90\n!END_OF_HEADER\n"
         Path('XDS_ASCII.HKL').write_text(header + '1 1 1 100 3 1 1 1 1 1\n' * 200 + '!END_OF_DATA\n')
