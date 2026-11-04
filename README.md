@@ -53,7 +53,7 @@ Four levels, from Tutorial to Expert, set how much of the program you see: the t
 </td></tr>
 </table>
 
-The **Cutoff Preference** (under the work mode) sets the resolution criterion used whenever CrystalPilot proposes a cut-off.
+The **Cutoff Preference** (under the work mode) sets the resolution criterion the XSCALE autofill uses. AutoPilot has its own cut-off setting.
 
 ## Screenshots
 
@@ -96,7 +96,7 @@ AutoPilot processes individual data sets or whole batches, including iterative a
 
 ### Frame viewer
 
-A highly capable frame viewer is integrated, with resolution and ice rings, predicted spots, contrast and colour maps.
+A highly capable frame viewer is integrated, with resolution and ice rings, the spots XDS found (indexed and not indexed), contrast and colour maps.
 
 ![Eiger frame with resolution rings](docs/readme/images/frame-viewer.png)
 
@@ -109,7 +109,7 @@ First download from their authors (free for academic use):
 
 ### Windows 10 (version 2004 or newer) / Windows 11
 
-XDS only exists for Linux, so CrystalPilot runs inside WSL2 (built into Windows). The installer sets that up for you, and you never need a Linux terminal.
+XDS has no Windows version, so CrystalPilot runs inside WSL2 (built into Windows). The installer sets that up for you, and you never need a Linux terminal.
 
 1. Leave the XDS, neggia and CCP4 downloads in your **Downloads** folder; the installer picks them up from there. Then download `CrystalPilot-Setup-<version>.exe` from [Releases](../../releases).
 2. Double-click it. The installer is not code-signed, so Windows shows an *unknown publisher* notice the first time: click **More info**, then **Run anyway**.

@@ -83,4 +83,4 @@ The same parameter form at Tutorial and at Expert:
 
 ## Cutoff preference
 
-Next to the work mode, **Cutoff preference** chooses which resolution criterion the XSCALE autofill and AutoPilot use by default: I/σ ≈ 2, CC½ ≈ 50 %, R-obs ≈ 55 %, or CC½ significance. It is remembered, like the work mode.
+Next to the work mode, **Cutoff preference** chooses which resolution criterion the XSCALE autofill uses by default: I/σ ≈ 2, CC½ ≈ 50 %, R-obs ≈ 55 %, or CC½ significance. It is remembered, like the work mode. AutoPilot has its own cut-off setting (chapter 14).
