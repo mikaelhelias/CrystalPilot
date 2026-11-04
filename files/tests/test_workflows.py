@@ -647,6 +647,265 @@ class Workflows(unittest.TestCase):
         self.assertIn(terminal[0]['status'],('error','failed'))
         self.assertEqual(self.executed(),executed)
 
+    # ── agent route ─────────────────────────────────────────────────────────
+    AGENT_KEY = 'agent-key-for-the-tests'
+
+    def agent_on(self, level='own'):
+        for name, value in (('AGENT_LEVEL', level), ('AGENT_KEY', self.AGENT_KEY)):
+            patcher = patch.object(m, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def mcp_raw(self, method, body=None, headers=None):
+        """A request with no page token or cookie, only what is given."""
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=120)
+        try:
+            all_headers = {'Content-Type': 'application/json', **(headers or {})}
+            conn.request(method, '/api/mcp', json.dumps(body) if body is not None else None, all_headers)
+            response = conn.getresponse()
+            text = response.read().decode()
+            return response.status, (json.loads(text) if text else None)
+        finally:
+            conn.close()
+
+    def rpc(self, method, params=None, key=None):
+        status, reply = self.mcp_raw('POST', {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params or {}},
+                                     {'Authorization': 'Bearer ' + (key or self.AGENT_KEY)})
+        self.assertEqual(status, 200, reply)
+        return reply
+
+    def tool(self, name, **arguments):
+        reply = self.rpc('tools/call', {'name': name, 'arguments': arguments})
+        self.assertIn('result', reply, reply)
+        result = reply['result']
+        text = result['content'][0]['text']
+        return (text if result['isError'] else json.loads(text)), result['isError']
+
+    def tool_ok(self, name, **arguments):
+        value, failed = self.tool(name, **arguments)
+        self.assertFalse(failed, value)
+        return value
+
+    def dataset_folder(self, label='frames'):
+        """Frames with a beamline XDS.INP beside them, as find_datasets meets them."""
+        folder = scratch / ('agent_data_' + self._testMethodName) / label
+        (folder / 'fast_dp').mkdir(parents=True, exist_ok=True)
+        for n in range(1, 7):
+            (folder / ('xtal_%04d.cbf' % n)).write_bytes(b'')
+        (folder / 'fast_dp' / 'XDS.INP').write_text(
+            'JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nNAME_TEMPLATE_OF_DATA_FRAMES= ' + str(folder / 'xtal_????.cbf')
+            + '\nDATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.1\n', encoding='utf-8')
+        return folder
+
+    def wait_job(self, job_id, seconds=90):
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            status = self.tool_ok('job_status', job_id=job_id)
+            if not status['running']:
+                return status
+            time.sleep(0.2)
+        self.fail('job did not finish')
+
+    def test_agent_route_is_off_until_chosen_and_needs_its_own_key(self):
+        message = {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}
+        good = {'Authorization': 'Bearer ' + self.AGENT_KEY}
+        self.assertEqual(m.AGENT_LEVEL, 'off')
+        self.assertEqual(self.mcp_raw('POST', message, good)[0], 403)
+        self.agent_on()
+        self.assertEqual(self.mcp_raw('POST', message)[0], 401)
+        self.assertEqual(self.mcp_raw('POST', message, {'Authorization': 'Bearer wrong'})[0], 401)
+        # the page's token and cookie are not the agent key, and the agent key is not the page's token
+        self.assertEqual(self.mcp_raw('POST', message, {'X-CrystalPilot-Token': m.API_TOKEN})[0], 401)
+        self.assertEqual(self.mcp_raw('POST', message, {'Cookie': 'cp_token_%d=%s' % (self.server.server_address[1], m.API_TOKEN)})[0], 401)
+        self.assertEqual(self.mcp_raw('POST', message, {'Authorization': 'Bearer ' + m.API_TOKEN})[0], 401)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=15)
+        conn.request('GET', '/api/projects', headers=good)
+        self.assertEqual(conn.getresponse().status, 403)
+        conn.close()
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=15)
+        conn.request('POST', '/api/agent', json.dumps({'level': 'full'}), {'Content-Type': 'application/json', **good})
+        self.assertEqual(conn.getresponse().status, 403)
+        conn.close()
+        self.assertEqual(self.mcp_raw('POST', message, {**good, 'Origin': 'http://evil.example'})[0], 403)
+        self.assertEqual(self.mcp_raw('POST', message, {**good, 'Origin': 'http://localhost:8000'})[0], 200)
+        self.assertEqual(self.mcp_raw('GET', None, good)[0], 405)
+        self.assertEqual(self.mcp_raw('DELETE', None, good)[0], 405)
+        self.assertEqual(self.mcp_raw('POST', {'jsonrpc': '2.0', 'method': 'notifications/initialized'}, good)[0], 202)
+        self.assertEqual(self.mcp_raw('POST', message, {**good, 'MCP-Protocol-Version': '1999-01-01'})[0], 400)
+        with patch.object(m, 'HOST', '0.0.0.0'):
+            self.assertEqual(self.mcp_raw('POST', message, good)[0], 403)
+        with patch.object(m, 'RESTRICT_BROWSE', True):
+            self.assertEqual(self.mcp_raw('POST', message, good)[0], 403)
+
+    def test_agent_initialize_and_levels_decide_which_tools_exist(self):
+        self.agent_on('read')
+        reply = self.rpc('initialize', {'protocolVersion': '2025-06-18', 'clientInfo': {'name': 'test client'}, 'capabilities': {}})
+        self.assertEqual(reply['result']['protocolVersion'], '2025-06-18')
+        self.assertEqual(reply['result']['serverInfo']['version'], m.VERSION)
+        self.assertEqual(self.rpc('initialize', {'protocolVersion': '2099-01-01'})['result']['protocolVersion'], m.AGENT_PROTOCOL_VERSIONS[0])
+        self.assertEqual(self.rpc('no/such/method')['error']['code'], -32601)
+        names = [t['name'] for t in self.rpc('tools/list')['result']['tools']]
+        self.assertIn('get_statistics', names)
+        self.assertNotIn('run_autopilot', names)
+        refused = self.rpc('tools/call', {'name': 'run_autopilot', 'arguments': {'datasets': []}})
+        self.assertEqual(refused['error']['code'], -32602)
+        with patch.object(m, 'AGENT_LEVEL', 'own'):
+            tools = {t['name']: t for t in self.rpc('tools/list')['result']['tools']}
+            self.assertIn('run_autopilot', tools)
+            self.assertFalse(tools['run_autopilot']['annotations']['readOnlyHint'])
+            self.assertTrue(tools['get_statistics']['annotations']['readOnlyHint'])
+
+    def test_agent_panel_sets_the_level_and_makes_a_key_that_survives_and_can_be_replaced(self):
+        self.addCleanup(lambda: m.agent_configure({'level': 'off'}, 1))
+        status, off = self.request('GET', '/api/agent')
+        self.assertEqual((status, off['level'], off['key']), (200, 'off', ''))
+        on = self.request('POST', '/api/agent', {'level': 'own'})[1]
+        self.assertEqual(on['level'], 'own')
+        self.assertGreater(len(on['key']), 20)
+        self.assertTrue(on['url'].endswith('/api/mcp'))
+        self.assertEqual(self.rpc('ping', key=on['key'])['result'], {})
+        saved = json.loads(m.SETTINGS_FILE.read_text(encoding='utf-8'))
+        self.assertEqual((saved['agent_level'], saved['agent_key']), ('own', on['key']))
+        new = self.request('POST', '/api/agent', {'new_key': True})[1]
+        self.assertNotEqual(new['key'], on['key'])
+        self.assertEqual(self.mcp_raw('POST', {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}, {'Authorization': 'Bearer ' + on['key']})[0], 401)
+        self.assertEqual(self.request('POST', '/api/agent', {'level': 'everything'})[0], 400)
+        self.assertEqual(self.request('POST', '/api/agent', {'level': 'off'})[1]['level'], 'off')
+        self.assertEqual(self.mcp_raw('POST', {'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}, {'Authorization': 'Bearer ' + new['key']})[0], 403)
+        with patch.object(m, 'RESTRICT_BROWSE', True):
+            self.assertEqual(self.request('POST', '/api/agent', {'level': 'own'})[0], 403)
+
+    def test_agent_key_never_reaches_a_log_a_report_or_an_export(self):
+        self.agent_on()
+        self.assertNotIn(self.AGENT_KEY, m._report_redact('key ' + self.AGENT_KEY))
+        self.assertNotIn(self.AGENT_KEY, m._LogTee._redact('key ' + self.AGENT_KEY))
+        self.assertFalse(m._export_wanted(m.AGENT_LOG_NAME, True))
+
+    def test_agent_reads_results_as_numbers_and_files_in_parts(self):
+        self.agent_on('read')
+        self.assert_terminal(self.stream(), 'completed')
+        listed = self.tool_ok('list_projects')
+        self.assertIn(self.name, [p['name'] for p in listed['projects']])
+        self.assertIn('xds', [p['id'] for p in listed['programs']])
+        project = self.tool_ok('get_project', project=self.name)
+        self.assertEqual(project['completed_steps'], m.XDS_PIPELINE)
+        self.assertIn('XDS.INP', project['input_files'])
+        stats = self.tool_ok('get_statistics', project=self.name)
+        self.assertIsInstance(stats['space_group']['number'], (int, float))
+        self.assertIsInstance(stats['cell']['a_A'], float)
+        self.assertNotIn('shells', stats)
+        full = self.tool_ok('get_statistics', project=self.name, detail='full', source='CORRECT')
+        self.assertEqual(len(full['shells']), full['n_shells'])
+        self.assertEqual(sorted(full['cutoffs']), sorted(['isig2', 'cc_half_50', 'cc_half_sig', 'r_obs_55']))
+        self.assertIsInstance(self.tool_ok('get_diagnostics', project=self.name, step='CORRECT')['diagnostics'], list)
+        self.assertEqual(self.tool_ok('compare_runs', project=self.name)['step'], 'CORRECT')
+        self.assertIn('current', self.tool_ok('get_space_group_evidence', project=self.name))
+        tail = self.tool_ok('read_project_file', project=self.name, file='CORRECT.LP', limit=3)
+        self.assertLessEqual(len(tail['text'].splitlines()), 3)
+        whole = self.tool_ok('read_project_file', project=self.name, file='xds.inp', offset=1, limit=1)
+        self.assertEqual(whole['first_line'], 1)
+        self.assertEqual(whole['text'].split()[0], 'JOB=')
+        self.assertEqual(self.tool_ok('read_project_file', project=self.name, file='XDS.INP', search='oscillation')['matches'], 1)
+        self.assertTrue(self.tool('read_project_file', project=self.name, file='../metadata.json')[1])
+        self.assertTrue(self.tool('get_statistics', project='no such project')[1])
+        self.assertIn('files', self.tool_ok('get_analysis', project=self.name, kind='hkl_files'))
+        self.assertTrue(self.tool('get_analysis', project=self.name, kind='nonsense')[1])
+
+    def test_agent_run_gets_what_the_wizard_gets_and_leaves_a_record(self):
+        self.agent_on('own')
+        folder = self.dataset_folder()
+        found = self.tool_ok('find_datasets', folders=[str(folder)])
+        self.assertEqual(len(found['datasets']), 1, found)
+        entry = found['datasets'][0]
+        self.assertEqual(entry['xdsinp_state'], 'imported')
+        self.assertTrue(entry['recommended'])
+        strategy = {'optimize': 'never', 'dcc_half': 'off'}
+        # the page's route, with what the wizard sends for the same data set and choices
+        wizard = {k: entry[k] for k in ('kind', 'template', 'label', 'folder', 'frames', 'first', 'last', 'xdsinp')}
+        page_run = self.request('POST', '/api/batch/create', {'name': 'page', 'datasets': [dict(wizard, project='page_' + self.name.split()[0][:30])], 'strategy': strategy})[1]
+        self.assertEqual(self.request('POST', '/api/batch/start', {'id': page_run['id']})[0], 200)
+        self._batch_wait(page_run['id'])
+        started = self.tool_ok('run_autopilot', datasets=[dict(entry, project='agent_' + self.name.split()[0][:30])], strategy=strategy, reason='test of the record')
+        self.assertEqual(started['status'], 'running', started)
+        self.assertEqual(started['strategy'], m.normalize_strategy(strategy))
+        ended = self.wait_job(started['job_id'])
+        self.assertEqual(ended['status'], 'ended', ended)
+        self.assertEqual(ended['counts'], {'done': 1}, ended)
+        self.assertEqual(ended['items'][0]['status'], 'done', ended)
+        self.assertEqual(ended['items'][0]['results']['space_group'], 20)
+        self.assertIn('log_tail', ended)
+        agent_project = started['projects'][0]
+        page_project = page_run['items'][0]['project']
+        read = lambda p: (m._pdir(p) / 'XDS.INP').read_text(encoding='utf-8')
+        self.assertEqual(read(agent_project), read(page_project))
+        results = lambda p: {k: v for k, v in m.batch_metrics(p).items() if k != 'mtz'}      # the MTZ's path names its project
+        self.assertEqual(results(agent_project), results(page_project))
+        self.assertTrue(m.batch_load(started['job_id'][6:])['name'].startswith('Agent: '))
+        self.assertEqual(m.ProjectManager.get(agent_project)['created_by'], 'agent')
+        self.assertNotIn('created_by', m.ProjectManager.get(page_project))
+        record = [json.loads(line) for line in (m._pdir(agent_project) / m.AGENT_LOG_NAME).read_text(encoding='utf-8').splitlines()]
+        self.assertEqual([r['outcome'] for r in record], ['started', 'done'])
+        self.assertEqual(record[0]['reason'], 'test of the record')
+        self.assertEqual(record[0]['job_id'], started['job_id'])
+        self.assertFalse((m._pdir(page_project) / m.AGENT_LOG_NAME).exists())
+
+    def test_agent_levels_protect_the_users_projects(self):
+        self.agent_on('own')
+        message, failed = self.tool('run_autopilot', datasets=[{'existing_project': self.name}])
+        self.assertTrue(failed)
+        self.assertIn("user's", message)
+        self.assertTrue(self.tool('run_autopilot', datasets=[{'template': '/no/such/folder/x_????.cbf'}])[1])
+        # a project's XDS.INP can be read back, so xdsinp must not be a way to read any file
+        secret = self.dataset_folder() / 'secret.txt'
+        secret.write_text('not an input file', encoding='utf-8')
+        message, failed = self.tool('run_autopilot', datasets=[{'template': str(self.dataset_folder() / 'xtal_????.cbf'), 'xdsinp': str(secret)}])
+        self.assertTrue(failed)
+        self.assertIn('named XDS.INP', message)
+        self.assertTrue(self.tool('run_autopilot', datasets=[{'template': str(self.dataset_folder() / 'xtal_????.cbf')}], strategy={'friedel': 'MAYBE'})[1])
+        self.assertTrue(self.tool('run_autopilot', datasets=[{'template': str(self.dataset_folder() / 'xtal_????.cbf')}], strategy={'nonsense': 1})[1])
+        with patch.object(m, 'AGENT_LEVEL', 'full'):
+            message, failed = self.tool('run_autopilot', datasets=[{'existing_project': self.name}])
+            self.assertTrue(failed)
+            self.assertIn('overwrite', message)
+        self.assertEqual(m.batch_list() and [b for b in m.batch_list() if self.name in b['name']], [])
+        self.assertFalse((self.p / m.AGENT_LOG_NAME).exists())
+
+    def test_agent_stops_only_its_own_runs_and_one_run_goes_at_a_time(self):
+        self.agent_on('own')
+        state = self._batch_with(['xtal_slow_page'])
+        (m._pdir(state['items'][0]['project']) / 'control.json').write_text(json.dumps({'XYCORR': 'quiet'}))
+        m.batch_start(state['id'])
+        deadline = time.time() + 15
+        while time.time() < deadline and m.batch_state(state['id'])['items'][0]['status'] != 'running':
+            time.sleep(0.05)
+        message, failed = self.tool('stop_job', job_id='batch:' + state['id'])
+        self.assertTrue(failed)
+        self.assertIn('page', message)
+        message, failed = self.tool('run_autopilot', datasets=[{'template': str(self.dataset_folder() / 'xtal_????.cbf')}])
+        self.assertTrue(failed)
+        self.assertIn('one runs at a time', message)
+        self.assertTrue(self.tool_ok('job_status', job_id='batch:' + state['id'])['running'])
+        with patch.object(m, 'AGENT_LEVEL', 'full'):
+            self.assertTrue(self.tool_ok('stop_job', job_id='batch:' + state['id'])['was_running'])
+        self.assertEqual(self._batch_wait(state['id'], 30)['items'][0]['status'], 'queued')
+        self.assertTrue(self.tool('job_status', job_id='nonsense')[1])
+
+    def test_autopilot_folder_words_live_on_the_server_for_page_and_agent(self):
+        self.addCleanup(lambda: m._save_settings(autopilot_keywords=list(m.XDSINP_KEYWORDS_DEFAULT)))
+        self.assertEqual(m.autopilot_keywords(), m.XDSINP_KEYWORDS_DEFAULT)
+        self.assertEqual(self.request('POST', '/api/config', {'autopilot_keywords': ['  XIA2 ', 'fast_dp', '']})[0], 200)
+        config = self.request('GET', '/api/config')[1]
+        self.assertEqual(config['autopilot_keywords'], ['xia2', 'fast_dp'])
+        self.assertIs(config['keywords_on_server'], True)
+        self.agent_on('read')
+        self.assertEqual(self.tool_ok('find_datasets', folders=[str(self.dataset_folder())])['keywords'], ['xia2', 'fast_dp'])
+        self.assertEqual(self.request('POST', '/api/config', {'autopilot_keywords': []})[0], 200)
+        self.assertEqual(m.autopilot_keywords(), [])
+        with patch.object(m, 'RESTRICT_BROWSE', True):
+            shared = self.request('GET', '/api/config')[1]
+            self.assertIs(shared['keywords_on_server'], False)
+            self.assertIsNone(shared['autopilot_keywords'])
+
 
 if __name__=='__main__':
     result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Workflows))

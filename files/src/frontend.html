@@ -1870,6 +1870,7 @@
                 <button class="btn-secondary btn-sm" onclick="checkHealth()" title="Verify the server is running and responsive">⬡ Check Connection</button>
                 <button class="btn-secondary btn-sm" onclick="envCheck(true)" title="What CrystalPilot found on this computer: Python packages, XDS, neggia, CCP4">⚙ Environment</button>
                 <button id="manual-btn" class="btn-secondary btn-sm" style="display:none;" onclick="window.open('/manual/CrystalPilot-Manual.html', '_blank')" title="The illustrated manual: how to do each task, with screenshots (opens in a new tab). Search it from the Docs tab.">📖 Manual</button>
+                <button class="btn-secondary btn-sm" onclick="agentOpen()" title="Let an AI agent, with a local or a cloud model, work with your projects. Off until you turn it on.">&#10022; Connect an agent</button>
                 <button class="btn-secondary btn-sm" onclick="reportOpen()" title="Something went wrong? Write a problem report for the author: what happened, this system, the program's log. CrystalPilot sends nothing itself - it saves the report and opens your own e-mail program.">&#9888; Report a problem</button>
                 <div id="health-status"></div>
             </div>
@@ -4399,6 +4400,7 @@
                     var _apwRunId = '', _apwRun = null, _apwPoll = null, _apwSort = { key: '', dir: 1 };
                     var _apwDetail = '', _apwDetailPhase = '', _apwOpen = '';
                     var APW_KEYWORDS_DEFAULT = ['fast_dp', 'processing', 'autoproc'];
+                    var _apwKeywordsOnServer = false, _apwRunsSeen = null;
                     var APW_STEP_OPTIONS = { 2: 'cutoffs', 3: 'reprocessing', 4: 'indexing' };
 
                     function apwEsc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -4423,7 +4425,7 @@
                         try {
                             if (!_apwDef) {
                                 _apwDef = await apwJson('/batch/strategy');
-                                apwLoadKeywords();
+                                await apwLoadKeywords();
                                 apwRenderOptions({});
                                 apwRenderFolders();
                             }
@@ -4607,14 +4609,28 @@
                     function apwRemoveProject(i) { _apwProjects.splice(i, 1); apwRenderFolders(); }
 
                     // ── 2. data sets and XDS.INP ──
-                    function apwLoadKeywords() {
-                        var saved = null;
-                        try { saved = JSON.parse(localStorage.getItem('cp.autopilot.keywords') || 'null'); } catch (e) {}
+                    // The words decide which XDS.INP AutoPilot imports, so they live on the server
+                    // where an agent reads the same list.  A list this browser stored earlier moves
+                    // there once.  A shared installation keeps each user's list in the browser.
+                    async function apwLoadKeywords() {
+                        var conf = {}, stored = null;
+                        try { conf = await apwJson('/config'); } catch (e) {}
+                        _apwKeywordsOnServer = !!conf.keywords_on_server;
+                        try { stored = JSON.parse(localStorage.getItem('cp.autopilot.keywords') || 'null'); } catch (e) {}
+                        var saved = _apwKeywordsOnServer ? conf.autopilot_keywords : stored;
+                        if (_apwKeywordsOnServer && !Array.isArray(saved) && Array.isArray(stored)) {
+                            saved = stored;
+                            try { await apwJson('/config', { autopilot_keywords: stored }); } catch (e) {}
+                        }
                         _apwKeywords = Array.isArray(saved) ? saved : APW_KEYWORDS_DEFAULT.slice();
                         apwRenderKeywords();
                     }
                     function apwSaveKeywords() {
-                        try { localStorage.setItem('cp.autopilot.keywords', JSON.stringify(_apwKeywords)); } catch (e) {}
+                        if (_apwKeywordsOnServer) {
+                            apwJson('/config', { autopilot_keywords: _apwKeywords }).catch(function (e) { showToast('Could not save the folder words: ' + e.message, 'error'); });
+                        } else {
+                            try { localStorage.setItem('cp.autopilot.keywords', JSON.stringify(_apwKeywords)); } catch (e) {}
+                        }
                         apwRenderKeywords();
                     }
                     function apwRenderKeywords() {
@@ -4897,6 +4913,18 @@
                         if (pick) { sel.value = pick; await apwSelectRun(pick); }
                         else { document.getElementById('apw-run-status').textContent = 'Nothing has run yet. Set up a run above and press Start.'; }
                     }
+                    // A run an agent starts: its projects join the sidebar and the run joins the Runs list
+                    async function apwWatchRuns() {
+                        var d;
+                        try { d = await apwJson('/batch/list'); } catch (e) { return; }
+                        var seen = (d.batches || []).map(function (b) { return b.id + ':' + b.status; }).join(',');
+                        var changed = _apwRunsSeen !== null && seen !== _apwRunsSeen;
+                        _apwRunsSeen = seen;
+                        if (!changed) return;
+                        try { loadProjects(); } catch (e) {}
+                        var tab = document.getElementById('main-tab-autopilot');
+                        if (_apwDef && tab && tab.style.display !== 'none') { try { await apwLoadRuns(); } catch (e) {} }
+                    }
                     async function apwSelectRun(id) {
                         if (!id) return;
                         if (id !== _apwRunId) {
@@ -5143,6 +5171,21 @@
             </div>
         </div>
     </div>
+    <!-- ── Connect an agent ──────────────────────────────────────────────── -->
+    <div id="agent-modal" class="modal-backdrop-blur" style="display:none; position:fixed; inset:0; z-index:9999;
+         background:rgba(0,0,0,0.68); align-items:center; justify-content:center;"
+         onclick="if(event.target===this)agentClose()">
+        <div class="modal-content-anim" style="background:var(--panel); border:1px solid var(--border2); border-radius:14px;
+                    width:94vw; max-width:720px; max-height:90vh; overflow-y:auto; box-shadow:0 24px 80px rgba(0,0,0,0.7);"
+             onclick="event.stopPropagation()">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 18px; border-bottom:1px solid var(--border);">
+                <span style="font-family:var(--head); font-size:0.8rem; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);">Connect an agent</span>
+                <button class="btn-ghost btn-sm" onclick="agentClose()">✕</button>
+            </div>
+            <div id="agent-body" style="padding:16px 18px; font-size:0.84rem; color:var(--txt2); line-height:1.6;"></div>
+        </div>
+    </div>
+
     <!-- ── Chart zoom modal ──────────────────────────────────────────────── -->
     <div id="report-modal" class="modal-backdrop-blur" style="display:none; position:fixed; inset:0; z-index:9999;
          background:rgba(0,0,0,0.68); align-items:center; justify-content:center;"
@@ -20110,6 +20153,86 @@
          * files, figures, reports - never the frames or the correction images
          * XDS rewrites every run); this only asks, and shows what came back.
          */
+        // ── Connect an agent ────────────────────────────────────────────────
+        var _agentState = null, _agentMsg = '';
+        var AGENT_LEVEL_TEXT = {
+            off: ['Off', 'No agent can connect.'],
+            read: ['Read only', 'It can read every project and search the folders it is given. It cannot run anything.'],
+            own: ['Own projects (recommended)', 'It can also run AutoPilot, in new projects of its own. It can start from the same images, and your projects stay as they are.'],
+            full: ['Full', 'It can also run AutoPilot on your projects. Replacing the results of a project of yours needs an explicit overwrite.']
+        };
+        function _agentSetups(d) {
+            var key = d.key || '<agent key>', header = 'Authorization: Bearer ' + key;
+            return [
+                { title: 'Claude Code', text: 'claude mcp add --transport http crystalpilot ' + d.url + ' --header "' + header + '"' },
+                { title: 'ollmcp with Ollama (a model on this computer)', text: 'ollmcp mcp add --transport http crystalpilot ' + d.url + ' --header "' + header + '"' },
+                { title: 'Another MCP client: address and header (Streamable HTTP)', text: d.url + '\n' + header }
+            ];
+        }
+        function _agentRender() {
+            var body = document.getElementById('agent-body'), d = _agentState;
+            if (!body || !d) return;
+            var html = '<p style="margin:0 0 10px 0;">An AI agent can work with CrystalPilot through MCP: find data sets, run AutoPilot, read results. '
+                + 'It uses the same projects and programs as this page, and its runs appear under AutoPilot &rarr; Runs.</p>';
+            if (d.unavailable) {
+                body.innerHTML = html + '<div class="apw-note" style="color:var(--warning);">' + _escHtml(d.unavailable) + '</div>';
+                return;
+            }
+            html += '<div style="font-family:var(--head); font-size:0.72rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--accent2); margin:12px 0 4px 0;">What it may do</div>';
+            ['off', 'read', 'own', 'full'].forEach(function (level) {
+                var t = AGENT_LEVEL_TEXT[level];
+                html += '<label style="display:flex; gap:8px; align-items:flex-start; margin:6px 0; cursor:pointer;">'
+                    + '<input type="radio" name="agent-level" id="agent-level-' + level + '" style="margin-top:4px;"' + (d.level === level ? ' checked' : '')
+                    + ' onchange="agentSetLevel(\'' + level + '\')"><span><b style="color:var(--txt);">' + t[0] + '</b> &middot; ' + t[1] + '</span></label>';
+            });
+            if (d.level !== 'off') {
+                html += '<div style="font-family:var(--head); font-size:0.72rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--accent2); margin:14px 0 4px 0;">Connect it</div>'
+                    + '<p style="margin:0 0 8px 0;">Copy one of these into a terminal, or into your client\'s settings. They hold the agent key, which is hidden here. CrystalPilot has to be running while the agent works.</p>';
+                _agentSetups(d).forEach(function (s, i) {
+                    var shown = s.text.split(d.key).join('&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;');
+                    html += '<div style="margin:8px 0;"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span style="color:var(--txt);">' + _escHtml(s.title) + '</span>'
+                        + '<button class="btn-secondary btn-sm" id="agent-copy-' + i + '" onclick="agentCopy(' + i + ')">Copy</button></div>'
+                        + '<pre style="margin:4px 0 0 0; padding:8px 10px; border-radius:8px; border:1px solid var(--border2); background:var(--panel2); color:var(--txt2); font-size:0.76rem; white-space:pre-wrap; word-break:break-all;">'
+                        + shown.split('<').join('&lt;') + '</pre></div>';
+                });
+                html += '<div style="display:flex; align-items:center; gap:10px; margin:10px 0 0 0;"><button class="btn-secondary btn-sm" id="agent-new-key" onclick="agentNewKey()">Make a new key</button>'
+                    + '<span style="font-size:0.76rem; color:var(--txt3);">The old key stops working at once.</span></div>'
+                    + '<p style="font-size:0.76rem; color:var(--txt3); margin:12px 0 0 0;">With a cloud model, results, file paths and sample names go to that AI service. They stay on this computer only when both the client and the model run here.</p>';
+            }
+            if (_agentMsg) html += '<div style="margin:10px 0 0 0; color:var(--warning);">' + _escHtml(_agentMsg) + '</div>';
+            body.innerHTML = html;
+        }
+        async function _agentRequest(body) {
+            var r = await fetch(API + '/agent', body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+            var d = await r.json();
+            if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+            _agentState = d; _agentMsg = '';
+        }
+        async function agentOpen() {
+            document.getElementById('agent-modal').style.display = 'flex';
+            try { await _agentRequest(); } catch (e) { _agentMsg = e.message; _agentState = _agentState || { level: 'off', key: '', url: '' }; }
+            _agentRender();
+        }
+        function agentClose() { document.getElementById('agent-modal').style.display = 'none'; }
+        async function agentSetLevel(level) {
+            try { await _agentRequest({ level: level }); } catch (e) { _agentMsg = e.message; }
+            _agentRender();
+        }
+        async function agentNewKey() {
+            try { await _agentRequest({ new_key: true }); } catch (e) { _agentMsg = e.message; }
+            _agentRender();
+        }
+        async function agentCopy(i) {
+            var btn = document.getElementById('agent-copy-' + i);
+            try {
+                await navigator.clipboard.writeText(_agentSetups(_agentState)[i].text);
+                if (btn) btn.textContent = 'Copied';
+            } catch (e) {
+                _agentMsg = 'The browser did not allow copying: ' + e.message;
+                _agentRender();
+            }
+        }
+
         // ── Report a problem ────────────────────────────────────────────────
         var _reportLast = null;
         function reportOpen() {
@@ -20992,7 +21115,7 @@
             checkHealth();
             loadProjects();
             fvCheckDeps();
-            setInterval(function () { if (!document.hidden) cpMarkRunningProjects(); }, 15000);
+            setInterval(function () { if (!document.hidden) { cpMarkRunningProjects(); apwWatchRuns(); } }, 15000);
             try {
                 const r = await fetch(`${API}/config`);
                 const d = await r.json();

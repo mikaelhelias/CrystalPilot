@@ -136,6 +136,33 @@ check "SSE accepts the cookie" "grep -q 'event:' $T/sse.log" "$(head -2 $T/sse.l
 H=$("$CURL" -s -D - -o /dev/null -H 'Origin: http://evil.example' -H "X-CrystalPilot-Token: $TOK" "$U/api/projects"); check "no CORS on /api" "! echo \"$H\" | grep -qi access-control" "$H"
 H=$("$CURL" -s -D - -o /dev/null "$U/health"); check "/health readable cross-origin (loading screen)" "echo \"$H\" | grep -qi 'access-control-allow-origin: \*'" "$H"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' "$U/assets/logo.jpg"); check "assets open" "[ $C = 200 ]" "code=$C"
+# the agent route: off until chosen, then only with its own key
+PING='{"jsonrpc":"2.0","id":1,"method":"ping"}'
+mcp() { "$CURL" -s -o "$T/mcp.out" -w '%{http_code}' -H 'Content-Type: application/json' "$@" "$U/api/mcp"; }
+C=$(mcp -d "$PING"); check "agent route off by default -> 403" "[ $C = 403 ]" "code=$C"
+"$CURL" -s -H "X-CrystalPilot-Token: $TOK" -H 'Content-Type: application/json' -d '{"level":"read"}' "$U/api/agent" > "$T/agent.json"
+KEY=$("$PY" -c "import json,sys;print(json.load(open(sys.argv[1]))['key'])" "$T/agent.json")
+check "the panel makes a key" "[ -n \"$KEY\" ]" "$(head -c 200 $T/agent.json)"
+# (a Windows drive mounted in WSL has no Unix file modes to check)
+case "$T" in /mnt/*) ;; *) MODE=$(stat -c %a "$T/settings.json" 2>/dev/null || stat -f %Lp "$T/settings.json"); check "the settings file holding the key is private" "[ $MODE = 600 ]" "mode=$MODE" ;; esac
+C=$(mcp -d "$PING"); check "agent route without its key -> 401" "[ $C = 401 ]" "code=$C"
+C=$(mcp -H "X-CrystalPilot-Token: $TOK" -d "$PING"); check "the page's token is not the agent key -> 401" "[ $C = 401 ]" "code=$C"
+C=$(mcp -b "$T/jar" -d "$PING"); check "the page's cookie is not the agent key -> 401" "[ $C = 401 ]" "code=$C"
+C=$(mcp -H "Authorization: Bearer $KEY" -d "$PING"); check "agent route with its key -> 200" "[ $C = 200 ]" "code=$C"
+C=$(mcp -H "Authorization: Bearer $KEY" -H 'Origin: http://evil.example' -d "$PING"); check "agent route from a foreign web page -> 403" "[ $C = 403 ]" "code=$C"
+C=$(mcp -H "Authorization: Bearer $KEY" -H 'MCP-Protocol-Version: 1999-01-01' -d "$PING"); check "unsupported MCP version -> 400" "[ $C = 400 ]" "code=$C"
+C=$(mcp -H "Authorization: Bearer $KEY" -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'); check "notification -> 202" "[ $C = 202 ]" "code=$C"
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$U/api/mcp"); check "GET on the agent route -> 405" "[ $C = 405 ]" "code=$C"
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$U/api/projects"); check "the agent key opens no other route -> 403" "[ $C = 403 ]" "code=$C"
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"level":"full"}' "$U/api/agent"); check "an agent cannot raise its own level -> 403" "[ $C = 403 ]" "code=$C"
+check "the agent key is not in the log" "! grep -rqF \"$KEY\" $T/projects $T/server.log" "found"
+stop_server "$T" $PORT; rm -rf "$T"
+# a server opened to the network offers no agent route, whatever the settings say
+T="$TB/cp_api_b2"; rm -rf "$T"; mkdir -p "$T/projects" "$T/xds"
+printf '{"agent_level": "full", "agent_key": "open-server-key"}' > "$T/settings.json"
+( cd "$T" && XDS_GUI_SETTINGS="$T/settings.json" XDS_GUI_TOKEN=$TOK nohup "$PY" -u "$APP" --port $PORT --host 0.0.0.0 --projects-dir "$T/projects" --xds-path "$T/xds" > "$T/server.log" 2>&1 & echo $! > "$T/server.pid" )
+for i in $(seq 1 100); do "$CURL" -fs "$U/health" >/dev/null 2>&1 && break; sleep 0.2; done
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer open-server-key' -H 'Content-Type: application/json' -d "$PING" "$U/api/mcp"); check "agent route on a network server -> 403" "[ $C = 403 ]" "code=$C"
 stop_server "$T" $PORT; rm -rf "$T"
 
 # ══════════════════════════════════════════════════════════════════════════

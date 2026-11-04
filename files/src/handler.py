@@ -345,7 +345,13 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             if not request_path.startswith("/api/") and not (self.command == "GET" and self._public_path(request_path)):
                 self.send_json({"error": "Not found"}, 404)
                 return
-            if not self._authorized():
+            if request_path == "/api/mcp":
+                # agents use their own key here and nowhere else; the page's token and cookie do not count
+                refused = agent_refusal(self.headers)
+                if refused:
+                    self.send_json({"error": refused[1]}, refused[0])
+                    return
+            elif not self._authorized():
                 self.send_json({"error": "Not authorised: this CrystalPilot instance only answers the browser tab that opened it (or requests carrying its token, see the console banner)"}, 403)
                 return
             fn()
@@ -473,8 +479,12 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         project_route = self._project_route(path)
         
+        # The agent route offers no stream to listen to
+        if path == "/api/mcp":
+            self.send_json({"error": "Send MCP messages with POST"}, 405, extra_headers={"Allow": "POST"})
+
         # Root - serve frontend
-        if path == "/" or path == "/index.html":
+        elif path == "/" or path == "/index.html":
             self.send_html(get_frontend_html())
         
         # Favicon - return empty 204 to suppress browser 404
@@ -1468,7 +1478,14 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 NEGGIA_LIB = _find_neggia()
             self.send_json({"xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN, "neggia_lib": NEGGIA_LIB, "script_dir": str(Path(__file__).parent.resolve()), "projects_dir": str(PROJECTS_DIR.resolve()), "is_wsl": IS_WSL, "wsl_drives": _wsl_drives(), "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE),
                             "wsl_distro": os.environ.get("WSL_DISTRO_NAME", ""), "projects_drive": os.environ.get("CRYSTALPILOT_DRIVE", "").strip(),
-                            "projects_win": _windows_view(str(PROJECTS_DIR)), "resources": _resource_info()})
+                            "projects_win": _windows_view(str(PROJECTS_DIR)), "resources": _resource_info(),
+                            # a shared installation keeps each user's list in that user's browser
+                            "autopilot_keywords": None if RESTRICT_BROWSE else _load_settings().get("autopilot_keywords"),
+                            "keywords_on_server": not RESTRICT_BROWSE})
+
+        # What the Connect an agent panel shows
+        elif path == "/api/agent":
+            self.send_json(agent_status(self.server.server_address[1]))
 
         # List XSCALE subfolders (for XDSCONV workdir selection)
         elif project_route == '/xscale-subfolders':
@@ -3980,8 +3997,25 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
     def _dispatch_POST(self, path, data):
         global xds_runner, CCP4_BIN, CCP4_BIN_SAVED, NEGGIA_LIB, XDS_PARALLEL, CPU_CORES, RAM_LIMIT_GB
         project_route = self._project_route(path)
+        # An MCP message from an agent (agent_refusal has already let it through)
+        if path == "/api/mcp":
+            status, reply = agent_rpc(data, self.headers, self.server.server_address[1])
+            if reply is None:
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_json(reply, status)
+
+        # The Connect an agent panel: access level, new key
+        elif path == "/api/agent":
+            try:
+                self.send_json(agent_configure(data, self.server.server_address[1]))
+            except AgentError as e:
+                self.send_json({"error": str(e)}, 403)
+
         # Create project
-        if path == "/api/projects":
+        elif path == "/api/projects":
             try:
                 # the data folder may be typed as a Windows path (D:\data\...)
                 data_path = data.get("data_path", "")
@@ -4216,9 +4250,18 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             # machine, so it also holds when the page is opened in another
             # browser (on Linux the launcher may not reuse the same one).
             env_seen = data.get("env_seen")
+            # The XDS.INP search's folder words decide which file AutoPilot imports,
+            # so the page and an agent read them from one place
+            keywords = data.get("autopilot_keywords")
+            if keywords is not None:
+                if RESTRICT_BROWSE or not isinstance(keywords, list):
+                    keywords = None
+                else:
+                    keywords = [str(k).strip().lower() for k in keywords if str(k).strip()][:50]
             # Remember these choices for the next start (per machine)
             _save_settings(xds_path=str(xds_runner.xds_path) if new_path else None,
                            ccp4_bin=ccp4, neggia_lib=neggia, env_seen=env_seen,
+                           autopilot_keywords=keywords,
                            parallel=(bool(par) if par is not None else None),
                            cpu_cores=(CPU_CORES if cores is not None else None),
                            ram_gb=(RAM_LIMIT_GB if ram is not None else None))
@@ -4849,8 +4892,10 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         path = parsed.path
         project_route = self._project_route(path)
         qs = urllib.parse.parse_qs(parsed.query)
-        
-        if project_route == "":
+
+        if path == "/api/mcp":
+            self.send_json({"error": "This route keeps no sessions to end"}, 405, extra_headers={"Allow": "POST"})
+        elif project_route == "":
             name = _url_project_name(path.split("/")[-1])
             delete_files = qs.get("files", ["false"])[0].lower() == "true"
             try:

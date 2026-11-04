@@ -183,6 +183,30 @@ async function main() {
       && apw.cellShown && apw.routeHidden && apw.reviewHasChoices, JSON.stringify(apw));
     check("AutoPilot wizard: no JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
 
+    // ── connect an agent: off at first, a level brings the setup, the key stays out of sight ──
+    mark = events.length;
+    const agent = await evalJs(`(async () => { if (typeof agentOpen !== 'function') return { missing: true };
+      await agentOpen();
+      const modal = document.getElementById('agent-modal').style.display;
+      const firstOff = document.getElementById('agent-level-off').checked;
+      const noSetupWhenOff = !document.getElementById('agent-copy-0');
+      await agentSetLevel('own');
+      const own = document.getElementById('agent-level-own').checked;
+      const setups = !!document.getElementById('agent-copy-0') && /claude mcp add/.test(document.getElementById('agent-body').textContent)
+        && /ollmcp mcp add/.test(document.getElementById('agent-body').textContent);
+      const key = _agentState.key;
+      const keyHidden = key.length > 20 && document.getElementById('agent-body').innerHTML.indexOf(key) < 0;
+      await agentNewKey();
+      const newKey = _agentState.key !== key;
+      await agentSetLevel('off');
+      const offAgain = document.getElementById('agent-level-off').checked && !document.getElementById('agent-copy-0');
+      agentClose();
+      return { modal, firstOff, noSetupWhenOff, own, setups, keyHidden, newKey, offAgain, closed: document.getElementById('agent-modal').style.display === 'none' }; })()`);
+    check("Connect an agent: off at first; a level shows the setups with the key hidden; a new key; off again",
+      !agent.missing && agent.modal === 'flex' && agent.firstOff && agent.noSetupWhenOff && agent.own && agent.setups && agent.keyHidden && agent.newKey && agent.offAgain && agent.closed,
+      JSON.stringify(agent));
+    check("Connect an agent: no JavaScript errors", errorsSince(mark).length === 0, errorsSince(mark).join(" | "));
+
     // ── report a problem: the dialog saves a report and says where it goes ──
     mark = events.length;
     const rep = await evalJs(`(async () => { if (typeof reportOpen !== 'function') return { missing: true };

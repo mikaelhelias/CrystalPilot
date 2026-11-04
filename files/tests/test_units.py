@@ -1766,6 +1766,68 @@ def define_checks(m, scratch):
             none = m._clean_inp_text(text % other, "xds")
             assert "LIB" not in m._parse_xdsinp_params(none) and ("!LIB= " + other) in none, none
 
+    # ── agent route: /api/mcp and the panel's /api/agent ─────────────────
+    @check("agent: log values become numbers; what the program did not report is None")
+    def _():
+        assert m._agent_num("12.3%") == 12.3 and m._agent_num("99.9*") == 99.9 and m._agent_num(" 2.05 ") == 2.05
+        assert m._agent_num(7) == 7 and isinstance(m._agent_num(7), int)
+        for empty in (None, "", "n/a", "-99.9%", -99.0, float("nan"), float("inf"), True):
+            assert m._agent_num(empty) is None, empty
+
+    @check("agent: statistics of a real CORRECT.LP as numbers, the same cut-offs the page uses")
+    def _():
+        parsed = m.LPParser.parse_correct(real("CORRECT.LP"))
+        out = m.agent_statistics(parsed, "p", "CORRECT", "x/CORRECT.LP")
+        assert isinstance(out["overall"]["completeness_pct"], float), out["overall"]
+        assert isinstance(out["overall"]["r_meas_pct"], float) and isinstance(out["overall"]["i_over_sigma"], float)
+        assert out["overall"]["d_min_A"] is None                       # the "total" row has no resolution
+        assert isinstance(out["outer_shell"]["d_min_A"], float) and "shells" not in out
+        assert out["n_shells"] == len([r for r in parsed["statistics_table"] if r["resolution"].lower() != "total"])
+        assert out["cell"]["a_A"] == float(parsed["unit_cell"]["a"]) and out["space_group"]["number"] == int(parsed["space_group"])
+        assert out["cutoffs"]["isig2"]["d_A"] == parsed["cutoffs"]["all_cutoffs"]["isig2"]
+        full = m.agent_statistics(parsed, "p", "CORRECT", "x/CORRECT.LP", "full")
+        assert len(full["shells"]) == full["n_shells"] and "outer_shell" not in full
+        starred = [s for s, r in zip(full["shells"], [r for r in parsed["statistics_table"] if r["resolution"].lower() != "total"]) if "*" in r["cc_half"]]
+        assert all(s["cc_half_significant"] for s in starred)
+        json.dumps(full, allow_nan=False)
+
+    @check("agent: a text comes in parts, and long replies are cut only in a summary")
+    def _():
+        text = "\n".join("line %d" % n for n in range(1, 501))
+        end = m.agent_lines(text)
+        assert end["first_line"] == 301 and end["text"].startswith("line 301") and end["next_offset"] is None
+        page = m.agent_lines(text, offset=11, limit=5)
+        assert page["text"].splitlines() == ["line %d" % n for n in range(11, 16)] and page["next_offset"] == 16
+        assert m.agent_lines(text, offset=-2)["text"] == "line 499\nline 500"
+        assert m.agent_lines(text, limit=99999)["first_line"] == 1 and len(m.agent_lines(text, limit=99999)["text"].splitlines()) == 500
+        assert m.agent_lines(text, search="LINE 50")["matches"] == 2 and m.agent_lines("", offset=1)["total_lines"] == 0
+        long = {"rows": list(range(100)), "text": "x" * 9000, "traceback": "secret", "bad": float("nan")}
+        short = m._agent_clean(long)
+        assert len(short["rows"]) == m.AGENT_LIST_LIMIT + 1 and len(short["text"]) < 4100 and "traceback" not in short and short["bad"] is None
+        whole = m._agent_clean(long, "full")
+        assert len(whole["rows"]) == 100 and len(whole["text"]) == 9000
+        json.dumps(whole, allow_nan=False)
+
+    @check("agent: every tool is well formed, every level names a real one, the code keeps to Python 3.7")
+    def _():
+        import ast
+        names = [t["name"] for t in m.AGENT_TOOLS]
+        assert len(names) == len(set(names))
+        assert all(t["level"] in m.AGENT_LEVELS[1:] and callable(t["fn"]) and t["description"] and t["schema"]["type"] == "object" for t in m.AGENT_TOOLS)
+        assert all(not t.get("writes") for t in m.AGENT_TOOLS if t["level"] == "read")
+        assert all(t.get("writes") for t in m.AGENT_TOOLS if t["level"] != "read")
+        assert m._agent_tools_for("off") == []
+        assert len(m._agent_tools_for("read")) < len(m._agent_tools_for("own")) <= len(m._agent_tools_for("full"))
+        ast.parse((FILES / "src" / "agent.py").read_text(encoding="utf-8"), feature_version=(3, 7))
+
+    @check("agent: the page's default folder words are the server's; the panel's handlers exist")
+    def _():
+        html = m.get_frontend_html()
+        words = re.search(r"APW_KEYWORDS_DEFAULT = \[([^\]]*)\]", html).group(1)
+        assert [w.strip(" '") for w in words.split(",")] == m.XDSINP_KEYWORDS_DEFAULT
+        for name in ("agentOpen", "agentClose", "agentSetLevel", "agentNewKey", "agentCopy", "apwWatchRuns"):
+            assert "function " + name + "(" in html, name
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 def main():

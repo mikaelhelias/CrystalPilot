@@ -260,7 +260,9 @@ class _LogTee:
         """
         try:
             if API_TOKEN and API_TOKEN in text:
-                return text.replace(API_TOKEN, "<token hidden: see the console>")
+                text = text.replace(API_TOKEN, "<token hidden: see the console>")
+            if AGENT_KEY and AGENT_KEY in text:
+                text = text.replace(AGENT_KEY, "<agent key hidden>")
         except Exception as _e:
             _note_error(_e)
         return text
@@ -357,6 +359,11 @@ def _save_settings(**kv):
         # through must never leave a broken file that silently resets every setting
         tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".%d.tmp" % os.getpid())
         tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
+        if s.get("agent_key"):
+            try:
+                os.chmod(str(tmp), 0o600)      # the agent key: readable by this user only
+            except OSError as _e:
+                _note_error(_e)
         os.replace(str(tmp), str(SETTINGS_FILE))
         return True
     except Exception:
@@ -364,7 +371,11 @@ def _save_settings(**kv):
 
 SETTINGS = _load_settings()
 
-XDS_PATH = Path(os.environ.get("XDS_GUI_XDS_PATH", str(Path(__file__).parent.resolve())))
+# Agent access (/api/mcp): off until the user chooses a level; set by agent_configure
+AGENT_LEVEL = str(SETTINGS.get("agent_level") or "off")
+AGENT_KEY = str(SETTINGS.get("agent_key") or "")
+
+XDS_PATH =Path(os.environ.get("XDS_GUI_XDS_PATH", str(Path(__file__).parent.resolve())))
 if SETTINGS.get("xds_path") and Path(str(SETTINGS["xds_path"])).is_dir():
     XDS_PATH = Path(str(SETTINGS["xds_path"]))
 

@@ -336,6 +336,14 @@ def locate_dropped_folder(name, files, hints=None, restrict_to=None):
 # name CONTAINS a keyword (fast_dp_2, autoPROC.run1, processing-old) comes
 # first, earlier keywords before later ones.
 XDSINP_KEYWORDS_DEFAULT = ["fast_dp", "processing", "autoproc"]
+
+
+def autopilot_keywords():
+    """The folder words the XDS.INP search ranks by: the user's saved list, else the default."""
+    saved = _load_settings().get("autopilot_keywords")
+    return list(saved) if isinstance(saved, list) else list(XDSINP_KEYWORDS_DEFAULT)
+
+
 XDSINP_SEARCH_DEPTH = 6          # folder levels below each search root
 XDSINP_UP_LEVELS = 2             # the data folder, its parent and grandparent are searched
 XDSINP_SCAN_LIMIT = 300000       # directory entries in one search
@@ -1261,6 +1269,7 @@ def _batch_worker_run(batch_id):
             print("[batch %s] %s: %s%s" % (batch_id, project, item["status"],
                                            (" - " + item["error"]) if item.get("error") else ""))
             batch_save(state)
+            agent_log_batch_item(state, item)
         state["status"] = "stopped" if stop.is_set() else "done"
         batch_save(state)
     finally:

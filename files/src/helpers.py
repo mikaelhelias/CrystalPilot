@@ -636,11 +636,13 @@ _REPORT_USER_SEGMENT = re.compile(r"(/home/|/Users/|[\\]+Users[\\]+)([^\\/\r\n\"
 
 
 def _report_redact(text):
-    """Take user names out of paths and the API token out of text."""
+    """Take user names out of paths and the API token and agent key out of text."""
     text = str(text)
     try:
         if API_TOKEN:
             text = text.replace(API_TOKEN, "<token>")
+        if AGENT_KEY:
+            text = text.replace(AGENT_KEY, "<agent key>")
     except Exception as _e:
         _note_error(_e)
     return _REPORT_USER_SEGMENT.sub(lambda mt: mt.group(1) + "<user>", text)
