@@ -674,15 +674,15 @@ class Workflows(unittest.TestCase):
         self.assertEqual(status, 200, reply)
         return reply
 
-    def tool(self, name, **arguments):
-        reply = self.rpc('tools/call', {'name': name, 'arguments': arguments})
+    def tool(self, tool_name, **arguments):
+        reply = self.rpc('tools/call', {'name': tool_name, 'arguments': arguments})
         self.assertIn('result', reply, reply)
         result = reply['result']
         text = result['content'][0]['text']
         return (text if result['isError'] else json.loads(text)), result['isError']
 
-    def tool_ok(self, name, **arguments):
-        value, failed = self.tool(name, **arguments)
+    def tool_ok(self, tool_name, **arguments):
+        value, failed = self.tool(tool_name, **arguments)
         self.assertFalse(failed, value)
         return value
 
@@ -900,6 +900,260 @@ class Workflows(unittest.TestCase):
             self.assertTrue(failed)
             self.assertIn('search failed', message)
         self.assertEqual(self.tool_ok('find_datasets', folders=[str(folder)], also_search=[str(folder.parent)])['datasets'][0]['xdsinp_state'], 'imported')
+
+    # ── controls for working by hand ────────────────────────────────────────
+    def own_project(self, name=None):
+        """A project of the agent's own, with XDS.INP from a beamline file beside the frames."""
+        name = name or ('own_' + self._testMethodName[-40:])
+        folder = self.dataset_folder()
+        self.tool_ok('create_project', name=name, reason='test')
+        written = self.tool_ok('generate_xdsinp', project=name, template=str(folder / 'xtal_????.cbf'), from_xdsinp=str(folder / 'fast_dp' / 'XDS.INP'))
+        self.assertGreater(written['lines'], 3, written)
+        self.addCleanup(lambda: m.ProjectManager.delete(name))
+        return name
+
+    def wait_run(self, job_id, seconds=60):
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            status = self.tool_ok('job_status', job_id=job_id)
+            if not status['running']:
+                return status
+            time.sleep(0.05)
+        self.fail('run did not finish')
+
+    def test_agent_works_by_hand_from_new_project_to_results(self):
+        self.agent_on('own')
+        project = self.own_project()
+        self.assertTrue(self.tool_ok('get_project', project=project)['created_by_agent'])
+        started = self.tool_ok('run_program', project=project, program='xds', options={'steps': ['XYCORR', 'INIT', 'COLSPOT', 'IDXREF']}, reason='first steps')
+        self.assertTrue(started['job_id'].startswith('run:'))
+        ended = self.wait_run(started['job_id'])
+        self.assertEqual(ended['status'], 'completed', ended)
+        self.assertEqual([s['step'] for s in ended['steps']], ['XYCORR', 'INIT', 'COLSPOT', 'IDXREF'])
+        self.assertTrue(ended['log_tail'])
+        # the rest, then re-integration with the refined geometry
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xds', options={'steps': ['DEFPIX', 'INTEGRATE', 'CORRECT']})['job_id'])['status'], 'completed')
+        self.assertIsInstance(self.tool_ok('get_statistics', project=project)['overall']['completeness_pct'], float)
+        again = self.wait_run(self.tool_ok('run_program', project=project, program='xds', options={'reintegrate': True})['job_id'])
+        self.assertEqual(again['status'], 'completed', again)
+        self.assertTrue((m._pdir(project) / 'XPARM.XDS').read_text().startswith('test geometry'))
+        # the same run is listed for the page, marked as an agent's
+        listed = self.request('GET', '/api/jobs?project=' + urllib.parse.quote(project))[1]['jobs']
+        self.assertTrue(all(j['agent'] and j['followable'] and not j['background'] for j in listed), listed)
+        self.assertEqual(self.request('GET', '/api/jobs?project=' + urllib.parse.quote(self.name))[1]['jobs'], [])
+        record = [json.loads(line) for line in (m._pdir(project) / m.AGENT_LOG_NAME).read_text(encoding='utf-8').splitlines()]
+        outcomes = [r['outcome'] for r in record if r['tool'] == 'run_program']
+        self.assertEqual(outcomes, ['started', 'completed'] * 3)
+        self.assertEqual(record[0]['tool'], 'create_project')
+
+    def test_agent_runs_every_other_program_and_reports_failures(self):
+        self.agent_on('own')
+        project = self.own_project()
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xds')['job_id'])['status'], 'completed')
+        (m._pdir(project) / 'XDS.INP').read_text()
+        self.tool_ok('set_parameters', project=project, file='XSCALE.INP', params={'OUTPUT_FILE': 'scaled.ahkl', "FRIEDEL'S_LAW": 'TRUE', 'INPUT_FILE': 'XDS_ASCII.HKL'})
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xscale')['job_id'])['status'], 'completed')
+        self.assertIsInstance(self.tool_ok('get_statistics', project=project, source='XSCALE')['n_shells'], int)
+        message = self.wait_run(self.tool_ok('run_program', project=project, program='xdsconv')['job_id'])
+        self.assertEqual(message['status'], 'error')
+        self.assertIn('XDSCONV.INP', message['errors'][0])
+        written = self.tool_ok('set_parameters', project=project, file='XDSCONV.INP', params={'INPUT_FILE': 'scaled.ahkl', 'OUTPUT_FILE': 'temp.hkl CCP4_I+F', "FRIEDEL'S_LAW": 'FALSE'})
+        self.assertEqual(len([c for c in written['changes'] if c.startswith('+')]), 3, written)
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xdsconv', options={'mtz_name': 'final.mtz'})['job_id'])['status'], 'completed')
+        trial = self.wait_run(self.tool_ok('run_program', project=project, program='autoindex', options={'tier': 'quick'})['job_id'], 90)
+        self.assertEqual(trial['status'], 'completed', trial)
+        applied = self.tool_ok('apply_suggestion', project=project, kind='autoindex_trial')
+        self.assertTrue(any('SIGNAL_PIXEL' in c for c in applied['changes']), applied)
+        self.assertTrue(self.tool('apply_suggestion', project=project, kind='autoindex_trial', params={'trial': 99})[1])
+        for bad in ({'program': 'nonsense'}, {'program': 'xds', 'options': {'steps': ['NOPE']}}, {'program': 'xds', 'options': {'nonsense': 1}},
+                    {'program': 'autoindex', 'options': {'tier': 'huge'}}, {'program': 'xds', 'options': {'reintegrate': True, 'steps': ['CORRECT']}},
+                    {'program': 'pointless', 'options': {'input_file': '/etc/passwd'}}, {'program': 'gemmi_mtz', 'options': {'input_file': '../../x'}},
+                    {'program': 'xdsconv', 'options': {'mtz_name': '../x.mtz'}}, {'program': 'xds', 'new_run_folder': True, 'options': {'steps': ['CORRECT']}},
+                    {'program': 'pointless', 'new_run_folder': True}):
+            self.assertTrue(self.tool('run_program', project=project, **bad)[1], bad)
+        failing = self.own_project('own_failing_' + self._testMethodName[-20:])
+        (m._pdir(failing) / 'control.json').write_text(json.dumps({'XYCORR': 'exit'}))
+        failed = self.wait_run(self.tool_ok('run_program', project=failing, program='xds', options={'steps': ['XYCORR']})['job_id'])
+        self.assertNotEqual(failed['status'], 'completed', failed)
+        self.assertTrue(failed['steps'] or failed['errors'], failed)
+
+    def test_agent_run_can_be_stopped_goes_one_at_a_time_and_outlasts_the_job_list(self):
+        self.agent_on('own')
+        project = self.own_project()
+        (m._pdir(project) / 'control.json').write_text(json.dumps({'XYCORR': 'quiet'}))
+        job = self.tool_ok('run_program', project=project, program='xds', options={'steps': ['XYCORR']})['job_id']
+        deadline = time.time() + 15
+        while time.time() < deadline and not (m._pdir(project) / 'executed.jsonl').exists():
+            time.sleep(0.05)
+        self.assertTrue(self.tool_ok('job_status', job_id=job)['running'])
+        message, failed = self.tool('run_program', project=project, program='xds')
+        self.assertTrue(failed)
+        self.assertIn('one runs at a time', message)
+        message, failed = self.tool('run_autopilot', datasets=[{'existing_project': project}])
+        self.assertTrue(failed)
+        self.assertIn('one runs at a time', message)
+        self.assertTrue(self.tool_ok('stop_job', job_id=job, reason='test')['was_running'])
+        ended = self.wait_run(job, 30)
+        self.assertEqual(ended['status'], 'stopped', ended)
+        self.assertTrue(self.tool('stop_job', job_id='run:nonsense')[1])
+        self.assertTrue(self.tool('job_status', job_id='run:nonsense')[1])
+        # once the job list has forgotten it (after 30 minutes or a restart) the project's log answers
+        with m._proc_lock:
+            m._DONE_JOBS.pop(job[4:], None)
+        self.assertEqual(self.tool_ok('job_status', job_id=job)['status'], 'stopped')
+        # a start with no end: the program stopped with the server
+        log = m._pdir(project) / m.AGENT_LOG_NAME
+        with open(str(log), 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps({'job_id': 'run:lost', 'outcome': 'started', 'tool': 'run_program'}) + '\n')
+        self.assertEqual(self.tool_ok('job_status', job_id='run:lost')['status'], 'interrupted')
+
+    def test_agent_changes_input_files_with_their_rules(self):
+        self.agent_on('own')
+        project = self.own_project()
+        done = self.tool_ok('set_parameters', project=project, params={'SIGNAL_PIXEL': 6, 'SPOT_RANGE': [[1, 10], [20, 30]]}, reason='weak spots')
+        self.assertIn('+SIGNAL_PIXEL= 6', done['changes'])
+        text = (m._pdir(project) / 'XDS.INP').read_text()
+        self.assertIn('SPOT_RANGE= 1 10\nSPOT_RANGE= 20 30', text)
+        self.assertIn('note', self.tool_ok('set_parameters', project=project, params={'SIGNAL_PIXEL': 6}))
+        self.assertIn('!SIGNAL_PIXEL', '\n'.join(self.tool_ok('set_parameters', project=project, params={'SIGNAL_PIXEL': None})['changes']))
+        for refused in ({'LIB': '/tmp/x.so'}, {'JOB': 'ALL'}, {'ROTATION_AXIS': '0 1 0'}, {'NX': '1\nLIB= /x'}):
+            self.assertTrue(self.tool('set_parameters', project=project, params=refused)[1], refused)
+        self.assertTrue(self.tool('set_parameters', project=project, file='OTHER.INP', params={'NX': 1})[1])
+        self.assertTrue(self.tool('apply_space_group', project=project, number=999, cell=[1, 2, 3, 90, 90, 90])[1])
+        self.assertTrue(self.tool('apply_space_group', project=project, number=19)[1])
+        self.assertTrue(self.tool_ok('apply_space_group', project=project, number=19, cell=[78.1, 80.2, 37.3, 90, 90, 90])['changes'])
+        values = m.xdsinp_values((m._pdir(project) / 'XDS.INP').read_text())
+        self.assertEqual((values['SPACE_GROUP_NUMBER'], values['UNIT_CELL_CONSTANTS']), ('19', '78.1 80.2 37.3 90 90 90'))
+        # the stamp the page checks before it saves a form over this change
+        self.assertTrue(self.request('GET', '/api/projects/' + project)[1]['agent_changed_inp'])
+        self.assertNotIn('agent_changed_inp', self.request('GET', self.url)[1])
+        # a project with no XDS.INP yet is told where to start, and an existing one is not replaced by accident
+        self.tool_ok('create_project', name='empty_' + project[:30])
+        self.addCleanup(lambda: m.ProjectManager.delete('empty_' + project[:30]))
+        self.assertIn('no XDS.INP', self.tool('set_parameters', project='empty_' + project[:30], params={'NX': 1})[0])
+        self.assertIn('already has', self.tool('generate_xdsinp', project=project)[0])
+        self.assertTrue(self.tool('create_project', name='bad name/x')[1])
+        self.assertTrue(self.tool('create_project', name=project)[1])
+        self.assertTrue(self.tool('generate_xdsinp', project=project, overwrite=True, template=str(self.dataset_folder() / 'xtal_????.cbf'), from_xdsinp=str(self.dataset_folder() / 'xtal_0001.cbf'))[1])
+
+    def test_agent_applies_the_pages_suggestions(self):
+        self.agent_on('own')
+        project = self.own_project()
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xds')['job_id'])['status'], 'completed')
+        path = m._pdir(project) / 'XDS.INP'
+        # resolution in XDS.INP: nine shells; a low limit above the cut-off stays
+        self.tool_ok('apply_suggestion', project=project, kind='resolution_cutoff', params={'resolution': 2.05})
+        values = m.xdsinp_values(path.read_text())
+        self.assertEqual(values['INCLUDE_RESOLUTION_RANGE'], '50 2.05')
+        self.assertEqual(values['RESOLUTION_SHELLS'], m.xds_shells(2.05))
+        self.tool_ok('set_parameters', project=project, params={'INCLUDE_RESOLUTION_RANGE': '30 2.05'})
+        self.tool_ok('apply_suggestion', project=project, kind='resolution_cutoff', params={'resolution': 1.9})
+        self.assertEqual(m.xdsinp_values(path.read_text())['INCLUDE_RESOLUTION_RANGE'], '30 1.90')
+        self.assertTrue(self.tool('apply_suggestion', project=project, kind='resolution_cutoff')[1])
+        # resolution in XSCALE.INP
+        self.tool_ok('apply_suggestion', project=project, kind='resolution_cutoff', params={'resolution': 2.05, 'file': 'XSCALE.INP'})
+        xscale = (m._pdir(project) / 'XSCALE.INP').read_text()
+        self.assertIn('INCLUDE_RESOLUTION_RANGE= 999 2.05', xscale)
+        self.assertIn(m.xscale_shells(2.05), xscale)
+        # ice rings: what was already excluded stays
+        self.tool_ok('set_parameters', project=project, params={'EXCLUDE_RESOLUTION_RANGE': [['5.00', '4.90']]})
+        self.tool_ok('apply_suggestion', project=project, kind='ice_rings', params={'rings': 'standard'})
+        ranges = m._agent_active_ranges(path.read_text(), 'EXCLUDE_RESOLUTION_RANGE')
+        self.assertIn(['5.00', '4.90'], ranges)
+        self.assertEqual(len(ranges), len(m.LPParser.ICE_RING_POSITIONS) + 1)
+        self.assertTrue(self.tool('apply_suggestion', project=project, kind='ice_rings', params={'rings': 'some'})[1])
+        # frames: a batch number is the last frame of its batch, and earlier exclusions stay
+        (m._pdir(project) / 'XDSCC12.LP').write_text('')
+        with patch.object(m.LPParser, 'parse_xdscc12', return_value={'frames': [{'batch': 5 * (i + 1), 'delta_only': 0.1, 'delta_all': 0.1} for i in range(9)], 'frames_per_batch': 5, 'summary': {}}):
+            self.tool_ok('set_parameters', project=project, params={'EXCLUDE_DATA_RANGE': [[1, 2]]})
+            self.tool_ok('apply_suggestion', project=project, kind='frame_exclusions', params={'ranges': [{'start': 10, 'end': 15}, {'start': 5, 'end': 5}]})
+            self.assertEqual(m._agent_active_ranges(path.read_text(), 'EXCLUDE_DATA_RANGE'), [['1', '2'], ['6', '15'], ['1', '5']])
+            self.assertIn('no frames', self.tool('apply_suggestion', project=project, kind='frame_exclusions')[0])
+            self.assertTrue(self.tool('apply_suggestion', project=project, kind='frame_exclusions', params={'ranges': [{'start': 'x'}]})[1])
+        self.assertTrue(self.tool('apply_suggestion', project=project, kind='nonsense')[1])
+        before = path.read_text()
+        with patch.object(m.LPParser, 'parse_integrate', return_value={'beam_divergence': 0.123, 'reflecting_range': 0.456}):
+            result = self.tool('apply_suggestion', project=project, kind='beam_parameters')
+        if not result[1]:
+            self.assertNotEqual(path.read_text(), before)
+
+    def test_agent_levels_guard_the_controls_on_a_users_project(self):
+        self.agent_on('own')
+        self.assert_terminal(self.stream(), 'completed')
+        before = (self.p / 'XDS.INP').read_text()
+        attempts = [('run_program', {'program': 'xds'}), ('run_program', {'program': 'xds', 'new_run_folder': True}), ('set_parameters', {'params': {'NX': 1}}),
+                    ('apply_space_group', {'number': 19, 'cell': [1, 2, 3, 90, 90, 90]}), ('apply_suggestion', {'kind': 'resolution_cutoff', 'params': {'resolution': 2}}),
+                    ('generate_xdsinp', {'overwrite': True}), ('export_results', {'what': 'table1'})]
+        for tool, extra in attempts:
+            message, failed = self.tool(tool, project=self.name, **extra)
+            self.assertTrue(failed, tool)
+            self.assertIn("user's", message, tool)
+        with patch.object(m, 'AGENT_LEVEL', 'read'):
+            names = [t['name'] for t in self.rpc('tools/list')['result']['tools']]
+            for name in ('run_program', 'set_parameters', 'apply_space_group', 'apply_suggestion', 'generate_xdsinp', 'create_project', 'merge_datasets', 'export_results'):
+                self.assertNotIn(name, names)
+            for name in ('view_frame', 'search_manual', 'plan_merge', 'job_status'):
+                self.assertIn(name, names)
+        with patch.object(m, 'AGENT_LEVEL', 'full'):
+            for tool, extra in attempts[:1] + attempts[2:5]:
+                message, failed = self.tool(tool, project=self.name, **extra)
+                self.assertTrue(failed, tool)
+                self.assertIn('overwrite', message, tool)
+            self.assertEqual((self.p / 'XDS.INP').read_text(), before)
+            # a new numbered folder keeps the earlier results and needs no overwrite
+            job = self.tool_ok('run_program', project=self.name, program='xds', new_run_folder=True)
+            self.assertEqual(self.wait_run(job['job_id'])['status'], 'completed')
+            self.assertTrue((self.p / '1' / 'CORRECT.LP').is_file())
+            self.assertTrue((self.p / 'CORRECT.LP').is_file())
+            # the next run stays in that folder and takes the project's current XDS.INP there, as the page does
+            done = self.tool_ok('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 7})
+            self.assertTrue(done['changes'])
+            again = self.tool_ok('run_program', project=self.name, program='xds', overwrite=True, options={'steps': ['CORRECT']})
+            self.assertEqual(self.wait_run(again['job_id'])['status'], 'completed')
+            self.assertIn('SIGNAL_PIXEL= 7', (self.p / '1' / 'XDS.INP').read_text())
+            self.assertTrue(self.tool_ok('export_results', project=self.name, what='table1')['path'].endswith('_Table1.csv'))
+
+    def test_agent_merges_and_exports(self):
+        self.agent_on('own')
+        folder_a, folder_b = self.dataset_folder('a'), self.dataset_folder('b')
+        strategy = {'optimize': 'never', 'dcc_half': 'off'}
+        found = self.tool_ok('find_datasets', folders=[str(folder_a), str(folder_b)])['datasets']
+        self.assertEqual(len(found), 2, found)
+        suffix = self._testMethodName[-12:]
+        job = self.tool_ok('run_autopilot', datasets=[dict(found[0], project='ma_' + suffix), dict(found[1], project='mb_' + suffix)], strategy=strategy)['job_id']
+        self.assertEqual(self.wait_job(job)['counts'], {'done': 2})
+        plan = self.tool_ok('plan_merge', job_id=job)
+        self.assertEqual(len(plan['inputs']), 2, plan)
+        self.assertIn('INPUT_FILE', plan['xscale_inp'])
+        self.assertTrue(self.tool('plan_merge', job_id=job, friedel='MAYBE')[1])
+        merge = self.tool_ok('merge_datasets', job_id=job, reason='test')
+        self.assertEqual(sorted(merge['inputs']), sorted(['ma_' + suffix, 'mb_' + suffix]))
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            status = self.tool_ok('job_status', job_id=job)
+            if status['merges'][-1]['status'] != 'running':
+                break
+            time.sleep(0.05)
+        self.assertEqual(status['merges'][-1]['status'], 'done', status['merges'])
+        # exports land in the project
+        project = 'ma_' + suffix
+        table = self.tool_ok('export_results', project=project, what='table1')
+        self.assertTrue(Path(table['path']).read_text(encoding='utf-8').startswith('Parameter,Value'))
+        self.assertIn('Completeness (%)', Path(table['path']).read_text(encoding='utf-8'))
+        package = self.tool_ok('export_results', project=project, what='package', params={'reflections': False})
+        self.assertTrue(package['path'].endswith('.zip'), package)
+        self.assertTrue(self.tool('export_results', project=project, what='nonsense')[1])
+        self.assertIn('results', self.tool_ok('search_manual', query='xscale') if (Path(m.__file__).parent.parent / 'docs' / 'manual' / 'CrystalPilot-Manual.index.json').exists() else {'results': []})
+
+    def test_agent_view_frame_says_what_is_wrong(self):
+        self.agent_on('read')
+        (self.p / 'XDS.INP').unlink()
+        self.assertIn('no XDS.INP', self.tool('view_frame', project=self.name)[0])
+        (self.p / 'XDS.INP').write_text('JOB= XYCORR\n')
+        self.assertIn('names no images', self.tool('view_frame', project=self.name)[0])
+        (self.p / 'XDS.INP').write_text('NAME_TEMPLATE_OF_DATA_FRAMES= /no/such/x_????.cbf\n')
+        self.assertTrue(self.tool('view_frame', project=self.name, frame=0)[1])
+        self.assertTrue(self.tool('view_frame', project=self.name, frame=1)[1])
 
     def test_agent_levels_protect_the_users_projects(self):
         self.agent_on('own')

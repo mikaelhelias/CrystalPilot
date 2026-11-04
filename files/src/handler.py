@@ -618,7 +618,8 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             if high is None or high <= 0:
                 self.send_json({"error": "high must be a resolution in angstrom"}, 400)
                 return
-            self.send_json({"shells": xscale_shells(high)})
+            for_xds = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("for", [""])[0] == "xds"
+            self.send_json({"shells": xds_shells(high) if for_xds else xscale_shells(high)})
 
         # Matthews coefficient calculator
         elif project_route == '/matthews':

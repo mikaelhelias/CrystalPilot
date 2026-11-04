@@ -1806,6 +1806,9 @@ def define_checks(m, scratch):
                 assert {k: mine[k] for k in theirs} == theirs, (mine, theirs)
         for high, answer in recorded["shells"]:
             assert m.xscale_shells(high) == answer, high
+        for high, answer in recorded["xds_shells"]:
+            assert m.xds_shells(high) == answer, high
+            assert len(answer.split()) == 9, high          # CORRECT takes at most 9 values
         for item in recorded["autofill"]:
             got = m.xscale_autofill(item["metrics"], item["mode"])
             assert (got["resolution_high"] or "") == item["answer"]["hi"] and (got["shells"] or "") == item["answer"]["shells"], item["mode"]
@@ -1866,6 +1869,50 @@ def define_checks(m, scratch):
         assert m._agent_tools_for("off") == []
         assert len(m._agent_tools_for("read")) < len(m._agent_tools_for("own")) <= len(m._agent_tools_for("full"))
         ast.parse((FILES / "src" / "agent.py").read_text(encoding="utf-8"), feature_version=(3, 7))
+
+    @check("agent: the manual search finds a section by its words, and every word has to be there")
+    def _():
+        entries = [{"a": "ch-1", "c": "1. Scaling", "t": "XSCALE keywords", "x": "How to run scaling. Friedel's law decides how anomalous pairs merge."},
+                   {"a": "ch-2", "c": "2. Friedel", "t": "Friedel's law", "x": "The tick box. Friedel pairs are merged for native data."},
+                   {"a": "ch-3", "c": "3. Other", "t": "Frame viewer", "x": "Rings, spots and contrast."}]
+        hits = m.manual_search(entries, "friedel")
+        assert [h["anchor"] for h in hits] == ["ch-2", "ch-1"], hits
+        assert [h["anchor"] for h in m.manual_search(entries, "friedel scaling")] == ["ch-1"]
+        assert m.manual_search(entries, "nothinglikethis") == [] and m.manual_search(entries, "a") == []
+        assert "Friedel" in m.manual_search(entries, "friedel")[0]["snippet"]
+        real = FILES.parent / "docs" / "manual" / "CrystalPilot-Manual.index.json"
+        if real.exists():
+            found = m.manual_search(json.loads(real.read_text(encoding="utf-8")), "ice rings", 3)
+            assert found and "ice" in (found[0]["title"] + found[0]["text"]).lower(), found
+
+    @check("agent: a frame picture shrinks to the size limit and keeps a single dark spot")
+    def _():
+        try:
+            import numpy as np
+            from matplotlib import image as mpl_image
+        except ImportError:
+            raise SkipCheck("numpy/matplotlib not installed here")
+        pixels = np.ones((4371, 4150, 4), dtype=float)
+        pixels[1000, 1000, :3] = 0.0                     # a one-pixel spot
+        buf = io.BytesIO()
+        mpl_image.imsave(buf, pixels, format="png")
+        png, factor = m._agent_shrink_png(buf.getvalue())
+        small = mpl_image.imread(io.BytesIO(png), format="png")
+        assert factor == 5 and max(small.shape[:2]) <= m.AGENT_FRAME_MAX_PIXELS, (factor, small.shape)
+        assert small[:, :, 0].min() == 0.0, "the spot was lost"
+
+    @check("agent: an input file takes no keyword or value that would run or write something elsewhere")
+    def _():
+        refused = [{"LIB": "/tmp/x.so"}, {"lib": "/tmp/x.so"}, {"JOB": "ALL"}, {"MAXIMUM_NUMBER_OF_PROCESSORS": 99},
+                   {"ROTATION_AXIS": "1 0 0"}, {"NX": "1\nLIB= /tmp/x.so"}, {"NX": "1 LIB=/tmp/x.so"}, {"NX": "1 ! x"},
+                   {"NX\nLIB": "1"}, {"OUTPUT_FILE": "/etc/x"}, {"OUTPUT_FILE": "..\\x"}, {"SPOT_RANGE": [["1", "2\nLIB=x"]]}, {}, None]
+        for params in refused:
+            try:
+                m._agent_check_params(params)
+            except m.AgentError:
+                continue
+            raise AssertionError("accepted: %r" % (params,))
+        m._agent_check_params({"SPOT_RANGE": [[1, 10], [20, 30]], "DATA_RANGE": "1 900", "SIGNAL_PIXEL": None, "OUTPUT_FILE": "merged.ahkl", "FRIEDEL'S_LAW": "TRUE"})
 
     @check("agent: the page's default folder words are the server's; the panel's handlers exist")
     def _():

@@ -69,7 +69,10 @@ for step in jobs:
         Path('GXPARM.XDS').write_text('test geometry\n')
     if step == 'XSCALE':
         output = re.search(r'^OUTPUT_FILE\s*=\s*(\S+)', inp.read_text(), re.M).group(1)
-        shutil.copyfile('XDS_ASCII.HKL', output)
+        if Path('XDS_ASCII.HKL').exists():
+            shutil.copyfile('XDS_ASCII.HKL', output)
+        else:                       # a merge folder holds only links under inputs/
+            Path(output).write_text('test merged reflections\n')
     if step == 'XDSCONV':
         Path('F2MTZ.INP').write_text('END\n')
         Path('temp.hkl').write_text('test conversion input\n')

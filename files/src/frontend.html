@@ -6558,6 +6558,18 @@
             });
         }
 
+        // A run an agent started in the open project: its tab shows it, and its projects appear
+        var _cpAgentSeen = {};
+        async function cpFollowAgentRuns() {
+            var d;
+            try { d = await (await fetch(API + '/jobs')).json(); } catch (e) { return; }
+            var fresh = (d.jobs || []).filter(function (j) { return j.agent && j.running && !_cpAgentSeen[j.id]; });
+            if (!fresh.length) return;
+            fresh.forEach(function (j) { _cpAgentSeen[j.id] = true; });
+            try { loadProjects(); } catch (e) {}
+            if (currentProject && fresh.some(function (j) { return j.project === currentProject; })) cpReattachRuns(currentProject);
+        }
+
         // The sidebar marks the projects with a run going (also one started before
         // the page was opened, or from another tab); opening the project shows it
         async function cpMarkRunningProjects() {
@@ -6781,26 +6793,11 @@
             if (!currentProject) return;
             try {
                 // Set INCLUDE_RESOLUTION_RANGE and RESOLUTION_SHELLS in XDS.INP
-                // XDS CORRECT supports at most 9 RESOLUTION_SHELLS values (10 shells).
-                // Generate 9 boundaries: 6 equal-volume coarse + 3 fine (0.1A) near cutoff.
-                var _dLo = 80.0;
-                var _nFine = 3;
-                var _nCoarse = 6;
-                var _fineStart = highRes + _nFine * 0.10;
-                var _inv2Lo = 1.0 / (_dLo * _dLo);
-                var _inv2Fine = 1.0 / (_fineStart * _fineStart);
-                var _bounds = [];
-                for (var _si = 1; _si < _nCoarse; _si++) {
-                    var _inv2 = _inv2Lo + _si * (_inv2Fine - _inv2Lo) / _nCoarse;
-                    _bounds.push(Math.sqrt(1.0 / _inv2));
-                }
-                for (var _fi = 0; _fi < _nFine; _fi++) {
-                    _bounds.push(_fineStart - _fi * 0.10);
-                }
-                _bounds.push(highRes);  // include the cutoff as final boundary
-                // Safety: cap at 9 values
-                if (_bounds.length > 9) _bounds = _bounds.slice(_bounds.length - 9);
-                var shells = _bounds.map(function(v){ return v.toFixed(2); }).join(' ');
+                // XDS CORRECT supports at most 9 RESOLUTION_SHELLS values (10 shells)
+                var _shellsR = await fetch(API + '/rules/xscale-shells?for=xds&high=' + encodeURIComponent(highRes));
+                var _shellsD = await _shellsR.json();
+                if (!_shellsR.ok || _shellsD.error) throw new Error(_shellsD.error || ('HTTP ' + _shellsR.status));
+                var shells = _shellsD.shells;
                 // The cut-off is a HIGH-resolution limit: a low limit already active in
                 // XDS.INP is the user's and stays; 50 A only when there is none.
                 var lowRes = '50';
@@ -11311,7 +11308,18 @@
         // text of the last "Load from other XDS.INP" (the server uses it only when the project has no XDS.INP)
         let _loadedInpText = null;
 
+        // An agent can change XDS.INP while this form is open; a save would write the form's
+        // older values over that.  Runs change the file too, so only an agent's change counts.
+        var _cpAgentStamp = '';
+        async function _cpAgentStampNow() {
+            try {
+                var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject));
+                return r.ok ? ((await r.json()).agent_changed_inp || '') : _cpAgentStamp;
+            } catch (e) { return _cpAgentStamp; }
+        }
+
         async function loadParamsFromFile() {
+            _cpAgentStamp = await _cpAgentStampNow();
             if (!currentProject) return;
             try {
                 const r = await fetch(`${API}/projects/${encodeURIComponent(currentProject)}/xdsinp`);
@@ -11550,6 +11558,14 @@
 
         async function saveParams() {
             if (!currentProject) return;
+            var _stampNow = await _cpAgentStampNow();
+            if (_stampNow !== _cpAgentStamp) {
+                if (!confirm('An agent changed XDS.INP after this form was loaded.\n\nOK: save this form over its change.\nCancel: keep its change and reload the form.')) {
+                    await loadParamsFromFile();
+                    return;
+                }
+                _cpAgentStamp = _stampNow;
+            }
 
             const v = (id) => document.getElementById(id).value.trim();
             const params = {};
@@ -20238,7 +20254,7 @@
             checkHealth();
             loadProjects();
             fvCheckDeps();
-            setInterval(function () { if (!document.hidden) { cpMarkRunningProjects(); apwWatchRuns(); } }, 15000);
+            setInterval(function () { if (!document.hidden) { cpMarkRunningProjects(); apwWatchRuns(); cpFollowAgentRuns(); } }, 15000);
             try {
                 const r = await fetch(`${API}/config`);
                 const d = await r.json();

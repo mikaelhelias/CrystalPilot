@@ -42,6 +42,7 @@ class ProcessingJob:
         # AutoPilot wizard runs and merges run in their own threads and have their
         # own progress display (Runs list); they are listed but not followed by a page.
         self.background = threading.current_thread().name.startswith(('batch-', 'merge-'))
+        self.agent = threading.current_thread().name.startswith('agent-')   # the page shows these by itself
         self.events = []            # [(id, event name, event text with its id line)]
         self.next_id = 0
         self.changed = threading.Condition(threading.Lock())
@@ -86,7 +87,7 @@ class ProcessingJob:
         return {'id': self.id, 'project': self.project, 'kind': self.kind, 'title': self.title,
                 'started': self.started, 'finished': self.finished, 'running': self.finished is None,
                 'status': self.status or ('running' if self.finished is None else ''),
-                'followable': self.followable, 'background': self.background, 'events': self.next_id}
+                'followable': self.followable, 'background': self.background, 'agent': self.agent, 'events': self.next_id}
 
 
 def _prune_done_jobs():

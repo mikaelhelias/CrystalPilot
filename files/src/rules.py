@@ -478,6 +478,18 @@ def xscale_shells(high):
     return " ".join(js_fixed(v, 2) for v in bounds)
 
 
+def xds_shells(high):
+    """RESOLUTION_SHELLS for CORRECT, which takes at most 9 values: six shells of equal
+    volume in 1/d² from 80 Å, then three 0.1 Å shells that reach the cut-off."""
+    d_low, n_fine, n_coarse = 80.0, 3, 6
+    fine_start = high + n_fine * 0.10
+    inv_low = 1.0 / (d_low * d_low)
+    inv_fine = 1.0 / (fine_start * fine_start)
+    bounds = [math.sqrt(1.0 / (inv_low + i * (inv_fine - inv_low) / n_coarse)) for i in range(1, n_coarse)]
+    bounds += [fine_start - i * 0.10 for i in range(n_fine)] + [high]
+    return " ".join(js_fixed(v, 2) for v in bounds[-9:])
+
+
 XSCALE_CUTOFF_MODES = {"isig": ("isig2", "I/σ ≈ 2.0"), "robs": ("r_obs_55", "R-obs ≈ 55%"),
                        "cc50": ("cc_half_50", "CC½ ≈ 50%"), "cc12": ("cc_half_sig", "CC½ significant")}
 XSCALE_CUTOFF_DEFAULT = "cc50"
