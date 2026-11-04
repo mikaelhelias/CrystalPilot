@@ -2544,6 +2544,9 @@
                 <!-- ── DATA PROCESSING main tab ──────────────────── -->
                 <div id="main-tab-dp">
 
+                <!-- what an agent did in this project; shown only when it did something -->
+                <div id="agent-activity" style="display:none; margin-bottom:10px;"></div>
+
                 <!-- XDS status -->
                 <div id="dp-xds-status" style="font-family:var(--mono); font-size:0.78rem; padding:8px 12px; margin-bottom:10px; border-radius:6px; background:rgba(0,0,0,0.15); border:1px solid var(--border);"></div>
                 <div style="font-size:0.72rem; color:var(--txt3); margin:-6px 0 10px 0; line-height:1.5; font-style:italic;">XDS: Kabsch, W. (2010) <i>Acta Cryst.</i> D66, 125–132. doi:<a href="https://doi.org/10.1107/S0907444909047337" target="_blank" style="color:var(--accent2);">10.1107/S0907444909047337</a> · Download: <a href="https://xds.mr.mpg.de/html_doc/downloading.html" target="_blank" style="color:var(--accent);">xds.mr.mpg.de</a></div>
@@ -3371,9 +3374,11 @@
                                 <button class="btn-ghost btn-sm" onclick="t1CopyTSV()" title="Copy table as tab-separated values (paste into Excel / Word)">📋 Copy TSV</button>
                                 <button class="btn-ghost btn-sm" onclick="t1CopyLatex()" title="Copy table as LaTeX tabular">📋 Copy LaTeX</button>
                                 <button class="btn-ghost btn-sm" onclick="t1ExportXlsx()" title="Download Table 1 as CSV spreadsheet">⤓ Export .csv</button>
+                                <button class="btn-ghost btn-sm" id="t1-methods-btn" onclick="t1Methods()" title="Write a methods paragraph from what this project's files show, for you to check and edit">✎ Methods text</button>
                             </div>
                         </div>
                         <div class="card-body">
+                            <div id="t1-methods" style="display:none; margin:0 0 14px 0;"></div>
                             <div id="t1-status" style="font-family:var(--mono); font-size:0.78rem; color:var(--txt3); margin-bottom:10px;"></div>
                             <div id="t1-table-wrap" style="overflow-x:auto;">
                                 <table id="t1-table" style="width:100%; border-collapse:collapse; font-family:var(--mono); font-size:0.80rem;">
@@ -5171,6 +5176,9 @@
             </div>
         </div>
     </div>
+    <!-- questions from an agent; the page answers for the user only when they click -->
+    <div id="agent-questions" style="display:none; position:fixed; right:16px; bottom:16px; z-index:9998; width:420px; max-width:calc(100vw - 32px); max-height:70vh; overflow-y:auto;"></div>
+
     <!-- ── Connect an agent ──────────────────────────────────────────────── -->
     <div id="agent-modal" class="modal-backdrop-blur" style="display:none; position:fixed; inset:0; z-index:9999;
          background:rgba(0,0,0,0.68); align-items:center; justify-content:center;"
@@ -6018,6 +6026,7 @@
                 el.classList.toggle('active', el.getAttribute('data-project') === name);
             });
             cpReattachRuns(name);       // a run of this project started earlier (closed page, other tab)
+            agentLoadActivity();
             cpMarkRunningProjects();
         }
 
@@ -19463,8 +19472,8 @@
         var AGENT_LEVEL_TEXT = {
             off: ['Off', 'No agent can connect.'],
             read: ['Read only', 'It can read every project and search the folders it is given. It cannot run anything.'],
-            own: ['Own projects (recommended)', 'It can also run AutoPilot, in new projects of its own. It can start from the same images, and your projects stay as they are.'],
-            full: ['Full', 'It can also run AutoPilot on your projects. Replacing the results of a project of yours needs an explicit overwrite.']
+            own: ['Own projects (recommended)', 'It can also process data, in new projects of its own. It can start from the same images, and your projects stay as they are.'],
+            full: ['Full', 'It can also work in your projects. Each time it would change one, this page asks you first.']
         };
         function _agentSetups(d) {
             var key = d.key || '<agent key>', header = 'Authorization: Bearer ' + key;
@@ -19520,6 +19529,7 @@
         }
         function agentClose() { document.getElementById('agent-modal').style.display = 'none'; }
         async function agentSetLevel(level) {
+            if (level === 'full') { try { cpAskNotify(); } catch (e) {} }
             try { await _agentRequest({ level: level }); } catch (e) { _agentMsg = e.message; }
             _agentRender();
         }
@@ -19536,6 +19546,118 @@
                 _agentMsg = 'The browser did not allow copying: ' + e.message;
                 _agentRender();
             }
+        }
+
+        // ── Questions from an agent ─────────────────────────────────────────
+        // An agent that would change a project of the user's waits for an answer here.
+        var _agentQuestionsSeen = {};
+        async function agentWatchQuestions() {
+            var d;
+            try { d = await (await fetch(API + '/agent/approvals')).json(); } catch (e) { return; }
+            var questions = d.questions || [], box = document.getElementById('agent-questions');
+            if (!box) return;
+            var fresh = questions.filter(function (q) { return !_agentQuestionsSeen[q.id]; });
+            fresh.forEach(function (q) { _agentQuestionsSeen[q.id] = true; });
+            if (!fresh.length && questions.length === box.childElementCount) return;
+            box.style.display = questions.length ? 'block' : 'none';
+            box.innerHTML = questions.map(function (q) {
+                return '<div style="background:var(--panel); border:1px solid var(--warning, #ecc94b); border-radius:10px; padding:12px 14px; margin-top:8px; font-size:0.84rem; color:var(--txt2); box-shadow:0 12px 40px rgba(0,0,0,0.5);">'
+                    + '<div style="font-family:var(--head); font-size:0.72rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;">An agent asks</div>'
+                    + '<div style="color:var(--txt);">It would <b>' + _escHtml(q.doing) + '</b> in your project <b>' + _escHtml(q.project) + '</b>.</div>'
+                    + (q.reason ? '<div style="margin-top:6px;"><span style="color:var(--txt3);">Its reason:</span> ' + _escHtml(q.reason) + '</div>' : '')
+                    + '<details style="margin-top:6px;"><summary style="cursor:pointer; color:var(--txt3); font-size:0.78rem;">Exactly what it asked' + (q.client ? ' (' + _escHtml(q.client) + ')' : '') + '</summary>'
+                    + '<pre style="margin:4px 0 0 0; font-size:0.74rem; white-space:pre-wrap; word-break:break-all; color:var(--txt3);">' + _escHtml(q.tool + ' ' + JSON.stringify(q.arguments, null, 1)) + '</pre></details>'
+                    + '<div style="display:flex; gap:8px; margin-top:10px;">'
+                    + '<button class="btn-secondary btn-sm" onclick="agentAnswer(\'' + _escHtml(q.id) + '\', \'allow\')">Allow once</button>'
+                    + '<button class="btn-secondary btn-sm" onclick="agentAnswer(\'' + _escHtml(q.id) + '\', \'refuse\')">Refuse</button></div></div>';
+            }).join('');
+            if (fresh.length && (document.hidden || (document.hasFocus && !document.hasFocus()))) {
+                try {
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        var n = new Notification('CrystalPilot', { body: 'An agent is waiting for your answer', tag: 'cp-agent-question' });
+                        n.onclick = function () { try { window.focus(); } catch (e) {} n.close(); };
+                    }
+                } catch (e) {}
+            }
+        }
+        async function agentAnswer(id, answer) {
+            try {
+                var r = await fetch(API + '/agent/approvals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id, answer: answer }) });
+                var d = await r.json();
+                if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+                showToast(answer === 'allow' ? 'Allowed: the agent goes ahead when it asks again' : 'Refused: nothing changes', 'info');
+            } catch (e) { showToast(e.message, 'error'); }
+            agentWatchQuestions();
+        }
+
+        // ── Agent activity ──────────────────────────────────────────────────
+        var _agentActivitySeen = '', _agentActivityOpen = false;
+        async function agentLoadActivity() {
+            var box = document.getElementById('agent-activity');
+            if (!box) return;
+            var project = currentProject, entries = [];
+            if (project) {
+                try { entries = (await (await fetch(API + '/projects/' + encodeURIComponent(project) + '/agent-log')).json()).entries || []; } catch (e) { return; }
+            }
+            if (project !== currentProject) return;
+            var seen = project + '|' + entries.length;
+            if (seen === _agentActivitySeen) return;
+            _agentActivitySeen = seen;
+            if (!entries.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+            var words = { run_autopilot: 'AutoPilot', run_program: 'Ran a program', set_parameters: 'Changed keywords', apply_space_group: 'Set the space group',
+                          apply_suggestion: 'Applied a suggestion', generate_xdsinp: 'Wrote XDS.INP', create_project: 'Created the project', stop_job: 'Stopped a run',
+                          merge_datasets: 'Merged', export_results: 'Exported', revert_change: 'Undid a change' };
+            var rows = entries.map(function (e) {
+                var program = e.arguments && e.arguments.program ? ' (' + e.arguments.program + ')' : '';
+                return '<tr><td style="padding:3px 8px; white-space:nowrap; color:var(--txt3);">' + _escHtml(String(e.time || '').replace('T', ' ')) + '</td>'
+                    + '<td style="padding:3px 8px;">' + _escHtml((words[e.tool] || e.tool) + program) + '</td>'
+                    + '<td style="padding:3px 8px;">' + _escHtml(e.outcome || '') + '</td>'
+                    + '<td style="padding:3px 8px; color:var(--txt3);">' + _escHtml(e.reason || '') + '</td>'
+                    + '<td style="padding:3px 8px;">' + (e.change_id ? '<button class="btn-ghost btn-sm" onclick="agentUndo(' + Number(e.change_id) + ')" title="Put the file back as it was before this change">Undo</button>' : '') + '</td></tr>';
+            }).join('');
+            var clients = {};
+            entries.forEach(function (e) { if (e.client) clients[e.client] = true; });
+            box.style.display = 'block';
+            box.innerHTML = '<details class="card" ' + (_agentActivityOpen ? 'open ' : '') + 'ontoggle="_agentActivityOpen = this.open" style="padding:10px 14px;">'
+                + '<summary style="cursor:pointer; font-family:var(--head); font-size:0.78rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--accent);">Agent activity &middot; ' + entries.length + (entries.length === 1 ? ' action' : ' actions')
+                + (Object.keys(clients).length ? ' <span style="text-transform:none; letter-spacing:0; color:var(--txt3);">by ' + _escHtml(Object.keys(clients).join(', ')) + '</span>' : '') + '</summary>'
+                + '<div style="overflow-x:auto; margin-top:8px;"><table id="agent-activity-table" style="width:100%; border-collapse:collapse; font-size:0.78rem; color:var(--txt2);"><tr style="color:var(--txt3); text-align:left;">'
+                + '<th style="padding:3px 8px;">When</th><th style="padding:3px 8px;">What</th><th style="padding:3px 8px;">Outcome</th><th style="padding:3px 8px;">Why</th><th></th></tr>' + rows + '</table></div></details>';
+        }
+        async function agentUndo(changeId) {
+            if (!currentProject) return;
+            if (!confirm('Put the file back as it was before this change?\n\nLater changes to that file go too. What it holds now is saved first, so this can be undone as well. Nothing runs.')) return;
+            try {
+                var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/agent-revert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ change_id: changeId, from_page: true }) });
+                var d = await r.json();
+                if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+                showToast(d.file + ' put back as it was', 'success');
+                try { await loadParamsFromFile(); } catch (e) {}
+                agentLoadActivity();
+            } catch (e) { showToast('Could not undo: ' + e.message, 'error'); }
+        }
+
+        // ── Methods text ────────────────────────────────────────────────────
+        async function t1Methods() {
+            if (!currentProject) { alert('Select a project first'); return; }
+            var box = document.getElementById('t1-methods');
+            box.style.display = 'block';
+            box.innerHTML = '<div style="color:var(--txt3); font-size:0.82rem;">Writing it from the project\'s files&hellip;</div>';
+            try {
+                var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/methods');
+                var d = await r.json();
+                if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+                box.innerHTML = '<textarea id="t1-methods-text" rows="13" style="width:100%; box-sizing:border-box; padding:10px 12px; border-radius:8px; border:1px solid var(--border2); background:var(--panel2); color:var(--txt); font-family:var(--body); font-size:0.85rem; resize:vertical;"></textarea>'
+                    + '<div style="display:flex; align-items:center; gap:8px; margin-top:6px;"><button class="btn-ghost btn-sm" onclick="t1MethodsCopy()">📋 Copy</button>'
+                    + '<span style="font-size:0.76rem; color:var(--txt3);">' + _escHtml(d.note || '') + '</span></div>'
+                    + (d.warnings || []).map(function (w) { return '<div style="font-size:0.78rem; color:var(--warning, #ecc94b); margin-top:4px;">' + _escHtml(w) + '</div>'; }).join('');
+                document.getElementById('t1-methods-text').value = d.text + (d.references && d.references.length ? '\n\n' + d.references.join('\n') : '');
+            } catch (e) { box.innerHTML = '<div style="color:#fc8181; font-size:0.82rem;">' + _escHtml(e.message) + '</div>'; }
+        }
+        function t1MethodsCopy() {
+            var el = document.getElementById('t1-methods-text');
+            if (!el) return;
+            navigator.clipboard.writeText(el.value).then(function () { showToast('Copied', 'success'); }, function (e) { showToast('The browser did not allow copying: ' + e.message, 'error'); });
         }
 
         // ── Report a problem ────────────────────────────────────────────────
@@ -20254,7 +20376,9 @@
             checkHealth();
             loadProjects();
             fvCheckDeps();
-            setInterval(function () { if (!document.hidden) { cpMarkRunningProjects(); apwWatchRuns(); cpFollowAgentRuns(); } }, 15000);
+            setInterval(function () { if (!document.hidden) { cpMarkRunningProjects(); apwWatchRuns(); cpFollowAgentRuns(); agentLoadActivity(); } }, 15000);
+            setInterval(agentWatchQuestions, 15000);       // a question has to reach a page in the background too
+            agentWatchQuestions();
             try {
                 const r = await fetch(`${API}/config`);
                 const d = await r.json();

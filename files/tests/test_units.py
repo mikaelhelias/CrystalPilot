@@ -1914,12 +1914,35 @@ def define_checks(m, scratch):
             raise AssertionError("accepted: %r" % (params,))
         m._agent_check_params({"SPOT_RANGE": [[1, 10], [20, 30]], "DATA_RANGE": "1 900", "SIGNAL_PIXEL": None, "OUTPUT_FILE": "merged.ahkl", "FRIEDEL'S_LAW": "TRUE"})
 
+    @check("methods text: real logs give real numbers; caveats and programs only when they apply")
+    def _():
+        parsed = LP.parse_correct(real("CORRECT.LP"))
+        out = m.methods_text({"correct": parsed, "inp_text": "DATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.2\n", "xds_version": "Apr 16, 2026"})
+        assert "XDS (version Apr 16, 2026)" in out["text"] and "Images 1-60 were used, collected with 0.2° oscillation." in out["text"], out["text"]
+        assert "C 2 2 2₁ (no. 20)" in out["text"] and "a = 98.31" in out["text"], out["text"]
+        total = [r for r in parsed["statistics_table"] if r["resolution"].lower() == "total"][0]
+        assert total["completeness"].rstrip("%") in out["text"], out["text"]
+        assert "enantiomorph" not in out["text"] and "AI agent" not in out["text"] and "XSCALE" not in out["text"]
+        assert len(out["references"]) == 1
+        chiral = dict(parsed, space_group=96)
+        assert "enantiomorph" in m.methods_text({"correct": chiral})["text"]
+        kept = m.methods_text({"correct": parsed, "autopilot": {"optimization": {"kept": True}, "criterion": "isig2", "status": "success", "dcc_half": {"n_excluded": 3}},
+                               "inp_text": "EXCLUDE_DATA_RANGE= 20 20\n!EXCLUDE_DATA_RANGE= 99 99\n"})
+        assert "Frame 20 was excluded on the basis of ΔCC½" in kept["text"] and "99" not in kept["text"].split("Frame ")[1].split(".")[0], kept["text"]
+        assert "Integration was repeated" in kept["text"] and "high-resolution limit was set at ⟨I/σ(I)⟩" in kept["text"]
+        assert any("D76" in r for r in kept["references"])
+        tried = m.methods_text({"autopilot": {"optimization": {"kept": False}, "status": "failed", "criterion": "isig2"}})
+        assert "tried and not kept" in tried["text"] and "high-resolution limit" not in tried["text"]
+        assert m.methods_text({"xscale": LP.parse_xscale(real("XSCALE.LP"))})["references"][1] == "Kabsch, W. (2010b). Acta Cryst. D66, 133-144."
+        assert "by an AI agent (test client) through" in m.methods_text({"agent_acted": True, "agent_clients": ["test client", ""]})["text"]
+
     @check("agent: the page's default folder words are the server's; the panel's handlers exist")
     def _():
         html = m.get_frontend_html()
         words = re.search(r"APW_KEYWORDS_DEFAULT = \[([^\]]*)\]", html).group(1)
         assert [w.strip(" '") for w in words.split(",")] == m.XDSINP_KEYWORDS_DEFAULT
-        for name in ("agentOpen", "agentClose", "agentSetLevel", "agentNewKey", "agentCopy", "apwWatchRuns"):
+        for name in ("agentOpen", "agentClose", "agentSetLevel", "agentNewKey", "agentCopy", "apwWatchRuns", "agentWatchQuestions", "agentAnswer",
+                     "agentLoadActivity", "agentUndo", "t1Methods", "t1MethodsCopy"):
             assert "function " + name + "(" in html, name
 
 

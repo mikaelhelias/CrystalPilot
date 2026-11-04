@@ -155,6 +155,8 @@ C=$(mcp -H "Authorization: Bearer $KEY" -d '{"jsonrpc":"2.0","method":"notificat
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$U/api/mcp"); check "GET on the agent route -> 405" "[ $C = 405 ]" "code=$C"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$U/api/projects"); check "the agent key opens no other route -> 403" "[ $C = 403 ]" "code=$C"
 C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"level":"full"}' "$U/api/agent"); check "an agent cannot raise its own level -> 403" "[ $C = 403 ]" "code=$C"
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"id":"x","answer":"allow"}' "$U/api/agent/approvals"); check "an agent cannot answer for the user -> 403" "[ $C = 403 ]" "code=$C"
+C=$("$CURL" -s -o /dev/null -w '%{http_code}' -H "X-CrystalPilot-Token: $TOK" "$U/api/agent/approvals"); check "the page reads the questions" "[ $C = 200 ]" "code=$C"
 check "the agent key is not in the log" "! grep -rqF \"$KEY\" $T/projects $T/server.log" "found"
 stop_server "$T" $PORT; rm -rf "$T"
 # a server opened to the network offers no agent route, whatever the settings say

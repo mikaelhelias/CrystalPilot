@@ -670,3 +670,167 @@ def table1_rows(d):
     if correct.get("mosaicity") is not None and correct.get("mosaicity") != "":
         add("Mosaicity (°)" + from_correct, js_fixed(correct["mosaicity"], 3))
     return rows
+
+
+# ── methods text ─────────────────────────────────────────────────────────────
+_ENANTIOMORPHS = {76, 78, 91, 95, 92, 96, 144, 145, 151, 153, 152, 154, 169, 170, 171, 172, 178, 179, 180, 181, 212, 213}
+METHOD_REFERENCES = {
+    "xds": "Kabsch, W. (2010). Acta Cryst. D66, 125-132.",
+    "xscale": "Kabsch, W. (2010). Acta Cryst. D66, 133-144.",
+    "xdscc12": "Assmann, G. M., Wang, M. & Diederichs, K. (2020). Acta Cryst. D76, 636-644.",
+    "pointless": "Evans, P. R. (2006). Acta Cryst. D62, 72-82.",
+    "aimless": "Evans, P. R. & Murshudov, G. N. (2013). Acta Cryst. D69, 1204-1214.",
+}
+
+
+def _ranges_text(pairs):
+    """1 5 and 7 7 read as 1-5 and 7."""
+    parts = [a if a == b else a + "-" + b for a, b in pairs]
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _active_ranges(text, key):
+    found = []
+    for line in str(text).splitlines():
+        if line.lstrip().startswith("!"):
+            continue
+        pairs, _ = XDSINPEditor._split_pairs(line)
+        found += [v.split()[:2] for k, v in pairs if k.upper() == key and len(v.split()) >= 2]
+    return found
+
+
+def methods_text(facts):
+    """A methods paragraph that states only what the facts show; what is unknown is left out."""
+    inp = facts.get("inp_text") or ""
+    values = xdsinp_values(inp)
+    used, sentences = ["xds"], []
+    first = "Diffraction images were processed with XDS"
+    if facts.get("xds_version"):
+        first += " (version " + facts["xds_version"] + ")"
+    first += " (Kabsch, 2010a), run through CrystalPilot " + VERSION + "."
+    sentences.append(first)
+    bits = []
+    data_range = (values.get("DATA_RANGE") or "").split()
+    oscillation = (values.get("OSCILLATION_RANGE") or "").split()
+    if oscillation:
+        bits.append("with " + oscillation[0] + "° oscillation")
+    wavelength = (values.get("X-RAY_WAVELENGTH") or "").split()
+    if wavelength:
+        bits.append("at a wavelength of " + wavelength[0] + " Å")
+    detector = (values.get("DETECTOR") or "").split()
+    distance = (values.get("DETECTOR_DISTANCE") or "").split()
+    if detector:
+        article = "an " if detector[0][0].upper() in "AEIOU" else "a "
+        bits.append("on " + article + detector[0] + " detector" + (" at " + distance[0] + " mm" if distance else ""))
+    if len(data_range) >= 2:
+        sentences.append("Images " + data_range[0] + "-" + data_range[1] + " were used" + (", collected " + " ".join(bits) if bits else "") + ".")
+    elif bits:
+        sentences.append("The images were collected " + " ".join(bits) + ".")
+    summary = facts.get("autopilot") or {}
+    optimization = summary.get("optimization") or {}
+    if optimization.get("kept") is True:
+        sentences.append("Integration was repeated with the geometry refined by CORRECT.")
+    elif optimization.get("kept") is False:
+        sentences.append("A second integration with the geometry refined by CORRECT was tried and not kept.")
+    excluded = _active_ranges(inp, "EXCLUDE_DATA_RANGE")
+    if excluded:
+        one_frame = len(excluded) == 1 and excluded[0][0] == excluded[0][1]
+        sentence = ("Frame " if one_frame else "Frames ") + _ranges_text(excluded) + (" was excluded" if one_frame else " were excluded")
+        dcc = summary.get("dcc_half") or {}
+        if dcc.get("n_excluded"):
+            sentence += " on the basis of ΔCC½ (XDSCC12; Assmann et al., 2020)"
+            used.append("xdscc12")
+        sentences.append(sentence + ".")
+    rings = _active_ranges(inp, "EXCLUDE_RESOLUTION_RANGE")
+    if rings:
+        sentences.append(("The resolution ranges " if len(rings) > 1 else "The resolution range ") + _ranges_text(rings) + " Å " + ("were" if len(rings) > 1 else "was") + " excluded.")
+    correct = facts.get("correct") or {}
+    xscale = facts.get("xscale") or {}
+    number = js_float(correct.get("space_group"))
+    cell = correct.get("unit_cell")
+    if number:
+        sentence = "The data were indexed and integrated in space group " + _sg_name(number).replace(" (#", " (no. ")
+        if isinstance(cell, dict):
+            sentence += ", with a = " + js_fixed(cell["a"], 2) + ", b = " + js_fixed(cell["b"], 2) + ", c = " + js_fixed(cell["c"], 2) + " Å, α = " \
+                        + js_fixed(cell["alpha"], 1) + ", β = " + js_fixed(cell["beta"], 1) + ", γ = " + js_fixed(cell["gamma"], 1) + "°"
+        sentences.append(sentence + ".")
+        if summary.get("sg_note"):
+            sentences.append("The space group was assigned from the reflections along the principal axes.")
+        if int(number) in _ENANTIOMORPHS:
+            sentences.append("Systematic absences do not distinguish this space group from its enantiomorph.")
+    if xscale.get("statistics_table"):
+        sentences.append("The data were scaled with XSCALE (Kabsch, 2010b).")
+        used.append("xscale")
+    elif correct.get("statistics_table"):
+        sentences.append("The data were scaled by the CORRECT step of XDS.")
+    criterion = {"isig2": "⟨I/σ(I)⟩ of about 2", "cc_half_50": "CC½ of about 50%", "cc_half_sig": "the last shell of significant CC½",
+                 "r_obs_55": "R-obs of about 55%"}.get(summary.get("criterion"))
+    if criterion and summary.get("status") in ("success", "completed", "done"):
+        sentences.append("The high-resolution limit was set at " + criterion + ".")
+    table = {"xdsinp": {}, "correct": correct, "xscale": xscale, "rpim": None}
+    rows = {r.get("label"): r.get("value") for r in table1_rows(table) if "label" in r}
+    stats = [("resolution", "Resolution range (Å)", " Å"), ("completeness", "Completeness (%)", "%"), ("redundancy", "Redundancy", ""),
+             ("R-meas", "R<sub>meas</sub> (%) &dagger;", "%"), ("⟨I/σ(I)⟩", "⟨I/σ(I)⟩", ""), ("CC½", "CC<sub>1/2</sub> (%) &Vert;", "%")]
+    parts = [name + " " + rows[label] + unit for name, label, unit in stats if rows.get(label)]
+    if parts:
+        sentences.append("Overall statistics, with the outer shell in parentheses: " + ", ".join(parts) + ".")
+    if facts.get("pointless_ran"):
+        sentences.append("POINTLESS (Evans, 2006) was also run.")
+        used.append("pointless")
+    if facts.get("aimless_ran"):
+        sentences.append("AIMLESS (Evans & Murshudov, 2013) was also run.")
+        used.append("aimless")
+    if facts.get("xdsconv_ran"):
+        sentences.append("Reflections were converted with XDSCONV.")
+    clients = sorted({c for c in facts.get("agent_clients") or [] if c})
+    if facts.get("agent_acted"):
+        who = " (" + ", ".join(clients) + ")" if clients else ""
+        sentences.append("Processing was carried out by an AI agent" + who + " through CrystalPilot's agent interface; each of its actions is recorded in the project.")
+    text, references = " ".join(sentences), [METHOD_REFERENCES[k] for k in used]
+    if "xscale" in used:        # two papers of one year, told apart by a letter
+        references = [r.replace("(2010).", "(2010a).") if k == "xds" else r.replace("(2010).", "(2010b).") if k == "xscale" else r
+                      for k, r in zip(used, references)]
+    else:
+        text = text.replace("(Kabsch, 2010a)", "(Kabsch, 2010)")
+    return {"text": text, "references": references, "programs": used}
+
+
+def project_methods(project):
+    """The methods paragraph of a project, from its own files, with what a reader should check."""
+    folder = _pdir(project)
+    facts, warnings = {}, []
+    inp_path = _pfile(folder, "XDS.INP")
+    if not inp_path.is_file():
+        inp_path = folder / "XDS.INP"
+    lp = _find_latest_lp(folder, "CORRECT")
+    if lp:
+        text = _read_text_lenient(lp)
+        facts["correct"] = LPParser.parse_correct(text)
+        found = re.search(r"VERSION\s+(.*?)\s+BUILT", text[:400])
+        if found:
+            facts["xds_version"] = found.group(1).strip()
+    else:
+        warnings.append("CORRECT has not run, so there are no statistics.")
+    if inp_path.is_file():
+        facts["inp_text"] = _read_text_lenient(inp_path)
+        if lp and inp_path.stat().st_mtime > Path(lp).stat().st_mtime + 1:
+            warnings.append("XDS.INP changed after the last CORRECT run, so what it says may not be what ran.")
+    candidates = [_pfile(folder, "XSCALE.LP", "xscale")] + [c / "XSCALE.LP" for c in folder.iterdir() if c.is_dir() and c.name.startswith("XSCALE_")]
+    candidates = [c for c in candidates if c.is_file()]
+    if candidates:
+        facts["xscale"] = LPParser.parse_xscale(_read_text_lenient(max(candidates, key=lambda c: c.stat().st_mtime)))
+    cached = load_autopilot_cached_results(str(folder))
+    if cached.get("has_results"):
+        facts["autopilot"] = cached
+    facts["pointless_ran"] = _pfile(folder, "pointless.log").is_file()
+    facts["aimless_ran"] = _pfile(folder, "aimless.log").is_file()
+    facts["xdsconv_ran"] = _pfile(folder, "XDSCONV.LP", "xdsconv").is_file()
+    entries = agent_log_entries(project, 100000)
+    facts["agent_acted"] = bool(entries)
+    facts["agent_clients"] = [e.get("client") for e in entries if e.get("client") != "the page"]
+    out = methods_text(facts)
+    if not facts.get("autopilot") and not entries:
+        warnings.append("XDS.INP shows what is set now, not any earlier steps done by hand.")
+    out.update({"project": project, "warnings": warnings,
+                "note": "Written from the project's files. Check it against your notes before using it."})
+    return out

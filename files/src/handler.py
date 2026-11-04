@@ -1509,6 +1509,19 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
         elif path == "/api/agent":
             self.send_json(agent_status(self.server.server_address[1]))
 
+        # What agents are asking the user, for the page
+        elif path == "/api/agent/approvals":
+            self.send_json({"questions": agent_approvals_open()})
+
+        # What an agent did in this project, for the page
+        elif project_route == '/agent-log':
+            name = _url_project_name(path.split("/")[3])
+            self.send_json({"entries": agent_log_entries(name)})
+
+        # A methods paragraph from what the project's files show
+        elif project_route == '/methods':
+            self.send_json(project_methods(_url_project_name(path.split("/")[3])))
+
         # List XSCALE subfolders (for XDSCONV workdir selection)
         elif project_route == '/xscale-subfolders':
             name = _url_project_name(path.split("/")[3])
@@ -4046,6 +4059,19 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 return
             strategies = data.get("strategies")
             self.send_json(frame_suggestions(results, strategies if isinstance(strategies, dict) else None))
+
+        # The user's answer to an agent's question
+        elif path == "/api/agent/approvals":
+            self.send_json(agent_approval_answer(str(data.get("id") or ""), data.get("answer")))
+
+        # Put an input file back as it was before an agent's change.  An agent reaches this
+        # through revert_change with the server's own token; the page says who it is.
+        elif project_route == '/agent-revert':
+            name = _url_project_name(path.split("/")[3])
+            try:
+                self.send_json(agent_revert(name, data.get("change_id"), who="page" if data.get("from_page") else "agent", reason=data.get("reason", "")))
+            except AgentError as e:
+                self.send_json({"error": str(e)}, 400)
 
         # The Connect an agent panel: access level, new key
         elif path == "/api/agent":

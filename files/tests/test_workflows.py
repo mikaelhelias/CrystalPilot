@@ -1106,9 +1106,9 @@ class Workflows(unittest.TestCase):
             self.assertTrue((self.p / '1' / 'CORRECT.LP').is_file())
             self.assertTrue((self.p / 'CORRECT.LP').is_file())
             # the next run stays in that folder and takes the project's current XDS.INP there, as the page does
-            done = self.tool_ok('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 7})
+            done = self.allowed('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 7})
             self.assertTrue(done['changes'])
-            again = self.tool_ok('run_program', project=self.name, program='xds', overwrite=True, options={'steps': ['CORRECT']})
+            again = self.allowed('run_program', project=self.name, program='xds', overwrite=True, options={'steps': ['CORRECT']})
             self.assertEqual(self.wait_run(again['job_id'])['status'], 'completed')
             self.assertIn('SIGNAL_PIXEL= 7', (self.p / '1' / 'XDS.INP').read_text())
             self.assertTrue(self.tool_ok('export_results', project=self.name, what='table1')['path'].endswith('_Table1.csv'))
@@ -1154,6 +1154,137 @@ class Workflows(unittest.TestCase):
         (self.p / 'XDS.INP').write_text('NAME_TEMPLATE_OF_DATA_FRAMES= /no/such/x_????.cbf\n')
         self.assertTrue(self.tool('view_frame', project=self.name, frame=0)[1])
         self.assertTrue(self.tool('view_frame', project=self.name, frame=1)[1])
+
+    # ── trust: undo, approval on the page, the record, the methods text ────
+    def allowed(self, tool_name, **arguments):
+        """A call that asks the user: the answer given on the page's route, then the same call again."""
+        first = self.tool_ok(tool_name, **arguments)
+        self.assertEqual(first['status'], 'waiting_for_the_user', first)
+        self.assertEqual(self.request('POST', '/api/agent/approvals', {'id': first['approval_id'], 'answer': 'allow'})[0], 200)
+        return self.tool_ok(tool_name, **arguments)
+
+    def test_agent_change_to_a_users_project_waits_for_the_user_on_the_page(self):
+        self.agent_on('full')
+        before = (self.p / 'XDS.INP').read_text()
+        ask = {'project': self.name, 'overwrite': True, 'params': {'SIGNAL_PIXEL': 7}, 'reason': 'weak spots'}
+        first = self.tool_ok('set_parameters', **ask)
+        self.assertEqual(first['status'], 'waiting_for_the_user', first)
+        self.assertEqual((self.p / 'XDS.INP').read_text(), before)
+        # the page sees the question, with the agent's reason; asking again adds none
+        again = self.tool_ok('set_parameters', **ask)
+        self.assertEqual(again['approval_id'], first['approval_id'])
+        questions = self.request('GET', '/api/agent/approvals')[1]['questions']
+        self.assertEqual([q['id'] for q in questions], [first['approval_id']])
+        self.assertEqual(questions[0]['reason'], 'weak spots')
+        self.assertIn('XDS.INP', questions[0]['doing'])
+        # only the page can answer: the agent key opens no such route
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_address[1], timeout=15)
+        conn.request('POST', '/api/agent/approvals', json.dumps({'id': first['approval_id'], 'answer': 'allow'}),
+                     {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.AGENT_KEY})
+        self.assertEqual(conn.getresponse().status, 403)
+        conn.close()
+        self.assertEqual(self.request('POST', '/api/agent/approvals', {'id': first['approval_id'], 'answer': 'maybe'})[0], 400)
+        self.assertEqual(self.request('POST', '/api/agent/approvals', {'id': 'nonsense', 'answer': 'allow'})[0], 404)
+        # refused: nothing changes, and it does not count as an answer for later
+        self.assertEqual(self.request('POST', '/api/agent/approvals', {'id': first['approval_id'], 'answer': 'refuse'})[0], 200)
+        message, failed = self.tool('set_parameters', **ask)
+        self.assertTrue(failed)
+        self.assertIn('refused', message)
+        self.assertEqual((self.p / 'XDS.INP').read_text(), before)
+        # allowed: this one call goes through, the next asks again, and a different call was never allowed
+        second = self.tool_ok('set_parameters', **ask)
+        self.assertEqual(second['status'], 'waiting_for_the_user')
+        self.request('POST', '/api/agent/approvals', {'id': second['approval_id'], 'answer': 'allow'})
+        other = self.tool_ok('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 99})
+        self.assertEqual(other['status'], 'waiting_for_the_user')
+        self.assertIn('SIGNAL_PIXEL= 7', '\n'.join(self.tool_ok('set_parameters', **ask)['changes']))
+        self.assertEqual(self.tool_ok('set_parameters', **ask)['status'], 'waiting_for_the_user')
+        # a question nobody answers lapses
+        with patch.object(m, 'AGENT_APPROVAL_SECONDS', -1):
+            self.assertEqual(self.request('GET', '/api/agent/approvals')[1]['questions'], [])
+        # the agent's own projects ask nothing, and a run on a user's project is asked about too
+        project = self.own_project()
+        self.assertTrue(self.tool_ok('set_parameters', project=project, overwrite=True, params={'SIGNAL_PIXEL': 3})['changes'])
+        self.assertEqual(self.tool_ok('run_autopilot', datasets=[{'existing_project': self.name}], overwrite=True)['status'], 'waiting_for_the_user')
+        with m._AGENT_APPROVAL_LOCK:
+            m._AGENT_APPROVALS.clear()
+
+    def test_agent_change_can_be_undone_by_the_agent_and_on_the_page(self):
+        self.agent_on('own')
+        project = self.own_project()
+        path = m._pdir(project) / 'XDS.INP'
+        start = path.read_text()
+        one = self.tool_ok('set_parameters', project=project, params={'SIGNAL_PIXEL': 6})
+        two = self.tool_ok('apply_space_group', project=project, number=19, cell=[78, 80, 37, 90, 90, 90])
+        self.assertLess(one['undo'], two['undo'])
+        self.assertIsNone(self.tool_ok('set_parameters', project=project, params={'SIGNAL_PIXEL': 6}).get('undo'))
+        after_two = path.read_text()
+        back = self.tool_ok('revert_change', project=project, change_id=two['undo'], reason='wrong group')
+        self.assertEqual(back['file'], 'XDS.INP')
+        self.assertEqual(m.xdsinp_values(path.read_text()).get('SIGNAL_PIXEL'), '6')
+        self.assertNotIn('SPACE_GROUP_NUMBER', m.xdsinp_values(path.read_text()))
+        # a revert can be reverted, and on the page too
+        status, undone = self.request('POST', '/api/projects/' + project + '/agent-revert', {'change_id': back['undo'], 'from_page': True})
+        self.assertEqual(status, 200, undone)
+        self.assertEqual(path.read_text().strip(), after_two.strip())
+        status, undone = self.request('POST', '/api/projects/' + project + '/agent-revert', {'change_id': one['undo'], 'from_page': True})
+        self.assertEqual(status, 200, undone)
+        self.assertEqual(path.read_text().strip(), start.strip())
+        entries = self.request('GET', '/api/projects/' + project + '/agent-log')[1]['entries']
+        self.assertEqual(entries[0]['client'], 'the page')
+        self.assertEqual(entries[0]['tool'], 'revert_change')
+        self.assertTrue(entries[0]['change_id'])
+        # bad numbers, and a file the agent created goes away again
+        self.assertTrue(self.tool('revert_change', project=project, change_id=999)[1])
+        self.assertTrue(self.tool('revert_change', project=project, change_id='../x')[1])
+        fresh = self.tool_ok('set_parameters', project=project, file='XDSCONV.INP', params={'INPUT_FILE': 'x'})
+        self.assertTrue((m._pdir(project) / 'XDSCONV.INP').is_file())
+        self.tool_ok('revert_change', project=project, change_id=fresh['undo'])
+        self.assertFalse((m._pdir(project) / 'XDSCONV.INP').exists())
+        # copies stay out of an export, and an own-level agent can't undo in a user's project
+        self.assertFalse(m._export_wanted('0001.saved', True))
+        self.assertIn("user's", self.tool('revert_change', project=self.name, change_id=1)[0])
+        self.assertEqual(self.request('GET', self.url + '/agent-log')[1]['entries'], [])
+        # undoing in a user's project is a change there too, so the page is asked
+        self.agent_on('full')
+        start = (self.p / 'XDS.INP').read_text()
+        change = self.allowed('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 8})
+        self.assertNotEqual((self.p / 'XDS.INP').read_text(), start)
+        self.allowed('revert_change', project=self.name, change_id=change['undo'])
+        self.assertEqual((self.p / 'XDS.INP').read_text().strip(), start.strip())
+
+    def test_methods_text_says_only_what_the_project_shows(self):
+        self.agent_on('own')
+        project = self.own_project()
+        self.tool_ok('set_parameters', project=project, params={'EXCLUDE_DATA_RANGE': [[20, 20], [27, 30]], 'X-RAY_WAVELENGTH': '0.9793', 'DETECTOR': 'EIGER', 'DETECTOR_DISTANCE': '197.4'})
+        before_run = self.request('GET', '/api/projects/' + project + '/methods')[1]
+        self.assertIn('CORRECT has not run', before_run['warnings'][0])
+        self.assertNotIn('Overall statistics', before_run['text'])
+        self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xds')['job_id'])['status'], 'completed')
+        written = self.request('GET', '/api/projects/' + project + '/methods')[1]
+        words = written['text']
+        self.assertIn('Frames 20 and 27-30 were excluded.', words)
+        self.assertIn('at a wavelength of 0.9793 Å', words)
+        self.assertIn('on an EIGER detector at 197.4 mm', words)
+        self.assertIn('(Kabsch, 2010)', words)
+        self.assertIn('Overall statistics, with the outer shell in parentheses', words)
+        self.assertIn('scaled by the CORRECT step', words)
+        self.assertIn('AI agent', words)
+        self.assertIn('Kabsch, W. (2010). Acta Cryst. D66, 125-132.', written['references'])
+        # what did not happen is not claimed
+        for absent in ('XSCALE', 'POINTLESS', 'AIMLESS', 'XDSCONV', 'XDSCC12', 'CORRECT step of XDS and', 'Integration was repeated'):
+            self.assertNotIn(absent, words, absent)
+        self.assertEqual(self.tool_ok('get_analysis', project=project, kind='methods')['text'], words)
+        target = self.tool_ok('export_results', project=project, what='methods')
+        self.assertTrue(Path(target['path']).read_text(encoding='utf-8').startswith('Diffraction images'))
+        # a project no agent touched does not say one did
+        self.assert_terminal(self.stream(), 'completed')
+        self.assertNotIn('AI agent', self.request('GET', self.url + '/methods')[1]['text'])
+        # the file changed after the run: the reader is told
+        path = self.p / 'XDS.INP'
+        future = time.time() + 60
+        os.utime(str(path), (future, future))
+        self.assertTrue(any('after the last CORRECT' in w for w in self.request('GET', self.url + '/methods')[1]['warnings']))
 
     def test_agent_levels_protect_the_users_projects(self):
         self.agent_on('own')
