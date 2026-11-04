@@ -4615,7 +4615,7 @@
                     async function apwLoadKeywords() {
                         var conf = {}, stored = null;
                         try { conf = await apwJson('/config'); } catch (e) {}
-                        _apwKeywordsOnServer = !!conf.keywords_on_server;
+                        _apwKeywordsOnServer = !!conf.prefs_on_server;
                         try { stored = JSON.parse(localStorage.getItem('cp.autopilot.keywords') || 'null'); } catch (e) {}
                         var saved = _apwKeywordsOnServer ? conf.autopilot_keywords : stored;
                         if (_apwKeywordsOnServer && !Array.isArray(saved) && Array.isArray(stored)) {
@@ -5680,6 +5680,7 @@
             if (_CUTPREF_MODES.indexOf(mode) < 0) return;
             _cutoffPreference = mode;
             try { localStorage.setItem('crystalpilot-cutpref', mode); } catch(e) {}
+            _cpSavePrefs({ cutoff_preference: mode });
             _updateCutprefUI();
             // Sync to the XSCALE cutoff criterion selector
             if (typeof xsSelectCutoff === 'function') xsSelectCutoff(mode);
@@ -5729,6 +5730,37 @@
             _updateCutprefUI();
             // Sync to XSCALE cutoff selector on load
             if (typeof xsSelectCutoff === 'function') xsSelectCutoff(_cutoffPreference);
+        }
+        // The settings that decide results live on the server, where an agent reads the
+        // same values.  What this browser stored earlier moves there once.  A shared
+        // installation keeps each user's values in the browser.
+        var _cpPrefsOnServer = false, _cpLibFromFile = null;
+        function _cpSavePrefs(values) {
+            if (!_cpPrefsOnServer) return;
+            fetch(API + '/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
+                .catch(function (e) { showToast('Could not save the setting: ' + e.message, 'error'); });
+        }
+        async function _cpSyncPrefs() {
+            var conf;
+            try { conf = await (await fetch(API + '/config')).json(); } catch (e) { return; }
+            if (!conf.prefs_on_server) return;
+            _cpPrefsOnServer = true;
+            var move = {}, stored;
+            if (_CUTPREF_MODES.indexOf(conf.cutoff_preference) >= 0) {
+                _cutoffPreference = conf.cutoff_preference;
+                _updateCutprefUI();
+                if (typeof xsSelectCutoff === 'function') xsSelectCutoff(_cutoffPreference);
+            } else {
+                try { stored = localStorage.getItem('crystalpilot-cutpref'); } catch (e) { stored = null; }
+                if (_CUTPREF_MODES.indexOf(stored) >= 0) move.cutoff_preference = stored;
+            }
+            if (conf.lib_from_xdsinp === true || conf.lib_from_xdsinp === false) {
+                _cpLibFromFile = conf.lib_from_xdsinp;
+            } else {
+                try { stored = localStorage.getItem('cp.lib.fromXdsinp'); } catch (e) { stored = null; }
+                if (stored !== null) move.lib_from_xdsinp = stored === '1';
+            }
+            if (Object.keys(move).length) _cpSavePrefs(move);
         }
         // ── End Cutoff Preference System ────────────────────────────
 
@@ -8035,390 +8067,7 @@
 
         // ── Smart Troubleshooting Diagnostics ─────────────────────────
 
-        // Parse SUBTREE/POPULATION table and CLUSTER INDICES from raw IDXREF.LP text.
-        // Returns {all_subtrees: [{subtree:N, population:N},...], half_integer_axes: [3rd axis indices...]}
-        function _parseIdxrefLPExtras(lpText) {
-            var result = {all_subtrees: [], half_integer_axes: []};
-            if (!lpText) return result;
-            var lines = lpText.split('\n');
 
-            // 1. Parse SUBTREE / POPULATION table
-            //    Format:  "SUBTREE    POPULATION"  header, then "    1          976" rows
-            var inSubtree = false;
-            for (var i = 0; i < lines.length; i++) {
-                var L = lines[i].trimEnd();
-                if (/SUBTREE\s+POPULATION/.test(L)) {
-                    inSubtree = true; continue;
-                }
-                if (inSubtree) {
-                    var sm = L.match(/^\s*(\d+)\s+(\d+)\s*$/);
-                    if (sm) {
-                        result.all_subtrees.push({subtree: parseInt(sm[1], 10), population: parseInt(sm[2], 10)});
-                    } else if (L.trim().length > 0 && result.all_subtrees.length > 0) {
-                        inSubtree = false;  // end of table
-                    }
-                }
-            }
-
-            // 2. Parse CLUSTER COORDINATES AND INDICES table for half-integer detection
-            //    Format: "  #  COORDINATES OF VECTOR CLUSTER   FREQUENCY       CLUSTER INDICES"
-            //    Then:   "   1  0.0004199-0.0012633-0.0043826     2442.      0.97     -0.04     -0.00"
-            //    Coordinates may be merged (no spaces between negatives) — so capture last 3 floats on line
-            //    Half-integer = index close to ±0.5 (between 0.35 and 0.65 from nearest integer)
-            var inCluster = false;
-            var halfIntCount = [0, 0, 0];  // count per axis
-            var clusterRows = 0;
-            for (var j = 0; j < lines.length; j++) {
-                var cL = lines[j];
-                if (/CLUSTER COORDINATES AND INDICES/.test(cL)) {
-                    inCluster = true; continue;
-                }
-                if (inCluster) {
-                    // Skip the header line with "#  COORDINATES..."
-                    if (/^\s*#\s+COORDINATES/.test(cL)) continue;
-                    // Capture last 3 floats on a line starting with a row number
-                    var cm = cL.match(/^\s*\d+\s+.*\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s*$/);
-                    if (cm) {
-                        clusterRows++;
-                        var indices = [parseFloat(cm[1]), parseFloat(cm[2]), parseFloat(cm[3])];
-                        for (var ax = 0; ax < 3; ax++) {
-                            var frac = Math.abs(indices[ax] - Math.round(indices[ax]));
-                            if (frac > 0.35 && frac < 0.65) halfIntCount[ax]++;
-                        }
-                    } else if (/^\s*$/.test(cL) || /PARAMETERS OF/.test(cL) || /^\s*\*/.test(cL)) {
-                        if (clusterRows > 0) inCluster = false;
-                    }
-                }
-            }
-            // An axis is "half-integer" if ≥30% of cluster rows show half-integer indices on it
-            if (clusterRows >= 3) {
-                for (var ax2 = 0; ax2 < 3; ax2++) {
-                    if (halfIntCount[ax2] / clusterRows >= 0.3) {
-                        result.half_integer_axes.push(ax2 + 1);  // 1-indexed axis number
-                    }
-                }
-            }
-            return result;
-        }
-
-        // Rule-based analysis of LP metrics. Returns array of {severity, title, body}.
-        // Sources: XDSwiki "Problems" page, Diederichs CCP4 school material, CCP4BB.
-        function _generateDiagnostics(step, m) {
-            var diags = [];
-            if (step === 'IDXREF') {
-                // 1. Low indexed percentage
-                if (m.indexed_count !== undefined && m.total_spots !== undefined && m.total_spots > 0) {
-                    var pct = m.indexed_count / m.total_spots * 100;
-                    if (pct < 30) {
-                        diags.push({severity: 'warning', title: 'Very low indexing rate (' + pct.toFixed(1) + '%)',
-                            body: 'Fewer than 30% of spots were indexed. Common causes: wrong beam center (ORGX/ORGY), ice rings contributing non-Bragg spots, multiple crystals, or incorrect DETECTOR_DISTANCE. '
-                                + 'Try: verify beam center visually, add EXCLUDE_RESOLUTION_RANGE= for ice rings, increase MINIMUM_NUMBER_OF_PIXELS_IN_A_SPOT=, or use the Auto-Indexing tool below.'});
-                    } else if (pct < 50) {
-                        diags.push({severity: 'caution', title: 'Low indexing rate (' + pct.toFixed(1) + '%)',
-                            body: 'Less than 50% of spots were indexed. This may be acceptable if there are ice rings or a second lattice, but check that beam center and detector geometry are correct. '
-                                + 'Consider excluding ice ring resolution ranges or increasing MINIMUM_NUMBER_OF_PIXELS_IN_A_SPOT=.'});
-                    }
-                }
-                // 2. Large beam center shift
-                if (m.orgx !== undefined && m.orgy !== undefined && m.orgx_initial !== undefined && m.orgy_initial !== undefined) {
-                    var dx = m.orgx - m.orgx_initial;
-                    var dy = m.orgy - m.orgy_initial;
-                    var shift = Math.sqrt(dx * dx + dy * dy);
-                    if (shift > 30) {
-                        diags.push({severity: 'warning', title: 'Very large beam center shift (' + shift.toFixed(1) + ' px)',
-                            body: 'IDXREF refined the beam center by ' + shift.toFixed(1) + ' pixels from the header value '
-                                + '(ORGX ' + m.orgx_initial.toFixed(1) + ' → ' + m.orgx.toFixed(1) + ', ORGY ' + m.orgy_initial.toFixed(1) + ' → ' + m.orgy.toFixed(1) + '). '
-                                + 'Shifts this large risk mis-indexing. Verify the beam center visually using the Frame Viewer with a low-angle image, '
-                                + 'then update ORGX/ORGY in the parameter editor and re-run COLSPOT + IDXREF.'});
-                    } else if (shift > 15) {
-                        diags.push({severity: 'caution', title: 'Large beam center shift (' + shift.toFixed(1) + ' px)',
-                            body: 'The header beam center was refined by ' + shift.toFixed(1) + ' pixels '
-                                + '(ORGX ' + m.orgx_initial.toFixed(1) + ' → ' + m.orgx.toFixed(1) + ', ORGY ' + m.orgy_initial.toFixed(1) + ' → ' + m.orgy.toFixed(1) + '). '
-                                + 'This is unusually large and the header value may be inaccurate. If subsequent steps show high R-factors, verify the beam center independently.'});
-                    }
-                }
-                // 3. High sigma(spot)
-                if (m.sigma_spot !== undefined && m.sigma_spot > 3.0) {
-                    diags.push({severity: m.sigma_spot > 6.0 ? 'warning' : 'caution',
-                        title: 'High σ(spot) = ' + m.sigma_spot.toFixed(2) + ' px',
-                        body: 'The standard deviation between observed and predicted spot positions is above 3 pixels. '
-                            + 'This can happen with split reflections, high mosaicity, or poorly described detector geometry. '
-                            + 'Try increasing MAXIMUM_ERROR_OF_SPOT_POSITION= (e.g. to 6.0). '
-                            + 'If the crystal diffracts well but spots are split, check for multiple lattices or twinning.'});
-                }
-                // 4. High sigma(spindle)
-                if (m.sigma_spindle !== undefined && m.sigma_spindle > 0.5) {
-                    diags.push({severity: m.sigma_spindle > 2.0 ? 'warning' : 'caution',
-                        title: 'High σ(spindle) = ' + m.sigma_spindle.toFixed(3) + '°',
-                        body: 'The standard deviation of spindle (rotation) positions is above 0.5°. '
-                            + 'This suggests problems with the rotation axis calibration, goniometer, or oscillation range. '
-                            + 'Try increasing MAXIMUM_ERROR_OF_SPINDLE_POSITION= (e.g. to 4.0), or check that the oscillation range in the header is correct.'});
-                }
-                // 5. Multiple subtrees with comparable populations (twinning/multi-crystal)
-                if (m._all_subtrees && m._all_subtrees.length >= 2) {
-                    var st = m._all_subtrees;
-                    var pop1 = st[0].population, pop2 = st[1].population;
-                    if (pop1 > 0 && pop2 > 0) {
-                        var ratio = pop2 / pop1;
-                        if (ratio > 0.3) {
-                            var stSummary = st.slice(0, Math.min(5, st.length)).map(function(s) { return '#' + s.subtree + ': ' + s.population; }).join(', ');
-                            diags.push({severity: ratio > 0.7 ? 'warning' : 'caution',
-                                title: 'Multiple subtrees with comparable populations',
-                                body: 'The subtree table shows two or more lattice clusters with similar populations (' + stSummary + '). '
-                                    + 'This typically indicates a twinned crystal, multiple crystals in the beam, or a split crystal. '
-                                    + 'Try: narrower SPOT_RANGE (fewer frames), SEPMIN=4 CLUSTER_RADIUS=2 (for Pilatus/Eiger), '
-                                    + 'or inspect reciprocal space with spot2pdb in coot to visualize the separate lattices.'});
-                        }
-                    }
-                }
-                // 6. Half-integer cluster indices (cell axis doubled/halved)
-                if (m._half_integer_axes && m._half_integer_axes.length > 0) {
-                    var axLabels = m._half_integer_axes.map(function(a) { return 'axis ' + a; }).join(', ');
-                    diags.push({severity: 'caution',
-                        title: 'Half-integer cluster indices detected (' + axLabels + ')',
-                        body: 'The difference vector table shows systematic half-integer indices along ' + axLabels + '. '
-                            + 'This usually means the corresponding unit cell axis is doubled relative to what IDXREF found. '
-                            + 'Check the reduced cell parameters below the cluster table — if an axis is suspiciously short, '
-                            + 'try doubling it via UNIT_CELL_CONSTANTS= with SPACE_GROUP_NUMBER=1. '
-                            + 'Alternatively, use well-separated SPOT_RANGEs instead of one continuous range (XDSwiki).'});
-                }
-            }
-            if (step === 'CORRECT') {
-                // 7. ISa < 10 — systematic errors
-                if (m.isa) {
-                    var isaV = parseFloat(m.isa.isa);
-                    if (!isNaN(isaV)) {
-                        if (isaV < 5) {
-                            diags.push({severity: 'warning', title: 'ISa = ' + isaV.toFixed(1) + ' — severe systematic errors',
-                                body: 'ISa below 5 almost always indicates something is severely wrong (XDSwiki). '
-                                    + 'Common causes: wrong geometry in XDS.INP, wrong space group (too high symmetry), high radiation damage, '
-                                    + 'badly split crystal, or mechanical/detector problems. '
-                                    + 'Check: is the space group correct? Is the crystal single? Discuss with beamline staff if hardware is suspected.'});
-                        } else if (isaV < 10) {
-                            diags.push({severity: 'caution', title: 'ISa = ' + isaV.toFixed(1) + ' — elevated systematic errors',
-                                body: 'ISa below 10 indicates significant systematic errors beyond counting statistics. '
-                                    + 'Possible causes: beam instability, crystal splitting, ice contamination, detector calibration issues, '
-                                    + 'or absorption from a large loop/mount. '
-                                    + 'Good experimental setups typically achieve ISa ≥ 20 (Diederichs, 2010).'});
-                        }
-                    }
-                }
-                // 8. High mosaicity
-                if (m.mosaicity !== undefined) {
-                    if (m.mosaicity > 2.0) {
-                        diags.push({severity: 'warning', title: 'Very high mosaicity = ' + m.mosaicity.toFixed(3) + '°',
-                            body: 'Mosaicity above 2° is extreme and will cause severe spot overlap. '
-                                + 'Consider: re-screening for a better crystal, improving cryoprotection, annealing, or collecting with finer slicing (smaller oscillation range). '
-                                + 'If this is the only crystal available, ensure the oscillation range is ≤ mosaicity/3.'});
-                    } else if (m.mosaicity > 1.0) {
-                        diags.push({severity: 'caution', title: 'High mosaicity = ' + m.mosaicity.toFixed(3) + '°',
-                            body: 'Mosaicity above 1° causes reflection overlap and degrades data quality. '
-                                + 'Common causes: cryo-cooling stress, physical crystal damage, or inherent disorder. '
-                                + 'Consider fine-slicing (oscillation ≤ 0.5°), flash-annealing, or trying a different cryoprotectant. '
-                                + 'Verify the oscillation range is smaller than the mosaicity.'});
-                    }
-                }
-                // 9. High R-factor at low resolution (first non-total shell)
-                if (m.statistics_table && m.statistics_table.length > 2) {
-                    // Find first numeric shell (not "total")
-                    for (var _di = 0; _di < Math.min(3, m.statistics_table.length); _di++) {
-                        var _dr = m.statistics_table[_di];
-                        if (_dr.resolution && _dr.resolution.toLowerCase() !== 'total') {
-                            var _rMeas = parseFloat(String(_dr.r_meas).replace('%', ''));
-                            var _rObs  = parseFloat(String(_dr.r_obs).replace('%', ''));
-                            var rVal = !isNaN(_rMeas) ? _rMeas : _rObs;
-                            if (!isNaN(rVal) && rVal > 15) {
-                                diags.push({severity: rVal > 30 ? 'warning' : 'caution',
-                                    title: 'High R-factor at low resolution (' + rVal.toFixed(1) + '% in first shell)',
-                                    body: 'Elevated R-factors in the lowest-resolution shell (where signal should be strongest) '
-                                        + 'typically indicate a fundamental problem rather than ice rings. '
-                                        + 'Check: is the indexing correct? Is the beam center accurate? Is the space group correct? '
-                                        + 'A wrong indexing solution often manifests as high R at low resolution with acceptable R at high resolution.'});
-                            }
-                            break;  // only check the first numeric shell
-                        }
-                    }
-                }
-                // 10. Completeness problems
-                if (m.statistics_table && m.statistics_table.length > 0) {
-                    // Check overall completeness (last row is often "total")
-                    var _totalRow = null;
-                    for (var _ti = m.statistics_table.length - 1; _ti >= 0; _ti--) {
-                        if (m.statistics_table[_ti].resolution && m.statistics_table[_ti].resolution.toLowerCase() === 'total') {
-                            _totalRow = m.statistics_table[_ti]; break;
-                        }
-                    }
-                    if (_totalRow && _totalRow.completeness) {
-                        var _comp = parseFloat(String(_totalRow.completeness).replace('%', ''));
-                        if (!isNaN(_comp) && _comp < 80) {
-                            diags.push({severity: _comp < 50 ? 'warning' : 'caution',
-                                title: 'Low overall completeness (' + _comp.toFixed(1) + '%)',
-                                body: 'Completeness below 80% may compromise downstream structure solution and refinement. '
-                                    + 'Common causes: insufficient rotation range for the crystal symmetry, '
-                                    + 'detector geometry issues blocking reflections, or overly aggressive resolution cutoff. '
-                                    + 'For molecular replacement, aim for > 90% completeness; for anomalous phasing, > 95%.'});
-                        }
-                    }
-                }
-                // 11. Possible wrong space group — R-meas overall > 20% with good ISa
-                if (m.statistics_table && m.statistics_table.length > 0 && m.isa) {
-                    var _isaVal11 = parseFloat(m.isa.isa);
-                    var _totalRow11 = null;
-                    for (var _t11 = m.statistics_table.length - 1; _t11 >= 0; _t11--) {
-                        if (m.statistics_table[_t11].resolution && m.statistics_table[_t11].resolution.toLowerCase() === 'total') {
-                            _totalRow11 = m.statistics_table[_t11]; break;
-                        }
-                    }
-                    if (_totalRow11 && !isNaN(_isaVal11) && _isaVal11 >= 8) {
-                        var _rmTotal = parseFloat(String(_totalRow11.r_meas).replace('%', ''));
-                        if (!isNaN(_rmTotal) && _rmTotal > 20) {
-                            diags.push({severity: 'caution',
-                                title: 'High R-meas (' + _rmTotal.toFixed(1) + '%) despite acceptable ISa (' + _isaVal11.toFixed(1) + ')',
-                                body: 'When ISa is reasonable but R-meas is elevated, the most common cause is wrong space group — '
-                                    + 'XDS may have assigned too-high symmetry, forcing non-equivalent reflections to merge. '
-                                    + 'Try: re-run CORRECT with SPACE_GROUP_NUMBER=0 to let XDS re-evaluate, '
-                                    + 'or run POINTLESS for an independent space group determination. '
-                                    + 'Also check whether the unit cell is correct — a misindexed cell axis produces the same symptom.'});
-                        }
-                    }
-                }
-                // 12. Anisotropic diffraction — completeness drops unevenly across shells
-                if (m.statistics_table && m.statistics_table.length >= 5) {
-                    var _numShells = m.statistics_table.filter(function(r) {
-                        return r.resolution && r.resolution.toLowerCase() !== 'total';
-                    });
-                    if (_numShells.length >= 4) {
-                        // Check if outer shells have very low completeness while inner are fine
-                        var _midIdx = Math.floor(_numShells.length * 0.6);
-                        var _midComp = parseFloat(String(_numShells[_midIdx].completeness).replace('%', ''));
-                        var _outComp = parseFloat(String(_numShells[_numShells.length - 1].completeness).replace('%', ''));
-                        var _inComp = parseFloat(String(_numShells[0].completeness).replace('%', ''));
-                        if (!isNaN(_midComp) && !isNaN(_outComp) && !isNaN(_inComp)) {
-                            // Anisotropy signature: mid-resolution completeness drops significantly
-                            // while inner shells are still high — this suggests missing reflections
-                            // in some directions (weak axis) while others are complete
-                            if (_inComp > 90 && _midComp < 75 && _outComp < 40) {
-                                diags.push({severity: 'caution',
-                                    title: 'Possible anisotropic diffraction (completeness: ' + _inComp.toFixed(0) + '% → ' + _midComp.toFixed(0) + '% → ' + _outComp.toFixed(0) + '%)',
-                                    body: 'Completeness drops steeply across resolution shells, which can indicate anisotropic diffraction — '
-                                        + 'the crystal diffracts to different resolutions along different axes. '
-                                        + 'Consider: anisotropic resolution cutoffs (STARANISO server at staraniso.globalphasing.org), '
-                                        + 'or use the Anisotropy Analysis panel in CrystalPilot for a more detailed assessment. '
-                                        + 'When reporting, specify resolution limits along each principal axis rather than a single isotropic cutoff.'});
-                            }
-                        }
-                    }
-                }
-                // 13. Chi-squared correction factor issues
-                if (m.chi2_values && m.chi2_values.length > 0) {
-                    var _maxChi2 = Math.max.apply(null, m.chi2_values);
-                    var _minChi2 = Math.min.apply(null, m.chi2_values);
-                    if (_maxChi2 > 5.0) {
-                        diags.push({severity: 'warning',
-                            title: 'High correction factor \u03c7\u00b2 = ' + _maxChi2.toFixed(1),
-                            body: 'The chi-squared goodness-of-fit for the correction factors (decay, absorption, modulation) is very high. '
-                                + 'This means the empirical corrections are struggling to model systematic errors in the data. '
-                                + 'Common causes: crystal decay (radiation damage), strong absorption from the mount or crystal, '
-                                + 'or anisotropic absorption from a non-spherical crystal. '
-                                + 'Try: adjust CORRECTIONS= (e.g. remove MODULATION), or check if the crystal mount is contributing scatter.'});
-                    } else if (_maxChi2 > 2.5) {
-                        diags.push({severity: 'caution',
-                            title: 'Elevated correction factor \u03c7\u00b2 = ' + _maxChi2.toFixed(1),
-                            body: 'The chi-squared for correction factors is somewhat elevated (ideal \u2248 1.0). '
-                                + 'This may indicate moderate absorption effects, crystal decay, or slight model inadequacy. '
-                                + 'Usually not critical, but if data quality is worse than expected, investigate absorption or decay.'});
-                    }
-                }
-                // 14. Wilson moments — twinning indicator
-                if (m.wilson_moments && m.wilson_moments.length > 0) {
-                    // Second moment <I^2>/2<I>^2 should be ~1.0 for untwinned acentric data
-                    // Perfect twin: 0.5. Values < 0.8 are suspicious.
-                    var _momentVals = [];
-                    for (var _wm = 0; _wm < m.wilson_moments.length; _wm++) {
-                        var _wRow = m.wilson_moments[_wm];
-                        if (_wRow.length >= 3 && _wRow[1] !== 'overall') {
-                            var _m2 = parseFloat(_wRow[2]);
-                            if (!isNaN(_m2)) _momentVals.push(_m2);
-                        }
-                    }
-                    if (_momentVals.length >= 3) {
-                        var _avgM2 = _momentVals.reduce(function(a, b) { return a + b; }, 0) / _momentVals.length;
-                        if (_avgM2 < 0.75) {
-                            diags.push({severity: 'warning',
-                                title: 'Wilson second moment \u27e8I\u00b2\u27e9/2\u27e8I\u27e9\u00b2 = ' + _avgM2.toFixed(3) + ' — possible twinning',
-                                body: 'The average second moment of the Wilson distribution is well below the theoretical value of 1.0 for untwinned acentric data '
-                                    + '(a perfect twin gives 0.5). '
-                                    + 'This strongly suggests merohedral or pseudo-merohedral twinning. '
-                                    + 'Run CTRUNCATE (via the AIMLESS pipeline) for the L-test and H-test to confirm. '
-                                    + 'If twinned, structure solution requires twin-aware refinement in REFMAC5 or phenix.refine.'});
-                        } else if (_avgM2 < 0.85) {
-                            diags.push({severity: 'caution',
-                                title: 'Wilson second moment \u27e8I\u00b2\u27e9/2\u27e8I\u27e9\u00b2 = ' + _avgM2.toFixed(3) + ' — check for twinning',
-                                body: 'The second moment is slightly below the expected value of 1.0. '
-                                    + 'This could indicate partial twinning, pseudo-symmetry, or translational NCS. '
-                                    + 'Run CTRUNCATE for formal twinning tests (L-test). '
-                                    + 'Note: anisotropy, ice rings, or NCS can also depress the moments without actual twinning.'});
-                        }
-                    }
-                }
-                // 15. CC½ outer shell diagnostic — data extending beyond useful resolution
-                if (m.statistics_table && m.statistics_table.length >= 3) {
-                    var _outerShells = m.statistics_table.filter(function(r) {
-                        return r.resolution && r.resolution.toLowerCase() !== 'total';
-                    });
-                    if (_outerShells.length >= 2) {
-                        var _lastShell = _outerShells[_outerShells.length - 1];
-                        var _ccOuter = parseFloat(String(_lastShell.cc_half).replace('*', '').replace('%', ''));
-                        var _isigOuter = parseFloat(_lastShell.i_sigma);
-                        if (!isNaN(_ccOuter) && _ccOuter < 10 && !isNaN(_isigOuter) && _isigOuter < 0.5) {
-                            diags.push({severity: 'info',
-                                title: 'Outer shell: CC\u00bd=' + _ccOuter.toFixed(1) + '%, I/\u03c3=' + _isigOuter.toFixed(1) + ' — no useful signal',
-                                body: 'The outermost resolution shell has negligible signal. '
-                                    + 'This is normal if the resolution cutoff was set conservatively, '
-                                    + 'but if you see many such shells, consider reducing the resolution limit in XDS.INP '
-                                    + '(INCLUDE_RESOLUTION_RANGE=) to speed up processing and reduce noise in the merged data.'});
-                        }
-                    }
-                }
-                // 16. Anomalous signal assessment (if Friedel's law = FALSE)
-                if (m.friedels_law === 'FALSE' && m.statistics_table && m.statistics_table.length > 0) {
-                    var _totalAnom = null;
-                    for (var _ta = m.statistics_table.length - 1; _ta >= 0; _ta--) {
-                        if (m.statistics_table[_ta].resolution && m.statistics_table[_ta].resolution.toLowerCase() === 'total') {
-                            _totalAnom = m.statistics_table[_ta]; break;
-                        }
-                    }
-                    if (_totalAnom) {
-                        var _anomCorr = parseFloat(_totalAnom.anomal_corr);
-                        var _sigAnom = parseFloat(_totalAnom.siganom);
-                        if (!isNaN(_anomCorr) && !isNaN(_sigAnom)) {
-                            if (_anomCorr > 30 && _sigAnom > 1.2) {
-                                diags.push({severity: 'info',
-                                    title: 'Anomalous signal detected (CCanom=' + _anomCorr.toFixed(0) + '%, SigAnom=' + _sigAnom.toFixed(2) + ')',
-                                    body: 'Significant anomalous differences are present in the data overall. '
-                                        + 'This is promising for SAD/MAD phasing. '
-                                        + 'Check per-shell values to determine the useful resolution range for anomalous signal — '
-                                        + 'it typically extends to lower resolution than the diffraction limit.'});
-                            } else if (_anomCorr < 10 && _sigAnom < 0.8) {
-                                diags.push({severity: 'caution',
-                                    title: 'Weak or absent anomalous signal (CCanom=' + _anomCorr.toFixed(0) + '%, SigAnom=' + _sigAnom.toFixed(2) + ')',
-                                    body: 'The anomalous correlation and SigAnom are very low. '
-                                        + 'If this data was collected for SAD/MAD phasing, the anomalous signal may be insufficient. '
-                                        + 'Consider: was the wavelength tuned to the absorption edge? Is there enough redundancy? '
-                                        + 'If this is native data, set FRIEDEL\'S_LAW=TRUE in CORRECT to merge Friedel pairs and improve statistics.'});
-                            }
-                        }
-                    }
-                }
-                // 17. Large beam center shift in CORRECT refinement
-                if (m.refined_beam_center) {
-                    // We don't have the original values easily here, but we can check
-                    // if the refined values are suspiciously far from typical detector centers
-                    // This is a soft warning — more useful when we can compare with IDXREF values
-                }
-            }
-            return diags;
-        }
 
         // Render diagnostic banners as dismissible HTML
         function _renderDiagnostics(diags) {
@@ -8462,21 +8111,6 @@
                 const d = await r.json();
                 const m = d.metrics;
 
-            // For IDXREF: fetch raw LP text for enhanced diagnostics (subtrees, cluster indices)
-            if (step === 'IDXREF' && currentProject) {
-                try {
-                    var _lpR = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/lp/IDXREF');
-                    if (_lpR.ok) {
-                        var _lpD = await _lpR.json();
-                        if (_lpD.content) {
-                            var _extras = _parseIdxrefLPExtras(_lpD.content);
-                            if (_extras.all_subtrees.length > 0) m._all_subtrees = _extras.all_subtrees;
-                            if (_extras.half_integer_axes.length > 0) m._half_integer_axes = _extras.half_integer_axes;
-                        }
-                    }
-                } catch(_lpErr) { /* non-critical — diagnostics degrade gracefully */ }
-            }
-            
             if (step === "IDXREF") {
                 let html = '<div class="metrics-box">';
                 html += '<div data-tier="normal" style="display:flex; justify-content:flex-end; gap:6px; margin-bottom:4px;">'
@@ -8509,7 +8143,7 @@
                     + '</div>';
 
                 // ── Smart Diagnostics for IDXREF ──
-                html += _renderDiagnostics(_generateDiagnostics('IDXREF', m));
+                html += _renderDiagnostics(d.diagnostics);
 
                 // ── Indexing Quality Indicators ──
                 html += '<div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px;">';
@@ -9076,7 +8710,7 @@
                     + '</div>';
 
                 // ── Smart Diagnostics for CORRECT ──
-                html += _renderDiagnostics(_generateDiagnostics('CORRECT', m));
+                html += _renderDiagnostics(d.diagnostics);
 
                 if (m.space_group !== undefined) {
                     html += `<p><strong>Space Group:</strong> ${m.space_group}</p>`;
@@ -11333,10 +10967,13 @@
         // library path with the file's LIB=; ticked: the file's LIB= is used.
         let _neggiaConfigured = null;    // the server's HDF5 library path; null = not asked yet
         function _libFromFile() {
+            if (_cpLibFromFile !== null) return _cpLibFromFile;
             try { return localStorage.getItem('cp.lib.fromXdsinp') === '1'; } catch (e) { return false; }
         }
         function _libFromFileChanged(box) {
             try { localStorage.setItem('cp.lib.fromXdsinp', box.checked ? '1' : '0'); } catch (e) {}
+            _cpLibFromFile = box.checked;
+            _cpSavePrefs({ lib_from_xdsinp: box.checked });
         }
         function _libKeepConfigured(fileLib) {
             const box = document.getElementById('p-lib-from-file');
@@ -14076,7 +13713,7 @@
             if (!currentProject) return;
             try {
                 // Generate resolution shells with fine binning near cutoff
-                var shells = _generateShells(highRes);
+                var shells = await _xsShells(highRes);
                 // Update the XSCALE.INP form fields so user sees the change
                 var xsLow = parseFloat(document.getElementById('xs-res-lo').value);
                 xsLow = (!isNaN(xsLow) && xsLow > highRes) ? String(xsLow) : '999';
@@ -14104,6 +13741,13 @@
             } catch(e) { alert('Failed to update XSCALE.INP: ' + e); }
         }
 
+        async function _xsShells(highRes) {
+            var r = await fetch(API + '/rules/xscale-shells?high=' + encodeURIComponent(highRes));
+            var d = await r.json();
+            if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+            return d.shells;
+        }
+
         function applyXscaleResolutionCutoffCustom() {
             var val = prompt('Enter high-resolution cutoff (\u00c5):', '');
             if (!val) return;
@@ -14112,37 +13756,6 @@
             applyXscaleResolutionCutoff(num);
         }
 
-        function _generateShells(highRes) {
-            // Generate shells from 80A to highRes.
-            // Last shells are each 0.1A wide (fine binning near cutoff).
-            // First 10 shells span 80A to the start of the fine region, equal volume in 1/d^2.
-            // RESOLUTION_SHELLS are the boundary values between shells.
-            // INCLUDE_RESOLUTION_RANGE provides the outer limits (80, highRes).
-            var dLo = 80.0;
-            var nFine = 5;
-            var nCoarse = 10;
-            var fineStart = highRes + nFine * 0.10;  // e.g. 1.07 + 0.50 = 1.57
-            if (fineStart >= dLo) return highRes.toFixed(2);  // edge case
-            var inv2Lo = 1.0 / (dLo * dLo);
-            var inv2Fine = 1.0 / (fineStart * fineStart);
-            // 9 boundaries for 10 coarse shells (80A to fineStart)
-            var boundaries = [];
-            for (var si = 1; si <= nCoarse - 1; si++) {
-                var inv2 = inv2Lo + si * (inv2Fine - inv2Lo) / nCoarse;
-                boundaries.push(Math.sqrt(1.0 / inv2));
-            }
-            // Fine boundaries from fineStart down to highRes in 0.1A steps (inclusive both ends)
-            // This gives nFine+1 boundaries → nFine fine shells between consecutive boundaries
-            // The last boundary equals highRes, so the shell list visibly reaches the cutoff
-            var nFineBounds = nFine + 1;
-            for (var fi = 0; fi < nFineBounds; fi++) {
-                var d = fineStart - fi * 0.10;
-                // Avoid going below highRes due to floating point
-                if (d < highRes - 0.001) break;
-                boundaries.push(d);
-            }
-            return boundaries.map(function(v) { return v.toFixed(2); }).join(' ');
-        }
 
         // ── Cell & space group from IDXREF ───────────────────────────────
         // Lowest-symmetry space group for each Bravais lattice (what one gives
@@ -14230,148 +13843,21 @@
             }
             if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent);">Fetching CORRECT.LP metrics...</span>';
             try {
-                var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/metrics/CORRECT');
+                var mode = _xsCutoffModes[_xsCutoffIdx];
+                var r = await fetch(API + '/projects/' + encodeURIComponent(currentProject) + '/xscale-autofill?mode=' + encodeURIComponent(mode));
                 if (!r.ok) {
                     if (statusEl) statusEl.innerHTML = '<span style="color:#fc8181;">CORRECT.LP not found. Run CORRECT first.</span>';
                     return;
                 }
                 var d = await r.json();
-                var cm = d.metrics;
-                if (!cm) {
-                    if (statusEl) statusEl.innerHTML = '<span style="color:#fc8181;">Could not parse CORRECT.LP metrics.</span>';
-                    return;
-                }
-
-                // Fill space group
-                if (cm.space_group !== undefined) {
-                    document.getElementById('xs-sgnum').value = cm.space_group;
-                }
-
-                // Fill unit cell
-                if (cm.unit_cell) {
-                    var uc = cm.unit_cell;
-                    document.getElementById('xs-unitcell').value = uc.a.toFixed(2) + ' ' + uc.b.toFixed(2) + ' ' + uc.c.toFixed(2) + ' '
-                        + uc.alpha.toFixed(2) + ' ' + uc.beta.toFixed(2) + ' ' + uc.gamma.toFixed(2);
-                }
-
-                // Compute resolution cutoffs from statistics table
-                var cutIsig = null, cutRobs = null, cutCc12 = null;
-                if (cm.statistics_table && cm.statistics_table.length > 0) {
-                    var sdata = [];
-                    for (var i = 0; i < cm.statistics_table.length; i++) {
-                        var row = cm.statistics_table[i];
-                        if (!row.resolution || row.resolution.toLowerCase() === 'total') continue;
-                        var dv = parseFloat(row.resolution);
-                        if (isNaN(dv) || dv <= 0) continue;
-                        sdata.push({
-                            d: dv,
-                            inv_d2: 1.0 / (dv * dv),
-                            i_sigma: parseFloat(row.i_sigma),
-                            r_obs: parseFloat(String(row.r_obs).replace('%','')),
-                            cc_half: parseFloat(String(row.cc_half).replace('*','')),
-                            cc_star: String(row.cc_half).indexOf('*') >= 0
-                        });
-                    }
-                    // a shell's statistic belongs to the middle of the shell in 1/d² (same rule as the server)
-                    (function(a) { var lo = 0; a.forEach(function(sh) { sh.mid = (lo + sh.inv_d2) / 2; lo = sh.inv_d2; }); })(sdata);
-                    // Interpolate I/sig crossing 2.0
-                    for (var k = 1; k < sdata.length; k++) {
-                        var v0 = sdata[k-1].i_sigma, v1 = sdata[k].i_sigma;
-                        if (!isNaN(v0) && !isNaN(v1) && v0 >= 2.0 && v1 < 2.0) {
-                            var frac = (2.0 - v0) / (v1 - v0);
-                            var inv2 = sdata[k-1].mid + frac * (sdata[k].mid - sdata[k-1].mid);
-                            if (inv2 > 0) cutIsig = Math.sqrt(1.0 / inv2);
-                            break;
-                        }
-                    }
-                    // Fallback: no clean I/sig crossing but last shell fails
-                    if (cutIsig === null && sdata.length >= 2) {
-                        var _liV = sdata[sdata.length - 1].i_sigma;
-                        if (!isNaN(_liV) && _liV < 2.0) {
-                            for (var kf = sdata.length - 1; kf >= 0; kf--) {
-                                if (!isNaN(sdata[kf].i_sigma) && sdata[kf].i_sigma >= 2.0) { cutIsig = sdata[kf].d; break; }
-                            }
-                            if (cutIsig === null) cutIsig = sdata[0].d;
-                        }
-                    }
-                    // Interpolate R-obs crossing 55%
-                    for (var k2 = 1; k2 < sdata.length; k2++) {
-                        var r0 = sdata[k2-1].r_obs, r1 = sdata[k2].r_obs;
-                        if (!isNaN(r0) && !isNaN(r1) && r0 <= 55.0 && r1 > 55.0) {
-                            var frac2 = (55.0 - r0) / (r1 - r0);
-                            var inv2b = sdata[k2-1].mid + frac2 * (sdata[k2].mid - sdata[k2-1].mid);
-                            if (inv2b > 0) cutRobs = Math.sqrt(1.0 / inv2b);
-                            break;
-                        }
-                    }
-                    // Fallback: no clean R-obs crossing but last shell fails
-                    if (cutRobs === null && sdata.length >= 2) {
-                        var _lrV = sdata[sdata.length - 1].r_obs;
-                        if (!isNaN(_lrV) && _lrV > 55.0) {
-                            for (var kf2 = sdata.length - 1; kf2 >= 0; kf2--) {
-                                if (!isNaN(sdata[kf2].r_obs) && sdata[kf2].r_obs <= 55.0) { cutRobs = sdata[kf2].d; break; }
-                            }
-                            if (cutRobs === null) cutRobs = sdata[0].d;
-                        }
-                    }
-                    // CC1/2: last shell with significance *
-                    for (var k3 = 0; k3 < sdata.length; k3++) {
-                        if (sdata[k3].cc_star) cutCc12 = sdata[k3].d;
-                    }
-                    // CC1/2 = 50%: interpolate where CC1/2 drops below 50%
-                    var cutCc50 = null;
-                    for (var k4 = 1; k4 < sdata.length; k4++) {
-                        var c0 = sdata[k4-1].cc_half, c1 = sdata[k4].cc_half;
-                        if (!isNaN(c0) && !isNaN(c1) && c0 >= 50.0 && c1 < 50.0) {
-                            var frac4 = (50.0 - c0) / (c1 - c0);
-                            var inv4 = sdata[k4-1].mid + frac4 * (sdata[k4].mid - sdata[k4-1].mid);
-                            if (inv4 > 0) cutCc50 = Math.sqrt(1.0 / inv4);
-                            break;
-                        }
-                    }
-                    // Fallback: no clean CC1/2=50% crossing but last shell fails
-                    if (cutCc50 === null && sdata.length >= 2) {
-                        var _lcV = sdata[sdata.length - 1].cc_half;
-                        if (!isNaN(_lcV) && _lcV < 50.0) {
-                            for (var kf4 = sdata.length - 1; kf4 >= 0; kf4--) {
-                                if (!isNaN(sdata[kf4].cc_half) && sdata[kf4].cc_half >= 50.0) { cutCc50 = sdata[kf4].d; break; }
-                            }
-                            if (cutCc50 === null) cutCc50 = sdata[0].d;
-                        }
-                    }
-                }
-
-                // One definition everywhere: when the server sent its cut-offs (the numbers
-                // AutoPilot, batch and the figures use), they replace the ones worked out here.
-                if (cm.cutoffs && cm.cutoffs.all_cutoffs) {
-                    var _asc = cm.cutoffs.all_cutoffs, _asr = cm.cutoffs.reached || {};
-                    cutIsig = _asr.isig2 ? _asc.isig2 : null;
-                    cutRobs = _asr.r_obs_55 ? _asc.r_obs_55 : null;
-                    cutCc50 = _asr.cc_half_50 ? _asc.cc_half_50 : null;
-                    if (_asc.cc_half_sig !== null && _asc.cc_half_sig !== undefined) cutCc12 = _asc.cc_half_sig;
-                }
-
-                // Pick resolution based on user preference
-                var mode = _xsCutoffModes[_xsCutoffIdx];
-                var chosen = null;
-                var chosenLabel = '';
-                if (mode === 'isig' && cutIsig !== null) { chosen = cutIsig; chosenLabel = 'I/σ ≈ 2.0 → ' + cutIsig.toFixed(2) + ' Å'; }
-                else if (mode === 'robs' && cutRobs !== null) { chosen = cutRobs; chosenLabel = 'R-obs ≈ 55% → ' + cutRobs.toFixed(2) + ' Å'; }
-                else if (mode === 'cc50' && cutCc50 !== null) { chosen = cutCc50; chosenLabel = 'CC½ ≈ 50% → ' + cutCc50.toFixed(2) + ' Å'; }
-                else if (mode === 'cc12' && cutCc12 !== null) { chosen = cutCc12; chosenLabel = 'CC½ significant → ' + cutCc12.toFixed(2) + ' Å'; }
-                // Fallback order
-                if (chosen === null && cutIsig !== null) { chosen = cutIsig; chosenLabel = 'I/σ ≈ 2.0 → ' + cutIsig.toFixed(2) + ' Å (fallback)'; }
-                if (chosen === null && cutRobs !== null) { chosen = cutRobs; chosenLabel = 'R-obs ≈ 55% → ' + cutRobs.toFixed(2) + ' Å (fallback)'; }
-                if (chosen === null && cutCc50 !== null) { chosen = cutCc50; chosenLabel = 'CC½ ≈ 50% → ' + cutCc50.toFixed(2) + ' Å (fallback)'; }
-                if (chosen === null && cutCc12 !== null) { chosen = cutCc12; chosenLabel = 'CC½ significant → ' + cutCc12.toFixed(2) + ' Å (fallback)'; }
-
-                if (chosen !== null) {
-                    var hiRes = parseFloat(chosen.toFixed(2));
-                    document.getElementById('xs-res-lo').value = '999';
-                    document.getElementById('xs-res-hi').value = hiRes.toFixed(2);
-                    document.getElementById('xs-shells').value = _generateShells(hiRes);
-                    if (statusEl) statusEl.innerHTML = '<span style="color:#68d391;">✔ Autofilled: SG=' + (cm.space_group || '?')
-                        + ', resolution 999–' + hiRes.toFixed(2) + ' Å (' + chosenLabel + '), 16 shells (last 6 × 0.1Å)</span>';
+                if (d.space_group !== null && d.space_group !== undefined) document.getElementById('xs-sgnum').value = d.space_group;
+                if (d.unit_cell) document.getElementById('xs-unitcell').value = d.unit_cell;
+                if (d.resolution_high) {
+                    document.getElementById('xs-res-lo').value = d.resolution_low;
+                    document.getElementById('xs-res-hi').value = d.resolution_high;
+                    document.getElementById('xs-shells').value = d.shells;
+                    if (statusEl) statusEl.innerHTML = '<span style="color:#68d391;">✔ Autofilled: SG=' + (d.space_group || '?')
+                        + ', resolution 999–' + d.resolution_high + ' Å (' + d.cutoff_label + '), 16 shells (last 6 × 0.1Å)</span>';
                 } else {
                     // No cutoff available, just fill SG/UC
                     if (statusEl) statusEl.innerHTML = '<span style="color:#ecc94b;">⚠ Filled space group and unit cell. No resolution cutoff could be computed — set resolution manually.</span>';
@@ -15728,7 +15214,27 @@
             } catch(e) { /* ignore — no cached results */ }
         }
 
-        function dccShowResults(data) {
+        var _dccShowSeq = 0;
+        async function _dccSuggest(data) {
+            var strategies = {};
+            ['radtail', 'negblock', 'outlier2', 'outlier3'].forEach(function (k) {
+                var el = document.getElementById('dcc-strat-' + k);
+                strategies[k] = el ? el.checked : true;
+            });
+            try {
+                var r = await fetch(API + '/rules/frame-suggestions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                                       body: JSON.stringify({ data: { frames: data.frames, summary: data.summary }, strategies: strategies }) });
+                var d = await r.json();
+                if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+                return d;
+            } catch (e) {
+                showToast('Could not work out the frame suggestions: ' + e.message, 'error');
+                return { ranges: [], diagnostics: { hasRadDamage: false, radDamageOnsetIdx: null, radDamageOnsetBatch: null } };
+            }
+        }
+
+        async function dccShowResults(data) {
+            var seq = ++_dccShowSeq;
             document.getElementById('dcc-results').style.display = 'block';
             document.getElementById('dcc-view-lp-btn').style.display = '';
 
@@ -15746,7 +15252,8 @@
             var negPct = (negCount / nFrames * 100);
 
             // Run auto-suggest first — it also returns diagnostic info
-            var suggestResult = dccAutoSuggest(data);
+            var suggestResult = await _dccSuggest(data);
+            if (seq !== _dccShowSeq) return;      // newer results or other strategy boxes took over
             _dccSuggested = suggestResult.ranges;
             var diag = suggestResult.diagnostics;
 
@@ -15897,224 +15404,6 @@
             }
         }
 
-        function dccAutoSuggest(data) {
-            // Multi-strategy detection of bad frame ranges for EXCLUDE_DATA_RANGE.
-            //
-            // The approach adapts to the severity of the problem:
-            //
-            // Case A (healthy data, <30% negative): Use median-MAD outlier
-            //   detection. The median is positive, so thresholds work normally.
-            //
-            // Case B (damaged data, ≥30% negative): The median itself may be
-            //   negative, making median-MAD thresholds useless. Instead:
-            //   - Use zero as the primary threshold (ΔCC½ < 0 = frame hurts data)
-            //   - Detect radiation damage tail (contiguous negative region at end)
-            //   - Find the worst contiguous blocks of negative frames
-            //
-            // The fundamental principle from Assmann et al. (2016): ΔCC½ < 0
-            // means the frame reduces CC½ when included. Zero is the natural
-            // decision boundary.
-            //
-            // Safety: Diederichs recommends excluding no more than ~10% per
-            // iteration. We cap at 20% but show a warning above 10%.
-
-            // Read which strategies the user has enabled
-            var el;
-            el = document.getElementById('dcc-strat-radtail');  var useRadTail  = el ? el.checked : true;
-            el = document.getElementById('dcc-strat-negblock'); var useNegBlock = el ? el.checked : true;
-            el = document.getElementById('dcc-strat-outlier2'); var useOutlier2 = el ? el.checked : true;
-            el = document.getElementById('dcc-strat-outlier3'); var useOutlier3 = el ? el.checked : true;
-
-            var s = data.summary || {};
-            var frames = data.frames;
-            var nFrames = frames.length;
-            var diagnostics = { hasRadDamage: false, radDamageOnsetIdx: null, radDamageOnsetBatch: null };
-            if (!nFrames) return { ranges: [], diagnostics: diagnostics };
-
-            var deltas = frames.map(function(f) { return f.delta_only; });
-            var negCount = deltas.filter(function(v) { return v < 0; }).length;
-            var negPct = negCount / nFrames * 100;
-
-            // Compute median and MAD (use parser values if available)
-            var median = s.median_delta_only;
-            var mad = s.mad_delta_only;
-            if (median == null || mad == null) {
-                var sorted = deltas.slice().sort(function(a, b) { return a - b; });
-                median = sorted[Math.floor(sorted.length / 2)];
-                var absDevs = sorted.map(function(v) { return Math.abs(v - median); }).sort(function(a, b) { return a - b; });
-                mad = absDevs[Math.floor(absDevs.length / 2)];
-                if (mad < 0.01) mad = 0.01;
-            }
-
-            var ranges = [];
-            var usedIndices = {};
-
-            // ── Strategy A: Radiation damage tail detection ──
-            // Walk backwards from end to find where a sliding window of 5 frames
-            // first averages ≥ 0. Everything after that is the damaged tail.
-            // This works regardless of whether the median is positive or negative.
-            if (useRadTail) {
-            var windowSize = Math.max(3, Math.min(7, Math.floor(nFrames * 0.02)));
-            var tailOnsetIdx = nFrames; // means "no tail detected"
-            for (var ri = nFrames - windowSize; ri >= 0; ri--) {
-                var wSum = 0;
-                for (var wi = 0; wi < windowSize; wi++) wSum += deltas[ri + wi];
-                if (wSum / windowSize >= 0) { tailOnsetIdx = ri + 1; break; }
-                if (ri === 0) tailOnsetIdx = 0;
-            }
-            var tailLength = nFrames - tailOnsetIdx;
-            // Flag as radiation damage if the tail is ≥10 frames AND ≥5% of data
-            // AND the tail has a net negative slope (getting worse, not recovering)
-            if (tailLength >= 10 && tailLength >= Math.floor(nFrames * 0.05)) {
-                // Verify it's truly declining (not just flat-negative)
-                var tailFirstHalf = deltas.slice(tailOnsetIdx, tailOnsetIdx + Math.floor(tailLength / 2));
-                var tailSecondHalf = deltas.slice(tailOnsetIdx + Math.floor(tailLength / 2));
-                var avgFirst = tailFirstHalf.reduce(function(a, b) { return a + b; }, 0) / tailFirstHalf.length;
-                var avgSecond = tailSecondHalf.reduce(function(a, b) { return a + b; }, 0) / tailSecondHalf.length;
-                // It's radiation damage if the second half is worse (more negative)
-                // than the first half, OR if both halves are clearly negative
-                if (avgSecond < avgFirst || (avgFirst < -0.5 && avgSecond < -0.5)) {
-                    diagnostics.hasRadDamage = true;
-                    diagnostics.radDamageOnsetIdx = tailOnsetIdx;
-                    diagnostics.radDamageOnsetBatch = frames[tailOnsetIdx].batch;
-
-                    var tailSum = 0;
-                    for (var ti = tailOnsetIdx; ti < nFrames; ti++) tailSum += deltas[ti];
-                    ranges.push({
-                        start: frames[tailOnsetIdx].batch,
-                        end: frames[nFrames - 1].batch,
-                        count: tailLength,
-                        avg_delta: tailSum / tailLength,
-                        reason: 'radiation_damage'
-                    });
-                    for (var ti = tailOnsetIdx; ti < nFrames; ti++) usedIndices[ti] = true;
-                }
-            }
-            } // end if (useRadTail)
-
-            // ── Strategy B: Contiguous negative blocks ──
-            // When ≥30% of frames are negative, the median-MAD approach fails
-            // because the median itself is near zero or negative.
-            // Instead, use ΔCC½ < 0 as the threshold and find the worst
-            // contiguous blocks of negative frames (≥3 consecutive).
-            if (useNegBlock && negPct >= 30) {
-                var run = null;
-                for (var i = 0; i < nFrames; i++) {
-                    if (usedIndices[i]) {
-                        if (run && run.count >= 3) { run.avg_delta = run._sum / run.count; ranges.push(run); }
-                        run = null;
-                        continue;
-                    }
-                    if (deltas[i] < 0) {
-                        if (!run) run = { start: frames[i].batch, end: frames[i].batch, _sum: 0, count: 0, _startIdx: i, reason: 'negative_block' };
-                        run.end = frames[i].batch;
-                        run._sum += deltas[i];
-                        run.count++;
-                    } else {
-                        if (run && run.count >= 3) {
-                            run.avg_delta = run._sum / run.count;
-                            ranges.push(run);
-                            for (var ui = run._startIdx; ui < run._startIdx + run.count; ui++) usedIndices[ui] = true;
-                        }
-                        run = null;
-                    }
-                }
-                if (run && run.count >= 3) {
-                    run.avg_delta = run._sum / run.count;
-                    ranges.push(run);
-                }
-            }
-
-            // ── Strategy C: Statistical outliers (median − 2×MAD) ──
-            // This is the primary strategy when data is mostly healthy (<30% negative),
-            // and a secondary strategy otherwise to catch extreme outliers.
-            if (useOutlier2) {
-            var threshold2 = median - 2 * mad;
-            var runC = null;
-            var minRunLen = negPct >= 30 ? 5 : 3; // stricter when we already have Strategy B ranges
-            for (var i = 0; i < nFrames; i++) {
-                if (usedIndices[i]) {
-                    if (runC && runC.count >= minRunLen) { runC.avg_delta = runC._sum / runC.count; ranges.push(runC); }
-                    runC = null;
-                    continue;
-                }
-                if (deltas[i] < threshold2) {
-                    if (!runC) runC = { start: frames[i].batch, end: frames[i].batch, _sum: 0, count: 0, _startIdx: i, reason: 'isolated_bad' };
-                    runC.end = frames[i].batch;
-                    runC._sum += deltas[i];
-                    runC.count++;
-                } else {
-                    if (runC && runC.count >= minRunLen) {
-                        runC.avg_delta = runC._sum / runC.count;
-                        ranges.push(runC);
-                        for (var ui = runC._startIdx; ui < runC._startIdx + runC.count; ui++) usedIndices[ui] = true;
-                    }
-                    runC = null;
-                }
-            }
-            if (runC && runC.count >= minRunLen) { runC.avg_delta = runC._sum / runC.count; ranges.push(runC); }
-            } // end if (useOutlier2)
-
-            // ── Strategy D: Severe outlier pairs (median − 3×MAD) ──
-            if (useOutlier3) {
-            var threshold3 = median - 3 * mad;
-            var runD = null;
-            for (var i = 0; i < nFrames; i++) {
-                if (usedIndices[i]) {
-                    if (runD && runD.count >= 2) { runD.avg_delta = runD._sum / runD.count; ranges.push(runD); }
-                    runD = null;
-                    continue;
-                }
-                if (deltas[i] < threshold3) {
-                    if (!runD) runD = { start: frames[i].batch, end: frames[i].batch, _sum: 0, count: 0, reason: 'isolated_bad' };
-                    runD.end = frames[i].batch;
-                    runD._sum += deltas[i];
-                    runD.count++;
-                } else {
-                    if (runD && runD.count >= 2) { runD.avg_delta = runD._sum / runD.count; ranges.push(runD); }
-                    runD = null;
-                }
-            }
-            if (runD && runD.count >= 2) { runD.avg_delta = runD._sum / runD.count; ranges.push(runD); }
-            } // end if (useOutlier3)
-
-            // ── Merge overlapping/adjacent ranges ──
-            ranges.sort(function(a, b) { return a.start - b.start; });
-            var merged = [];
-            for (var i = 0; i < ranges.length; i++) {
-                var r = ranges[i];
-                if (merged.length > 0 && r.start <= merged[merged.length - 1].end + 2) {
-                    // Merge: extend the previous range
-                    var prev = merged[merged.length - 1];
-                    var totalCount = prev.count + r.count;
-                    prev.avg_delta = (prev.avg_delta * prev.count + r.avg_delta * r.count) / totalCount;
-                    prev.count = totalCount;
-                    prev.end = Math.max(prev.end, r.end);
-                    // Keep the more informative reason
-                    if (r.reason === 'radiation_damage') prev.reason = 'radiation_damage';
-                } else {
-                    merged.push({ start: r.start, end: r.end, count: r.count, avg_delta: r.avg_delta, reason: r.reason });
-                }
-            }
-
-            // ── Safety cap: limit suggestions per iteration ──
-            // Sort by severity (most negative avg first), keep up to 20% of frames
-            merged.sort(function(a, b) { return a.avg_delta - b.avg_delta; });
-            var maxExclude = Math.floor(nFrames * 0.20);
-            var kept = [];
-            var totalExcl = 0;
-            for (var i = 0; i < merged.length; i++) {
-                if (totalExcl + merged[i].count <= maxExclude) {
-                    kept.push(merged[i]);
-                    totalExcl += merged[i].count;
-                }
-            }
-            // Sort by start batch for display
-            kept.sort(function(a, b) { return a.start - b.start; });
-            // Clean internal properties
-            for (var i = 0; i < kept.length; i++) { delete kept[i]._startIdx; delete kept[i]._sum; }
-            return { ranges: kept, diagnostics: diagnostics };
-        }
 
         /* target / tw / th: draw into another canvas at that size (the enlarged
            chart window); without them, the chart on the page with its legend
@@ -20644,25 +19933,6 @@
         // ── Statistics Table 1 Functions ──────────────────────────────────────
         var _t1Data = null;
 
-        // Space group number -> Hermann-Mauguin symbol lookup (common ones)
-        var _sgSymbols = {1:'P 1',2:'P -1',3:'P 2',4:'P 2₁',5:'C 2',10:'P 2/m',16:'P 2 2 2',
-            17:'P 2 2 2₁',18:'P 2₁ 2₁ 2',19:'P 2₁ 2₁ 2₁',20:'C 2 2 2₁',21:'C 2 2 2',22:'F 2 2 2',
-            23:'I 2 2 2',24:'I 2₁ 2₁ 2₁',75:'P 4',76:'P 4₁',77:'P 4₂',78:'P 4₃',79:'I 4',80:'I 4₁',
-            89:'P 4 2 2',90:'P 4 2₁ 2',91:'P 4₁ 2 2',92:'P 4₁ 2₁ 2',93:'P 4₂ 2 2',94:'P 4₂ 2₁ 2',
-            95:'P 4₃ 2 2',96:'P 4₃ 2₁ 2',97:'I 4 2 2',98:'I 4₁ 2 2',
-            143:'P 3',144:'P 3₁',145:'P 3₂',146:'R 3',149:'P 3 1 2',150:'P 3 2 1',
-            151:'P 3₁ 1 2',152:'P 3₁ 2 1',153:'P 3₂ 1 2',154:'P 3₂ 2 1',155:'R 3 2',
-            168:'P 6',169:'P 6₁',170:'P 6₅',171:'P 6₂',172:'P 6₄',173:'P 6₃',
-            177:'P 6 2 2',178:'P 6₁ 2 2',179:'P 6₅ 2 2',180:'P 6₂ 2 2',181:'P 6₄ 2 2',182:'P 6₃ 2 2',
-            195:'P 2 3',196:'F 2 3',197:'I 2 3',198:'P 2₁ 3',199:'I 2₁ 3',
-            207:'P 4 3 2',208:'P 4₂ 3 2',209:'F 4 3 2',210:'F 4₁ 3 2',211:'I 4 3 2',212:'P 4₃ 3 2',
-            213:'P 4₁ 3 2',214:'I 4₁ 3 2'};
-
-        function _sgName(num) {
-            var n = parseInt(num);
-            return _sgSymbols[n] ? _sgSymbols[n] + ' (#' + n + ')' : '#' + n;
-        }
-
         var loadTable1 = t1Load;
         async function t1Load() {
             if (!currentProject) { alert('Select a project first'); return; }
@@ -20686,11 +19956,13 @@
                     fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + 'rpim=1').then(function(r2) { return r2.json(); }).then(function(d2) {
                         if (proj !== currentProject || src !== _table1LpSource || _t1Data !== d) return;
                         d.rpim = d2.rpim || {overall: null, outer: null, reason: 'not available'};
+                        d.rows = d2.rows || _t1WithoutPending(d.rows);
                         t1Render(d);
                         if (!d.rpim.overall && d.rpim.reason) statusEl.textContent = 'Loaded. Source: ' + srcLabel + '. R-pim left out: ' + d.rpim.reason;
                     }).catch(function() {
                         if (_t1Data !== d) return;
                         d.rpim = {overall: null, outer: null, reason: 'not available'};
+                        d.rows = _t1WithoutPending(d.rows);
                         t1Render(d);
                     });
                 }
@@ -20699,163 +19971,13 @@
             }
         }
 
+        // The row that waits for the exact R-pim, when that cannot be had
+        function _t1WithoutPending(rows) {
+            return (rows || []).filter(function (r) { return r.value !== 'calculating…'; });
+        }
+
         function t1Render(d) {
-            var inp = d.xdsinp || {};
-            // Prefer XSCALE over CORRECT
-            var hasXscale = d.xscale && d.xscale.statistics_table && d.xscale.statistics_table.length > 0;
-            var hasCorrect = d.correct && d.correct.statistics_table && d.correct.statistics_table.length > 0;
-            var stats = hasXscale ? d.xscale.statistics_table : (hasCorrect ? d.correct.statistics_table : []);
-            var totalRow = null, hiResRow = null;
-            if (stats.length > 0) {
-                // Last row is total, second-to-last is highest resolution shell
-                for (var i = stats.length - 1; i >= 0; i--) {
-                    if (stats[i].resolution && stats[i].resolution.toLowerCase() === 'total') {
-                        totalRow = stats[i]; break;
-                    }
-                }
-                if (!totalRow) totalRow = stats[stats.length - 1];
-                // Highest res shell = first numeric row (lowest d-spacing)
-                for (var i = 0; i < stats.length; i++) {
-                    if (stats[i].resolution && stats[i].resolution.toLowerCase() !== 'total') {
-                        hiResRow = stats[i];
-                    }
-                }
-            }
-
-            // Determine space group and unit cell (prefer XSCALE > CORRECT > XDS.INP)
-            var sgNum = (d.xscale && d.xscale.space_group) ? d.xscale.space_group :
-                        ((d.correct && d.correct.space_group) ? d.correct.space_group : inp.space_group);
-            var uc = (d.xscale && d.xscale.unit_cell) ? d.xscale.unit_cell :
-                     ((d.correct && d.correct.unit_cell) ? d.correct.unit_cell : null);
-            var ucStr = '';
-            if (uc && typeof uc === 'object') {
-                ucStr = Number(uc.a).toFixed(2) + ', ' + Number(uc.b).toFixed(2) + ', ' + Number(uc.c).toFixed(2) +
-                        '  ' + Number(uc.alpha).toFixed(1) + ', ' + Number(uc.beta).toFixed(1) + ', ' + Number(uc.gamma).toFixed(1);
-            } else if (inp.unit_cell) {
-                ucStr = inp.unit_cell;
-            }
-
-            // Resolution range: the low-resolution limit of the data (the shell table
-            // only prints the HIGH limit of each shell, so its first row is not it)
-            // to the high limit of the last shell; the outer shell as a range too.
-            var primary = hasXscale ? d.xscale : (hasCorrect ? d.correct : {});
-            var shellRows = stats.filter(function(s) { return s.resolution && s.resolution.toLowerCase() !== 'total'; });
-            var resStr = '', hiResRange = '';
-            if (hiResRow) {
-                // XSCALE.LP does not print the low limit: then the lowest-resolution
-                // observation of the reflection file, else what CORRECT.LP reported.
-                var lowLimit = parseFloat(primary.resolution_range_low);
-                if (isNaN(lowLimit) && d.rpim && d.rpim.d_low) lowLimit = parseFloat(d.rpim.d_low);
-                if (isNaN(lowLimit) && d.correct) lowLimit = parseFloat(d.correct.resolution_range_low);
-                var lowTxt = isNaN(lowLimit) ? '' : lowLimit.toFixed(2);
-                resStr = (lowTxt ? lowTxt + '–' : '') + hiResRow.resolution;
-                var prevShell = shellRows.length > 1 ? shellRows[shellRows.length - 2].resolution : lowTxt;
-                hiResRange = (prevShell ? prevShell + '–' : '') + hiResRow.resolution;
-            }
-            // The log prints 99.8% and 76.9*: the unit is in the row label and the
-            // significance star does not belong in a table of values.
-            function cl(v) { return (v === undefined || v === null) ? '' : String(v).replace(/[%*]/g, '').trim(); }
-
-            // Redundancy = observed / unique
-            function calcRedund(row) {
-                if (!row) return '';
-                var obs = parseFloat(row.observed);
-                var uniq = parseFloat(row.unique);
-                if (uniq > 0 && !isNaN(obs)) return (obs / uniq).toFixed(1);
-                return '';
-            }
-
-            // Format: value (hiRes)
-            function fmtPair(totalVal, hiResVal) {
-                if (!totalVal && totalVal !== 0) return '';
-                var s = String(totalVal);
-                if (hiResVal !== undefined && hiResVal !== null && hiResVal !== '') s += ' (' + hiResVal + ')';
-                return s;
-            }
-
-            // ISa value
-            var isaVal = '';
-            if (d.xscale && d.xscale.isa_table && d.xscale.isa_table.length > 0) {
-                isaVal = d.xscale.isa_table.map(function(r){return r.isa;}).join(', ');
-            } else if (d.correct && d.correct.isa && d.correct.isa.isa) {
-                isaVal = d.correct.isa.isa;
-            }
-
-            // Build rows
-            var rows = [];
-            function addSection(title) {
-                rows.push({section: title});
-            }
-            function addRow(label, value) {
-                if (value !== undefined && value !== null && value !== '') rows.push({label: label, value: String(value)});
-            }
-
-            addSection('Data Collection');
-            addRow('Detector', inp.detector || '');
-            addRow('Wavelength (Å)', inp.wavelength || '');
-            addRow('Detector distance (mm)', inp.detector_distance || '');
-            addRow('Oscillation range (°)', inp.oscillation_range || '');
-            addRow('No. of images', inp.n_images || '');
-            addRow('Total rotation range (°)', inp.total_rotation || '');
-            addRow('Space group', sgNum ? _sgName(sgNum) : '');
-            addRow('Unit cell (a, b, c (Å); α, β, γ (°))', ucStr);
-
-            addSection('Data Processing');
-            addRow('Resolution range (Å)', resStr ? fmtPair(resStr, hiResRange) : '');
-            addRow('Completeness (%)', totalRow ? fmtPair(cl(totalRow.completeness), hiResRow ? cl(hiResRow.completeness) : '') : '');
-            addRow('Redundancy', totalRow ? fmtPair(calcRedund(totalRow), calcRedund(hiResRow)) : '');
-            addRow('R<sub>meas</sub> (%) &dagger;', totalRow ? fmtPair(cl(totalRow.r_meas), hiResRow ? cl(hiResRow.r_meas) : '') : '');
-            // R_pim: exact, from the unmerged reflections (server side, gemmi), and only
-            // when it could be checked against the R_meas of the log. Never R_meas/sqrt(N).
-            if (totalRow) {
-                if (d.rpim === undefined) addRow('R<sub>pim</sub> (%) &Dagger;', 'calculating…');
-                else if (d.rpim && d.rpim.overall) addRow('R<sub>pim</sub> (%) &Dagger;', fmtPair(d.rpim.overall, d.rpim.outer || ''));
-            }
-            addRow('R<sub>merge</sub> (%) &sect;', totalRow ? fmtPair(cl(totalRow.r_obs), hiResRow ? cl(hiResRow.r_obs) : '') : '');
-            addRow('⟨I/σ(I)⟩', totalRow ? fmtPair(cl(totalRow.i_sigma), hiResRow ? cl(hiResRow.i_sigma) : '') : '');
-            addRow('CC<sub>1/2</sub> (%) &Vert;', totalRow ? fmtPair(cl(totalRow.cc_half), hiResRow ? cl(hiResRow.cc_half) : '') : '');
-
-            // CC* = sqrt(2*CC1/2 / (1 + CC1/2)) where CC1/2 is fractional (0-1)
-            function calcCCstar(row) {
-                if (!row || !row.cc_half) return '';
-                var v = parseFloat(String(row.cc_half).replace('*',''));
-                if (isNaN(v)) return '';
-                var frac = v / 100.0;  // convert from % to fractional
-                if (frac <= 0) return '0.0';
-                if (frac > 1) frac = 1;
-                var ccstar = Math.sqrt(2.0 * frac / (1.0 + frac));
-                return (ccstar * 100).toFixed(1);  // back to %
-            }
-            addRow('CC* (%) &Vert;', totalRow ? fmtPair(calcCCstar(totalRow), calcCCstar(hiResRow)) : '');
-
-            addRow('Total reflections', totalRow ? fmtPair(totalRow.observed, hiResRow ? hiResRow.observed : '') : '');
-            addRow('Unique reflections', totalRow ? fmtPair(totalRow.unique, hiResRow ? hiResRow.unique : '') : '');
-
-            // Anomalous indicators if available
-            if (totalRow && totalRow.anomal_corr && totalRow.anomal_corr !== '') {
-                addRow('CC(anom) (%)', fmtPair(cl(totalRow.anomal_corr), hiResRow ? cl(hiResRow.anomal_corr) : ''));
-            }
-            if (totalRow && totalRow.siganom && totalRow.siganom !== '') {
-                addRow('SigAno', fmtPair(totalRow.siganom, hiResRow ? hiResRow.siganom : ''));
-            }
-
-            // ISa
-            if (isaVal) {
-                addRow('ISa', isaVal);
-            }
-
-            // Wilson B-factor from CORRECT.LP
-            var wilsonB = '';
-            if (d.correct && d.correct.wilson_line && d.correct.wilson_line.b !== undefined) {
-                wilsonB = Number(d.correct.wilson_line.b).toFixed(1);
-            }
-            // Both come from CORRECT.LP; XSCALE.LP does not print them.
-            var fromCorrect = hasXscale ? ' <span style="font-size:0.75em; opacity:0.65;">(CORRECT.LP)</span>' : '';
-            addRow('Wilson B (Å²)' + fromCorrect, wilsonB);
-            if (d.correct && d.correct.mosaicity !== undefined && d.correct.mosaicity !== null && d.correct.mosaicity !== '') {
-                addRow('Mosaicity (°)' + fromCorrect, Number(d.correct.mosaicity).toFixed(3));
-            }
-
+            var rows = d.rows || [];
             var tbody = document.getElementById('t1-body');
             tbody.innerHTML = '';
             rows.forEach(function(r) {
@@ -21094,6 +20216,7 @@
         window.onload = async () => {
             _initTier();
             _initCutoffPreference();
+            _cpSyncPrefs();
             // Auto-upgrade any dynamically-added div.tut-hint to <details>
             var _tutObserver = new MutationObserver(function(mutations) {
                 for (var m = 0; m < mutations.length; m++) {
@@ -21665,6 +20788,16 @@
             }
         }
 
+        async function _apFillDiagnostics(metrics) {
+            try {
+                var r = await fetch(API + '/rules/diagnostics', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                                 body: JSON.stringify({ step: 'CORRECT', metrics: metrics }) });
+                var d = await r.json();
+                var box = document.getElementById('ap-page-diags');
+                if (box && d.diagnostics) box.innerHTML = _renderDiagnostics(d.diagnostics);
+            } catch (e) { /* the rest of the results stand without them */ }
+        }
+
         function apShowResults(summary) {
             var el = document.getElementById('ap-results');
             var body = document.getElementById('ap-results-body');
@@ -21749,10 +20882,8 @@
                 wilson_moments: summary.wilson_moments,
                 friedels_law: summary.friedels_law,
             };
-            var _apCorDiags = _generateDiagnostics('CORRECT', _apM);
-            if (_apCorDiags && _apCorDiags.length > 0) {
-                html += _renderDiagnostics(_apCorDiags);
-            }
+            html += '<div id="ap-page-diags"></div>';
+            _apFillDiagnostics(_apM);
 
             // ── Resolution cutoffs ─────────────────────────────────────
             if (summary.all_cutoffs) {

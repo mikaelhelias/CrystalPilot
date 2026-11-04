@@ -581,10 +581,10 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     content = _read_text_lenient(lp_file)
                     if step == "IDXREF":
                         metrics = LPParser.parse_idxref(content)
-                        self.send_json({"step": step, "metrics": metrics})
+                        self.send_json({"step": step, "metrics": metrics, "diagnostics": idxref_diagnostics(metrics, content)})
                     elif step == "CORRECT":
                         metrics = LPParser.parse_correct(content)
-                        self.send_json({"step": step, "metrics": metrics})
+                        self.send_json({"step": step, "metrics": metrics, "diagnostics": page_diagnostics(step, metrics)})
                     elif step == "INTEGRATE":
                         metrics = LPParser.parse_integrate(content)
                         self.send_json({"step": step, "metrics": metrics})
@@ -601,6 +601,25 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_json({"error": f"Failed to read metrics: {e}"}, 500)
         
+        # XSCALE.INP values from the latest CORRECT.LP, by the chosen cut-off
+        elif project_route == '/xscale-autofill':
+            name = _url_project_name(path.split("/")[3])
+            lp_file = _find_latest_lp(_pdir(name), "CORRECT")
+            if not lp_file:
+                self.send_json({"error": "CORRECT.LP not found. Run CORRECT first."}, 404)
+                return
+            mode = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("mode", [""])[0]
+            self.send_json(xscale_autofill(LPParser.parse_correct(_read_text_lenient(lp_file)),
+                                           mode or _load_settings().get("cutoff_preference")))
+
+        # RESOLUTION_SHELLS for a high-resolution limit
+        elif path == "/api/rules/xscale-shells":
+            high = js_float(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("high", [""])[0])
+            if high is None or high <= 0:
+                self.send_json({"error": "high must be a resolution in angstrom"}, 400)
+                return
+            self.send_json({"shells": xscale_shells(high)})
+
         # Matthews coefficient calculator
         elif project_route == '/matthews':
             try:
@@ -1479,9 +1498,11 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             self.send_json({"xds_path": str(xds_runner.xds_path), "ccp4_bin": CCP4_BIN, "neggia_lib": NEGGIA_LIB, "script_dir": str(Path(__file__).parent.resolve()), "projects_dir": str(PROJECTS_DIR.resolve()), "is_wsl": IS_WSL, "wsl_drives": _wsl_drives(), "parallel": XDS_PARALLEL, "settings_file": str(SETTINGS_FILE),
                             "wsl_distro": os.environ.get("WSL_DISTRO_NAME", ""), "projects_drive": os.environ.get("CRYSTALPILOT_DRIVE", "").strip(),
                             "projects_win": _windows_view(str(PROJECTS_DIR)), "resources": _resource_info(),
-                            # a shared installation keeps each user's list in that user's browser
+                            # a shared installation keeps each user's values in that user's browser
                             "autopilot_keywords": None if RESTRICT_BROWSE else _load_settings().get("autopilot_keywords"),
-                            "keywords_on_server": not RESTRICT_BROWSE})
+                            "cutoff_preference": None if RESTRICT_BROWSE else _load_settings().get("cutoff_preference"),
+                            "lib_from_xdsinp": None if RESTRICT_BROWSE else _load_settings().get("lib_from_xdsinp"),
+                            "prefs_on_server": not RESTRICT_BROWSE})
 
         # What the Connect an agent panel shows
         elif path == "/api/agent":
@@ -3828,6 +3849,7 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             # a 200 MB file on a network share takes a while to read).
             if qs_t1.get("rpim", [""])[0] == "1":
                 result["rpim"] = _table1_rpim_for(result)
+            result["rows"] = table1_rows(result)
 
             self.send_json(result)
 
@@ -4006,6 +4028,23 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                 self.end_headers()
             else:
                 self.send_json(reply, status)
+
+        # What a step's results suggest, for results the page already holds
+        elif path == "/api/rules/diagnostics":
+            metrics = data.get("metrics")
+            if data.get("step") not in ("IDXREF", "CORRECT") or not isinstance(metrics, dict):
+                self.send_json({"error": "step must be IDXREF or CORRECT, with its metrics"}, 400)
+                return
+            self.send_json({"diagnostics": page_diagnostics(data["step"], metrics)})
+
+        # Frames to exclude, from XDSCC12 results the page already holds
+        elif path == "/api/rules/frame-suggestions":
+            results = data.get("data")
+            if not isinstance(results, dict) or not isinstance(results.get("frames"), list):
+                self.send_json({"error": "data must hold the XDSCC12 frames"}, 400)
+                return
+            strategies = data.get("strategies")
+            self.send_json(frame_suggestions(results, strategies if isinstance(strategies, dict) else None))
 
         # The Connect an agent panel: access level, new key
         elif path == "/api/agent":
@@ -4258,10 +4297,14 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     keywords = None
                 else:
                     keywords = [str(k).strip().lower() for k in keywords if str(k).strip()][:50]
+            # The same for the cut-off the XSCALE autofill uses, and whether a loaded
+            # XDS.INP may replace the configured HDF5 library
+            cut_pref = data.get("cutoff_preference") if data.get("cutoff_preference") in XSCALE_CUTOFF_MODES and not RESTRICT_BROWSE else None
+            lib_from_file = data.get("lib_from_xdsinp") if isinstance(data.get("lib_from_xdsinp"), bool) and not RESTRICT_BROWSE else None
             # Remember these choices for the next start (per machine)
             _save_settings(xds_path=str(xds_runner.xds_path) if new_path else None,
                            ccp4_bin=ccp4, neggia_lib=neggia, env_seen=env_seen,
-                           autopilot_keywords=keywords,
+                           autopilot_keywords=keywords, cutoff_preference=cut_pref, lib_from_xdsinp=lib_from_file,
                            parallel=(bool(par) if par is not None else None),
                            cpu_cores=(CPU_CORES if cores is not None else None),
                            ram_gb=(RAM_LIMIT_GB if ram is not None else None))

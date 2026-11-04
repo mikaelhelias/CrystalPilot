@@ -23,6 +23,10 @@ AGENT_DEFAULT_LINES = 200
 AGENT_MAX_LINES = 1000
 AGENT_LIST_LIMIT = 30           # list items in a summary reply
 AGENT_TEXT_LIMIT = 4000         # characters of one string in a summary reply
+AGENT_SEARCH_WAIT_SECONDS = 40  # how long one tool call waits for the XDS.INP search
+AGENT_SEARCH_KEEP_SECONDS = 600 # how long a finished search answers a repeated call
+_AGENT_SEARCHES = {}            # the search's request -> its thread's state
+_AGENT_SEARCH_LOCK = threading.Lock()
 _AGENT_LOG_LOCK = threading.Lock()
 _AGENT_CLIENT = {"name": ""}    # filled by initialize; the route keeps no sessions
 
@@ -174,6 +178,15 @@ def agent_statistics(metrics, project, source, lp_path, detail="summary"):
     else:
         out["outer_shell"] = _agent_shell(shells[-1]) if shells else None
     return out
+
+
+def _agent_plain(text):
+    """A label from the page as plain text: R<sub>meas</sub> (%) &dagger; becomes R-meas (%)."""
+    import html
+    text = re.sub(r"<span[^>]*>.*?</span>", "", str(text))
+    text = re.sub(r"<sub>(.*?)</sub>", r"-\1", text)
+    text = re.sub(r"&(dagger|Dagger|sect|Vert);", "", text)
+    return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
 
 
 def _agent_clean(value, detail="summary"):
@@ -348,8 +361,15 @@ def _tool_get_diagnostics(ctx, args):
         found = LPParser.diagnose_correct(text, LPParser.parse_correct(text).get("statistics_table"))
     else:
         raise AgentError("step must be IDXREF, INTEGRATE or CORRECT")
-    return {"project": name, "step": step, "log_file": str(lp), "diagnostics": found,
-            "note": "Read from the log. Nothing was changed: fix and strategy say what AutoPilot would try."}
+    if step == "IDXREF":
+        advice = idxref_diagnostics(LPParser.parse_idxref(text), text)
+    elif step == "CORRECT":
+        advice = page_diagnostics(step, LPParser.parse_correct(text))
+    else:
+        advice = []
+    return {"project": name, "step": step, "log_file": str(lp), "autopilot_diagnostics": found, "advice": advice,
+            "note": "Read from the log; nothing was changed. advice is what the page shows the user. "
+                    "autopilot_diagnostics is what AutoPilot acts on: fix and strategy say what it would try."}
 
 
 def _tool_get_space_group_evidence(ctx, args):
@@ -444,14 +464,58 @@ def _tool_get_analysis(ctx, args):
         return _agent_api(ctx, "POST", "/api/gemmi/analyze", body=dict({k: params[k] for k in keep if k in params}, analysis=kind, project=name))
     if kind == "hkl_files":
         return _agent_api(ctx, "GET", "/api/xscale-detect-hkl", query={"project": name})
-    raise AgentError("kind must be one of: " + ", ".join(sorted(_AGENT_ANALYSES) + list(_AGENT_GEMMI) + ["anomalous_scattering", "hkl_files"]))
+    if kind == "frame_suggestions":
+        results = _agent_api(ctx, "GET", _agent_project_path(name, "/xdscc12-results"))
+        strategies = params.get("strategies") if isinstance(params.get("strategies"), dict) else None
+        return dict(frame_suggestions(results, strategies), project=name, frames=len(results.get("frames") or []),
+                    note="Suggestions for EXCLUDE_DATA_RANGE, capped at 20% of the frames. More than about 10% per iteration is not advised.")
+    if kind == "xscale_autofill":
+        query = {"mode": params["mode"]} if params.get("mode") else None
+        return _agent_api(ctx, "GET", _agent_project_path(name, "/xscale-autofill"), query=query)
+    if kind == "table1":
+        # the exact R-pim reads the reflection file, which can take a while on a network share
+        query = {"rpim": "1"} if params.get("rpim") is not False else None
+        rows = _agent_api(ctx, "GET", _agent_project_path(name, "/table1data"), query=query).get("rows") or []
+        return {"project": name, "rows": [dict(r, label=_agent_plain(r["label"])) if "label" in r else r for r in rows],
+                "note": "Each value reads overall (outer shell)."}
+    raise AgentError("kind must be one of: " + ", ".join(sorted(_AGENT_ANALYSES) + list(_AGENT_GEMMI)
+                                                         + ["anomalous_scattering", "frame_suggestions", "hkl_files", "table1", "xscale_autofill"]))
 
 
 def _agent_search_xdsinp(ctx, datasets, roots):
-    """The wizard's XDS.INP search, with the user's saved folder words."""
+    """The wizard's XDS.INP search, with the user's saved folder words: its result, or
+    None while it is still going.
+
+    Listing one large folder on a network share can take most of a minute and cannot be
+    interrupted, while an MCP client may give up on a call at 60 seconds.  So the whole
+    search runs in its own thread, and the same call made again collects the result.
+    """
     query = [{"kind": d.get("kind"), "template": d.get("template"), "folder": d.get("folder")} for d in datasets]
-    return _agent_api(ctx, "POST", "/api/batch/xdsinp-search",
-                      body={"datasets": query, "roots": list(roots or []), "keywords": autopilot_keywords()})
+    body = {"datasets": query, "roots": list(roots or []), "keywords": autopilot_keywords()}
+    key = json.dumps(body, sort_keys=True)
+    now = time.time()
+    with _AGENT_SEARCH_LOCK:
+        for old in [k for k, e in _AGENT_SEARCHES.items() if e["ended"] and now - e["ended"] > AGENT_SEARCH_KEEP_SECONDS]:
+            del _AGENT_SEARCHES[old]
+        entry = _AGENT_SEARCHES.get(key)
+        if entry is None:
+            entry = _AGENT_SEARCHES[key] = {"finished": threading.Event(), "result": None, "error": None, "ended": None}
+
+            def search():
+                try:
+                    entry["result"] = _agent_api(ctx, "POST", "/api/batch/xdsinp-search", body=body)
+                except Exception as exc:
+                    entry["error"] = str(exc) or type(exc).__name__
+                entry["ended"] = time.time()
+                entry["finished"].set()
+            threading.Thread(target=search, name="agent-xdsinp-search", daemon=True).start()
+    if not entry["finished"].wait(AGENT_SEARCH_WAIT_SECONDS):
+        return None
+    if entry["error"]:
+        with _AGENT_SEARCH_LOCK:
+            _AGENT_SEARCHES.pop(key, None)      # the next call tries again
+        raise AgentError("The XDS.INP search failed: " + entry["error"])
+    return entry["result"]
 
 
 def _tool_find_datasets(ctx, args):
@@ -478,21 +542,37 @@ def _tool_find_datasets(ctx, args):
                 seen.add(ds.get("template"))
                 found.append(ds)
     out = {"datasets": [], "problems": problems, "keywords": autopilot_keywords()}
+    searching = args.get("search_xdsinp") is not False
     search = {"results": []}
-    if found:
+    if found and searching:
         search = _agent_search_xdsinp(ctx, found, list(folders) + list(args.get("also_search") or []))
-        out["xdsinp_files_looked_at"] = search.get("files")
-        out["xdsinp_search_stopped_early"] = bool(search.get("truncated"))
+        if search is None:
+            searching = False
+            out["xdsinp_search_running"] = True
+            out["check_after_seconds"] = 30
+            out["xdsinp_search_note"] = "The XDS.INP search is still going. Call find_datasets again with the same folders to collect it."
+            search = {"results": []}
+        else:
+            out["xdsinp_files_looked_at"] = search.get("files")
+            out["xdsinp_search_stopped_early"] = bool(search.get("truncated"))
+            if search.get("truncated"):
+                out["xdsinp_search_note"] = ("The search stopped early, so a file may have been missed. Name the folder of "
+                                             "processed data with also_search to aim it.")
     by_template = {r.get("template"): r for r in search.get("results") or []}
     for ds in found:
-        res = by_template.get(ds.get("template")) or {}
-        out["datasets"].append({"kind": ds.get("kind"), "template": ds.get("template"), "label": ds.get("label"),
-                                "folder": ds.get("folder"), "frames": ds.get("frames"), "first": ds.get("first"), "last": ds.get("last"),
-                                "raster_scan": bool(ds.get("raster")), "recommended": not ds.get("raster"),
-                                "xdsinp": res.get("choice", ""), "xdsinp_state": res.get("state", "generate"),
-                                "xdsinp_candidates": [{"path": c.get("path"), "space_group": c.get("space_group"), "unit_cell": c.get("unit_cell"),
-                                                       "keyword": c.get("keyword"), "modified": c.get("modified")}
-                                                      for c in res.get("candidates") or []]})
+        entry = {"kind": ds.get("kind"), "template": ds.get("template"), "label": ds.get("label"),
+                 "folder": ds.get("folder"), "frames": ds.get("frames"), "first": ds.get("first"), "last": ds.get("last"),
+                 "raster_scan": bool(ds.get("raster")), "recommended": not ds.get("raster")}
+        if searching:
+            res = by_template.get(ds.get("template")) or {}
+            entry.update({"xdsinp": res.get("choice", ""), "xdsinp_state": res.get("state", "generate"),
+                          "xdsinp_candidates": [{"path": c.get("path"), "space_group": c.get("space_group"), "unit_cell": c.get("unit_cell"),
+                                                 "keyword": c.get("keyword"), "modified": c.get("modified")}
+                                                for c in res.get("candidates") or []]})
+        else:
+            # no xdsinp key: run_autopilot then searches, rather than writing one from the header
+            entry["xdsinp_state"] = "searching" if out.get("xdsinp_search_running") else "not searched"
+        out["datasets"].append(entry)
     return out
 
 
@@ -629,6 +709,9 @@ def _tool_run_autopilot(ctx, args):
     unsettled = [d for d in prepared if "xdsinp" not in d]
     if unsettled:
         search = _agent_search_xdsinp(ctx, unsettled, args.get("also_search") or [])
+        if search is None:
+            raise AgentError("The search for each data set's XDS.INP is still going, and nothing has started. "
+                             "Call run_autopilot again in about 30 seconds.")
         by_template = {r.get("template"): r for r in search.get("results") or []}
         for entry in unsettled:
             res = by_template.get(entry["template"]) or {}
@@ -693,7 +776,8 @@ AGENT_TOOLS = [
      "schema": _agent_schema({"project": _AGENT_P_PROJECT, "source": {"type": "string", "enum": ["CORRECT", "XSCALE"]},
                               "detail": _AGENT_P_DETAIL}, ["project"])},
     {"name": "get_diagnostics", "level": "read", "fn": _tool_get_diagnostics, "title": "Diagnose a step",
-     "description": "What went wrong or looks wrong at IDXREF, INTEGRATE or CORRECT, read from its log, with the suggested fix.",
+     "description": "What went wrong or looks wrong at IDXREF, INTEGRATE or CORRECT, read from its log: the advice the page shows the user, "
+                    "and what AutoPilot would try.",
      "schema": _agent_schema({"project": _AGENT_P_PROJECT, "step": {"type": "string", "enum": ["IDXREF", "INTEGRATE", "CORRECT"]},
                               "detail": _AGENT_P_DETAIL}, ["project"])},
     {"name": "get_space_group_evidence", "level": "read", "fn": _tool_get_space_group_evidence, "title": "Space group evidence",
@@ -713,9 +797,10 @@ AGENT_TOOLS = [
                               "limit": {"type": "integer", "description": "Lines to return, at most 1000 (default 200)."},
                               "search": {"type": "string", "description": "Return only the lines holding this word."}}, ["project", "file"])},
     {"name": "get_analysis", "level": "read", "fn": _tool_get_analysis, "title": "Further analysis",
-     "description": "One more result. matthews (params.mw in Da), ice_rings, anisotropy, autoindex, xdscc12, pointless, aimless, autopilot, "
-                    "merging_stats, completeness, data_quality, lattice_symmetry, hkl_files, or anomalous_scattering "
-                    "(params.element and params.wavelength, no project needed).",
+     "description": "One more result. table1 (the statistics table for a paper), xscale_autofill (XSCALE.INP values from CORRECT; params.mode: "
+                    "isig, robs, cc50 or cc12), frame_suggestions (frames to exclude after XDSCC12), matthews (params.mw in Da), ice_rings, anisotropy, "
+                    "autoindex, xdscc12, pointless, aimless, autopilot, merging_stats, completeness, data_quality, lattice_symmetry, hkl_files, "
+                    "or anomalous_scattering (params.element and params.wavelength, no project needed).",
      "schema": _agent_schema({"project": _AGENT_P_PROJECT, "kind": {"type": "string"}, "params": {"type": "object"}, "detail": _AGENT_P_DETAIL}, ["kind"])},
     {"name": "find_datasets", "level": "read", "fn": _tool_find_datasets, "title": "Find data sets",
      "description": "The data sets in the folders the user named, the XDS.INP found for each and the AutoPilot wizard's default choices. "
@@ -724,6 +809,7 @@ AGENT_TOOLS = [
      "schema": _agent_schema({"folders": {"type": "array", "items": {"type": "string"}},
                               "depth": {"type": "integer", "description": "Folder levels to search, 0 to 6 (default 3)."},
                               "also_search": {"type": "array", "items": {"type": "string"}, "description": "More folders to search for XDS.INP files."},
+                              "search_xdsinp": {"type": "boolean", "description": "false lists the data sets only, which is quicker on a network share (default true)."},
                               "detail": _AGENT_P_DETAIL}, ["folders"])},
     {"name": "get_strategy_options", "level": "read", "fn": _tool_get_strategy_options, "title": "AutoPilot choices",
      "description": "Every AutoPilot choice with its allowed values, default and consequences.",

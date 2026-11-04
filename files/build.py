@@ -34,6 +34,7 @@ SOURCE_FILES = [
     ('batch.py',     False),   # batch processing: discovery, strategy, queue, merge
     ('assets.py',    False),   # static image assets (logo, background)
     ('ahkl2mtz.py',  False),   # gemmi-based XDS→MTZ conversion (intensity-only)
+    ('rules.py',     False),   # what the interface concludes from parsed results
     ('agent.py',     False),   # MCP route for AI agents
     ('handler.py',   False),
     ('editor.py',    False),   # XDSINPEditor

@@ -797,7 +797,7 @@ class Workflows(unittest.TestCase):
         full = self.tool_ok('get_statistics', project=self.name, detail='full', source='CORRECT')
         self.assertEqual(len(full['shells']), full['n_shells'])
         self.assertEqual(sorted(full['cutoffs']), sorted(['isig2', 'cc_half_50', 'cc_half_sig', 'r_obs_55']))
-        self.assertIsInstance(self.tool_ok('get_diagnostics', project=self.name, step='CORRECT')['diagnostics'], list)
+        self.assertIsInstance(self.tool_ok('get_diagnostics', project=self.name, step='CORRECT')['autopilot_diagnostics'], list)
         self.assertEqual(self.tool_ok('compare_runs', project=self.name)['step'], 'CORRECT')
         self.assertIn('current', self.tool_ok('get_space_group_evidence', project=self.name))
         tail = self.tool_ok('read_project_file', project=self.name, file='CORRECT.LP', limit=3)
@@ -849,6 +849,58 @@ class Workflows(unittest.TestCase):
         self.assertEqual(record[0]['job_id'], started['job_id'])
         self.assertFalse((m._pdir(page_project) / m.AGENT_LOG_NAME).exists())
 
+    def test_agent_can_list_datasets_without_the_xdsinp_search_and_the_run_still_searches(self):
+        self.agent_on('own')
+        folder = self.dataset_folder()
+        listed = self.tool_ok('find_datasets', folders=[str(folder)], search_xdsinp=False)
+        entry = listed['datasets'][0]
+        self.assertEqual(entry['xdsinp_state'], 'not searched')
+        self.assertNotIn('xdsinp', entry)
+        self.assertNotIn('xdsinp_files_looked_at', listed)
+        started = self.tool_ok('run_autopilot', datasets=[entry], strategy={'optimize': 'never', 'dcc_half': 'off'})
+        self.assertEqual(self.wait_job(started['job_id'])['counts'], {'done': 1})
+        batch = m.batch_load(started['job_id'][6:])
+        self.assertTrue(batch['items'][0]['xdsinp'].endswith('XDS.INP'), batch['items'][0])
+
+    def test_agent_slow_xdsinp_search_never_blocks_a_call_or_writes_one_from_the_header(self):
+        self.agent_on('own')
+        folder = self.dataset_folder()
+        original, release = m.find_xdsinp_candidates, threading.Event()
+        self.addCleanup(release.set)
+        calls = []
+        def slow(*args, **kwargs):
+            calls.append(1)
+            release.wait(30)
+            return original(*args, **kwargs)
+        with patch.object(m, 'find_xdsinp_candidates', side_effect=slow), patch.object(m, 'AGENT_SEARCH_WAIT_SECONDS', 0.05):
+            first = self.tool_ok('find_datasets', folders=[str(folder)])
+            self.assertTrue(first['xdsinp_search_running'], first)
+            self.assertEqual(first['datasets'][0]['xdsinp_state'], 'searching')
+            self.assertNotIn('xdsinp', first['datasets'][0])
+            # a run from that reply waits for the search: it must not write XDS.INP from the header
+            message, failed = self.tool('run_autopilot', datasets=[first['datasets'][0]], strategy={'optimize': 'never', 'dcc_half': 'off'})
+            self.assertTrue(failed, message)
+            self.assertIn('still going', message)
+            self.assertEqual(self.tool_ok('list_projects')['autopilot_running'], None)
+            self.assertTrue(self.tool_ok('find_datasets', folders=[str(folder)])['xdsinp_search_running'])
+            self.assertEqual(len(calls), 2)     # find_datasets' search, and the run's for its one data set; asking again starts none
+            release.set()
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                collected = self.tool_ok('find_datasets', folders=[str(folder)])
+                if not collected.get('xdsinp_search_running'):
+                    break
+                time.sleep(0.05)
+        self.assertEqual(collected['datasets'][0]['xdsinp_state'], 'imported', collected)
+        self.assertTrue(collected['datasets'][0]['xdsinp'].endswith('XDS.INP'))
+        self.assertEqual(len(calls), 2)
+        # a failed search says so, and the next call tries again
+        with patch.object(m, 'find_xdsinp_candidates', side_effect=OSError('share went away')):
+            message, failed = self.tool('find_datasets', folders=[str(folder)], also_search=[str(folder.parent)])
+            self.assertTrue(failed)
+            self.assertIn('search failed', message)
+        self.assertEqual(self.tool_ok('find_datasets', folders=[str(folder)], also_search=[str(folder.parent)])['datasets'][0]['xdsinp_state'], 'imported')
+
     def test_agent_levels_protect_the_users_projects(self):
         self.agent_on('own')
         message, failed = self.tool('run_autopilot', datasets=[{'existing_project': self.name}])
@@ -896,15 +948,66 @@ class Workflows(unittest.TestCase):
         self.assertEqual(self.request('POST', '/api/config', {'autopilot_keywords': ['  XIA2 ', 'fast_dp', '']})[0], 200)
         config = self.request('GET', '/api/config')[1]
         self.assertEqual(config['autopilot_keywords'], ['xia2', 'fast_dp'])
-        self.assertIs(config['keywords_on_server'], True)
+        self.assertIs(config['prefs_on_server'], True)
         self.agent_on('read')
         self.assertEqual(self.tool_ok('find_datasets', folders=[str(self.dataset_folder())])['keywords'], ['xia2', 'fast_dp'])
         self.assertEqual(self.request('POST', '/api/config', {'autopilot_keywords': []})[0], 200)
         self.assertEqual(m.autopilot_keywords(), [])
         with patch.object(m, 'RESTRICT_BROWSE', True):
             shared = self.request('GET', '/api/config')[1]
-            self.assertIs(shared['keywords_on_server'], False)
+            self.assertIs(shared['prefs_on_server'], False)
             self.assertIsNone(shared['autopilot_keywords'])
+            self.assertIsNone(shared['cutoff_preference'])
+            self.assertIsNone(shared['lib_from_xdsinp'])
+            self.assertEqual(self.request('POST', '/api/config', {'cutoff_preference': 'robs', 'lib_from_xdsinp': True})[0], 200)
+        self.assertNotEqual(m._load_settings().get('cutoff_preference'), 'robs')
+
+    def test_settings_that_decide_results_live_on_the_server(self):
+        self.addCleanup(lambda: m.SETTINGS_FILE.write_text('{}', encoding='utf-8'))
+        self.assertEqual(self.request('POST', '/api/config', {'cutoff_preference': 'nonsense', 'lib_from_xdsinp': 'yes'})[0], 200)
+        config = self.request('GET', '/api/config')[1]
+        self.assertIsNone(config['cutoff_preference'])
+        self.assertIsNone(config['lib_from_xdsinp'])
+        self.assertEqual(self.request('POST', '/api/config', {'cutoff_preference': 'robs', 'lib_from_xdsinp': False})[0], 200)
+        config = self.request('GET', '/api/config')[1]
+        self.assertEqual(config['cutoff_preference'], 'robs')
+        self.assertIs(config['lib_from_xdsinp'], False)
+        # the autofill follows the saved preference unless asked for another
+        self.assert_terminal(self.stream(), 'completed')
+        saved = self.request('GET', self.url + '/xscale-autofill')[1]
+        self.assertEqual(saved['cutoff'], 'robs', saved)
+        self.assertEqual(self.request('GET', self.url + '/xscale-autofill?mode=isig')[1]['cutoff'], 'isig')
+
+    def test_page_rules_reach_the_page_and_the_agent_alike(self):
+        self.agent_on('read')
+        self.assert_terminal(self.stream(), 'completed')
+        for step in ('CORRECT', 'IDXREF'):
+            page = self.request('GET', self.url + '/metrics/' + step)[1]
+            self.assertIsInstance(page['diagnostics'], list)
+            self.assertEqual(self.tool_ok('get_diagnostics', project=self.name, step=step)['advice'], page['diagnostics'])
+            again = self.request('POST', '/api/rules/diagnostics', {'step': step, 'metrics': page['metrics']})[1]['diagnostics']
+            if step == 'CORRECT':
+                self.assertEqual(again, page['diagnostics'])
+        self.assertEqual(self.request('POST', '/api/rules/diagnostics', {'step': 'XYCORR', 'metrics': {}})[0], 400)
+        autofill = self.request('GET', self.url + '/xscale-autofill?mode=cc50')[1]
+        self.assertEqual(self.tool_ok('get_analysis', project=self.name, kind='xscale_autofill', params={'mode': 'cc50'}), autofill)
+        table = self.request('GET', self.url + '/table1data')[1]['rows']
+        self.assertEqual(table[0], {'section': 'Data Collection'})
+        self.assertTrue(any(r.get('value') == 'calculating…' for r in table))
+        from_agent = self.tool_ok('get_analysis', project=self.name, kind='table1', detail='full')['rows']
+        labels = [r['label'] for r in from_agent if 'label' in r]
+        self.assertIn('R-meas (%)', labels)
+        self.assertFalse([l for l in labels if '<' in l or '&' in l], labels)
+        self.assertFalse(any(r.get('value') == 'calculating…' for r in from_agent))
+        self.assertEqual(self.request('GET', '/api/rules/xscale-shells?high=2')[1]['shells'], m.xscale_shells(2.0))
+        self.assertEqual(self.request('GET', '/api/rules/xscale-shells?high=x')[0], 400)
+        frames = [{'batch': i + 1, 'delta_only': -1.0 if i >= 90 else 0.5} for i in range(100)]
+        suggested = self.request('POST', '/api/rules/frame-suggestions', {'data': {'frames': frames, 'summary': {}}, 'strategies': {'outlier2': False}})[1]
+        self.assertEqual(suggested['diagnostics']['hasRadDamage'], True, suggested)
+        self.assertEqual(self.request('POST', '/api/rules/frame-suggestions', {'data': {}})[0], 400)
+        message, failed = self.tool('get_analysis', project=self.name, kind='frame_suggestions')
+        self.assertTrue(failed)
+        self.assertIn('XDSCC12', message)
 
 
 if __name__=='__main__':

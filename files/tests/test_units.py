@@ -307,9 +307,11 @@ def define_checks(m, scratch):
         good = [{"resolution": d, "i_sigma": "9", "r_obs": "5%", "cc_half": "99.0*"} for d in ("3.00", "2.00")]
         res = LP.determine_resolution_cutoff(good, "isig2")
         assert res["resolution"] == 2.0 and res["reached"]["isig2"] is False, res
-        # the page takes the server's numbers instead of trusting its own copy
+        # the page and the XSCALE autofill take the server's numbers
         html = m.get_frontend_html()
-        assert html.count("m.cutoffs.all_cutoffs") >= 2 and "cm.cutoffs.all_cutoffs" in html
+        assert "m.cutoffs.all_cutoffs" in html
+        fill = m.xscale_autofill(r, "isig")
+        assert fill["cutoff"] == "isig" and fill["resolution_high"] == m.js_fixed(cuts["isig2"], 2), fill
 
     @check("Table 1: true low-resolution limit, mosaicity, and no approximate R-pim")
     def _():
@@ -318,10 +320,13 @@ def define_checks(m, scratch):
         assert r["resolution_range_low"] == 19.948 and r["statistics_table"][0]["resolution"] == "4.04"
         assert r["mosaicity"] == 0.135, r.get("mosaicity")
         html = m.get_frontend_html()
-        render = html[html.index("function t1Render("):html.index("function _t1Rows(")]
-        assert "resolution_range_low" in render and "stats[0].resolution" not in render
         assert "calcRpim" not in html and "Math.sqrt(redund)" not in html, "R-meas/sqrt(N) is back"
-        assert "d.rpim" in render
+        table = {"correct": {k: r[k] for k in ("statistics_table", "resolution_range_low", "mosaicity")}, "xscale": {}, "xdsinp": {}}
+        rows = {row.get("label"): row.get("value") for row in m.table1_rows(table)}
+        assert rows["Resolution range (Å)"].startswith("19.95–"), rows["Resolution range (Å)"]
+        assert rows["Mosaicity (°)"] == "0.135"
+        assert rows["R<sub>pim</sub> (%) &Dagger;"] == "calculating…"          # asked for separately
+        assert "R<sub>pim</sub> (%) &Dagger;" not in {row.get("label") for row in m.table1_rows(dict(table, rpim={"overall": None, "reason": "x"}))}
         # without a statistics table nothing is invented
         got = m._table1_rpim_for({"xscale": {}, "correct": {}})
         assert got["overall"] is None and got["reason"]
@@ -1765,6 +1770,48 @@ def define_checks(m, scratch):
         with patch.object(m, "RESTRICT_BROWSE", True), patch.object(m, "NEGGIA_LIB", ""):
             none = m._clean_inp_text(text % other, "xds")
             assert "LIB" not in m._parse_xdsinp_params(none) and ("!LIB= " + other) in none, none
+
+    # ── page rules on the server: frame-suggestions, xscale-shells, diagnostics ──
+    @check("page rules: numbers print as the page always printed them")
+    def _():
+        assert m.js_fixed(2.5, 0) == "3" and m.js_fixed(3.5, 0) == "4" and m.js_fixed(-2.5, 0) == "-3"
+        assert m.js_fixed(1.005, 2) == "1.00" and m.js_fixed(0.125, 2) == "0.13"
+        assert m.js_fixed(-0.0, 1) == "0.0" and m.js_fixed(-0.04, 1) == "-0.0" and m.js_fixed(19.948, 2) == "19.95"
+        assert m.js_float("12.3%") == 12.3 and m.js_float("99.9*") == 99.9 and m.js_float(" 2.5x") == 2.5 and m.js_float("1e2") == 100.0
+        for empty in ("", "n/a", None, "%", True, float("nan")):
+            assert m.js_float(empty) is None, empty
+
+    @check("page rules: the same answers as the page's JavaScript gave, recorded on real logs and around every threshold")
+    def _():
+        recorded = json.loads((FIX / "page_rules_recorded.json").read_text(encoding="utf-8"))
+        for item in recorded["logs"]:
+            text = (FIX / item["file"]).read_text(encoding="utf-8", errors="replace")
+            if item["step"] == "IDXREF":
+                assert m.idxref_lp_extras(text) == item["extras"], item["file"]
+                assert m.idxref_diagnostics(LP.parse_idxref(text), text) == item["diagnostics"], item["file"]
+            else:
+                metrics = LP.parse_correct(text)
+                assert m.page_diagnostics("CORRECT", metrics) == item["diagnostics"], item["file"]
+                for mode, answer in item["autofill"].items():
+                    got = m.xscale_autofill(metrics, mode)
+                    assert got["resolution_high"] == answer["hi"] and got["shells"] == answer["shells"], (item["file"], mode)
+                    assert got["unit_cell"] == answer["cell"] and got["cutoff_label"] in answer["status"], (item["file"], mode)
+        for item in recorded["diagnostics"]:
+            assert m.page_diagnostics(item["step"], item["metrics"]) == item["answer"], item["metrics"]
+        for item in recorded["frames"]:
+            got = m.frame_suggestions(item["data"], item["strategies"])
+            assert got["diagnostics"] == item["answer"]["diagnostics"], item["strategies"]
+            assert len(got["ranges"]) == len(item["answer"]["ranges"])
+            for mine, theirs in zip(got["ranges"], item["answer"]["ranges"]):
+                assert {k: mine[k] for k in theirs} == theirs, (mine, theirs)
+        for high, answer in recorded["shells"]:
+            assert m.xscale_shells(high) == answer, high
+        for item in recorded["autofill"]:
+            got = m.xscale_autofill(item["metrics"], item["mode"])
+            assert (got["resolution_high"] or "") == item["answer"]["hi"] and (got["shells"] or "") == item["answer"]["shells"], item["mode"]
+        for item in recorded["table1"]:
+            assert m.table1_rows(item["data"]) == item["answer"], item["data"]
+        assert min(len(recorded[k]) for k in ("logs", "diagnostics", "frames", "shells", "autofill", "table1")) > 0
 
     # ── agent route: /api/mcp and the panel's /api/agent ─────────────────
     @check("agent: log values become numbers; what the program did not report is None")
