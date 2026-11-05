@@ -15280,6 +15280,14 @@
             var suggestResult = await _dccSuggest(data);
             if (seq !== _dccShowSeq) return;      // newer results or other strategy boxes took over
             _dccSuggested = suggestResult.ranges;
+            var dccLeftOut = suggestResult.left_out || [];
+            var dccLeftOutNote = '';
+            if (dccLeftOut.length) {
+                var dccFpb = (data.frames_per_batch && data.frames_per_batch > 1) ? data.frames_per_batch : 1;
+                dccLeftOutNote = '<div style="margin-top:6px; padding:6px 10px; background:rgba(246,173,85,0.08); border-radius:5px; font-size:0.82rem; color:var(--txt2);">Not suggested, over the 20% limit: '
+                    + dccLeftOut.map(function (r) { return 'frames ' + Math.max(1, r.start - (dccFpb - 1)) + '-' + r.end + ' (' + r.count + ' batches, avg \u0394CC\u00bd ' + r.avg_delta.toFixed(1) + ')'; }).join(', ')
+                    + '. Apply the suggestions above first, then run XDSCC12 again.</div>';
+            }
             var diag = suggestResult.diagnostics;
 
             // Detect high-res shell degradation pattern from frame_shells
@@ -15405,6 +15413,7 @@
                     footHtml += 'Diederichs recommends excluding no more than ~10% per iteration. Consider applying only the worst range first, re-running CORRECT and then XDSCC12 to reassess.';
                     footHtml += '</div>';
                 }
+                footHtml += dccLeftOutNote;
                 footHtml += '<div style="margin-top:4px; font-size:0.76rem; color:var(--txt3);">Tip: uncheck ranges you want to keep, or click-drag on the chart to manually select a range.</div>';
                 document.getElementById('dcc-suggestions-footer').innerHTML = footHtml;
             } else {
@@ -15413,7 +15422,7 @@
                 if (isBad || isModerate) {
                     document.getElementById('dcc-suggestions-wrap').style.display = 'block';
                     var hintHtml = '<div style="font-size:0.84rem; color:var(--txt2); line-height:1.6;">';
-                    hintHtml += 'No contiguous bad ranges were detected with the enabled strategies. ';
+                    hintHtml += dccLeftOut.length ? dccLeftOutNote : 'No contiguous bad ranges were detected with the enabled strategies. ';
                     if (negPct > 50) {
                         hintHtml += 'With ' + negPct.toFixed(0) + '% of frames negative, the issues may be systemic rather than limited to specific frame ranges. Consider checking the space group, cell parameters, and integration quality before excluding frames. ';
                     } else if (negPct > 15) {
@@ -21082,10 +21091,15 @@
                 if (dc.n_excluded > 0) {
                     html += '<span style="color:' + dcColor + '; font-family:var(--mono);">'
                          + dc.n_excluded + ' batch(es) excluded (' + dc.degrees_excluded + '\u00b0) '
-                         + 'using ' + dc.threshold + ' threshold'
+                         + 'using ' + _escHtml(dc.threshold) + (dc.column ? '' : ' threshold')
                          + '</span>';
+                } else if (dc.left_out > 0) {
+                    html += '<span style="color:#fbd38d; font-family:var(--mono);">Nothing excluded</span>';
                 } else {
-                    html += '<span style="color:' + dcColor + '; font-family:var(--mono);">No outliers — data is clean</span>';
+                    html += '<span style="color:' + dcColor + '; font-family:var(--mono);">No range of frames to exclude</span>';
+                }
+                if (dc.left_out > 0) {
+                    html += ' <span style="color:#fbd38d; font-size:0.72rem;">' + dc.left_out + ' batch(es) over the ' + dc.limit_pct + '% limit were kept; see the \u0394CC\u00bd tab</span>';
                 }
                 html += ' <span style="color:var(--txt3); font-size:0.68rem;">'
                      + '(median=' + dc.median + ' MAD=' + dc.mad + ' n=' + dc.n_total + ')</span>';

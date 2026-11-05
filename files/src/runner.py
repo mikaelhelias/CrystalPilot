@@ -4191,8 +4191,8 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
 
                 # ── Step 4b: ΔCC½ frame rejection (XDSCC12) ─────────
                 # Optional: if XDSCC12 is available and user enabled it.
-                # Uses adaptive threshold: 3×MAD default, relaxes to 2×MAD
-                # if exclusion impact is ≤ 20° of oscillation.
+                # The rule the ΔCC½ tab suggests from: ranges with mean ΔCC½ below 0,
+                # at most 10% of the batches.
                 dcc_half_result = None
                 if dcc_half and not _job_stopped():
                     if not XDSCC12_BIN:
@@ -4230,131 +4230,67 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                                         except Exception as _e:
                                             _note_error(_e)
 
-                                        deltas = [f['delta_all'] for f in frames]
-                                        n_total = len(deltas)
-                                        sorted_d = sorted(deltas)
-                                        median_d = sorted_d[n_total // 2]
-                                        abs_devs = sorted([abs(d - median_d) for d in deltas])
-                                        mad = abs_devs[n_total // 2] * 1.4826  # MAD → sigma
-
-                                        send("ap_log", {"text": ">>>   ΔCC½ median=" + str(round(median_d, 2))
-                                                              + "  MAD=" + str(round(mad, 3))
-                                                              + "  frames=" + str(n_total)
+                                        choice = autopilot_frame_choice(cc12_data, osc)
+                                        record = choice['record']
+                                        send("ap_log", {"text": ">>>   ΔCC½ median=" + str(record['median'])
+                                                              + "  MAD=" + str(record['mad'])
+                                                              + "  batches=" + str(record['n_total'])
                                                               + "  batch=" + str(batch_width)
                                                               + "  osc=" + str(osc) + "°"})
+                                        for skipped in choice['left_out']:
+                                            send("ap_log", {"text": ">>>   Over the " + str(record['limit_pct']) + "% limit, kept: frames "
+                                                                  + str(skipped['first']) + "-" + str(skipped['last'])
+                                                                  + "  ΔCC½=" + skipped['reason'].split('=')[1]})
 
-                                        if mad > 0.001:  # avoid division issues with perfectly uniform data
-                                            # Try 3×MAD first (strict — only severe outliers)
-                                            threshold_3 = median_d - 3.0 * mad
-                                            bad_3 = [f for f in frames if f['delta_all'] < threshold_3]
+                                        if record['not_negative']:
+                                            send("ap_log", {"text": ">>>   " + str(record['not_negative'])
+                                                                  + " batches stand out but still raise CC½ (mean ΔCC½ not below 0): kept"})
 
-                                            # Try 2×MAD (moderate)
-                                            threshold_2 = median_d - 2.0 * mad
-                                            bad_2 = [f for f in frames if f['delta_all'] < threshold_2]
+                                        if choice['exclude']:
+                                            send("ap_log", {"text": ">>>   Excluding " + str(record['n_excluded'])
+                                                                  + " batches (" + str(record['degrees_excluded']) + "°): " + record['threshold']})
+                                            for chosen in choice['exclude']:
+                                                send("ap_log", {"text": ">>>     frames " + str(chosen['first']) + "-" + str(chosen['last'])
+                                                                      + "  ΔCC½=" + chosen['reason'].split('=')[1]})
 
-                                            # Decide: use 2×MAD only if it excludes ≤ 20° of data
-                                            excl_degrees_2 = len(bad_2) * batch_width * osc
-                                            excl_degrees_3 = len(bad_3) * batch_width * osc
+                                            _ap_apply_xdsinp_fix(xds_inp_path,
+                                                {'_exclude_data_ranges': choice['exclude']}, send)
 
-                                            if len(bad_2) > 0 and excl_degrees_2 <= 20.0 and len(bad_2) <= n_total * 0.15:
-                                                bad_frames = bad_2
-                                                threshold = threshold_2
-                                                thr_label = "2×MAD"
-                                            elif len(bad_3) > 0 and len(bad_3) <= n_total * 0.15:
-                                                bad_frames = bad_3
-                                                threshold = threshold_3
-                                                thr_label = "3×MAD"
+                                            # Re-INTEGRATE + re-CORRECT with frame exclusions
+                                            send("ap_log", {"text": ">>> Re-integrating with bad frames excluded..."})
+                                            _ap_set_job(xds_inp_path, "DEFPIX INTEGRATE CORRECT")
+                                            rc, stopped = _ap_run_xds(project_dir, xds_exe, send,
+                                                label="Re-integration (ΔCC½ frame rejection)")
+                                            if stopped:
+                                                summary['status'] = 'stopped'
+                                                send("ap_done", {"status": "stopped", "summary": summary})
+                                                return
+
+                                            # Re-parse and update all variables
+                                            cor_lp_dcc, cor_err_dcc, _ = _ap_check_lp(project_dir, "CORRECT")
+                                            if cor_lp_dcc and not cor_err_dcc:
+                                                correct_data = LPParser.parse_correct(cor_lp_dcc)
+                                                stats_table = correct_data.get('statistics_table', [])
+                                                cutoff_result = LPParser.determine_resolution_cutoff(stats_table, criterion)
+                                                resolution = cutoff_result.get('resolution') or resolution
+                                                isa = correct_data.get('isa')
+                                                if isa:
+                                                    try:
+                                                        isa_val = float(isa.get('isa', 0))
+                                                    except (ValueError, TypeError):
+                                                        pass
+                                                sg = correct_data.get('space_group') or sg
+                                                uc = correct_data.get('unit_cell') or uc
+                                                summary['space_group'] = sg
+                                                summary['unit_cell'] = uc
+                                                summary['resolution'] = resolution
+                                                summary['all_cutoffs'] = cutoff_result.get('all_cutoffs', {})
                                             else:
-                                                bad_frames = []
-                                                threshold = threshold_3
-                                                thr_label = "3×MAD"
+                                                send("ap_log", {"text": ">>> Re-integration after ΔCC½ exclusion failed — using previous results"})
 
-                                            send("ap_log", {"text": ">>>   3×MAD: " + str(len(bad_3)) + " frames ("
-                                                                  + str(round(excl_degrees_3, 1)) + "°)"
-                                                                  + "  |  2×MAD: " + str(len(bad_2)) + " frames ("
-                                                                  + str(round(excl_degrees_2, 1)) + "°)"})
-
-                                            if bad_frames:
-                                                excl_degrees = len(bad_frames) * batch_width * osc
-                                                send("ap_log", {"text": ">>>   Using " + thr_label
-                                                                      + " threshold=" + str(round(threshold, 2))
-                                                                      + " → excluding " + str(len(bad_frames))
-                                                                      + " batches (" + str(round(excl_degrees, 1)) + "°)"})
-
-                                                # Build EXCLUDE_DATA_RANGE entries
-                                                excl_ranges_data = []
-                                                for bf in bad_frames:
-                                                    first = bf['batch'] - batch_width + 1
-                                                    last = bf['batch']
-                                                    excl_ranges_data.append({
-                                                        'first': first, 'last': last,
-                                                        'reason': 'dcc_half=' + str(round(bf['delta_all'], 2))
-                                                    })
-                                                    send("ap_log", {"text": ">>>     frames " + str(first) + "-" + str(last)
-                                                                          + "  ΔCC½=" + str(round(bf['delta_all'], 2))})
-
-                                                _ap_apply_xdsinp_fix(xds_inp_path,
-                                                    {'_exclude_data_ranges': excl_ranges_data}, send)
-
-                                                # Re-INTEGRATE + re-CORRECT with frame exclusions
-                                                send("ap_log", {"text": ">>> Re-integrating with bad frames excluded..."})
-                                                _ap_set_job(xds_inp_path, "DEFPIX INTEGRATE CORRECT")
-                                                rc, stopped = _ap_run_xds(project_dir, xds_exe, send,
-                                                    label="Re-integration (ΔCC½ frame rejection)")
-                                                if stopped:
-                                                    summary['status'] = 'stopped'
-                                                    send("ap_done", {"status": "stopped", "summary": summary})
-                                                    return
-
-                                                # Re-parse and update all variables
-                                                cor_lp_dcc, cor_err_dcc, _ = _ap_check_lp(project_dir, "CORRECT")
-                                                if cor_lp_dcc and not cor_err_dcc:
-                                                    correct_data = LPParser.parse_correct(cor_lp_dcc)
-                                                    stats_table = correct_data.get('statistics_table', [])
-                                                    cutoff_result = LPParser.determine_resolution_cutoff(stats_table, criterion)
-                                                    resolution = cutoff_result.get('resolution') or resolution
-                                                    isa = correct_data.get('isa')
-                                                    if isa:
-                                                        try:
-                                                            isa_val = float(isa.get('isa', 0))
-                                                        except (ValueError, TypeError):
-                                                            pass
-                                                    sg = correct_data.get('space_group') or sg
-                                                    uc = correct_data.get('unit_cell') or uc
-                                                    summary['space_group'] = sg
-                                                    summary['unit_cell'] = uc
-                                                    summary['resolution'] = resolution
-                                                    summary['all_cutoffs'] = cutoff_result.get('all_cutoffs', {})
-                                                else:
-                                                    send("ap_log", {"text": ">>> Re-integration after ΔCC½ exclusion failed — using previous results"})
-
-                                                dcc_half_result = {
-                                                    'threshold': thr_label,
-                                                    'threshold_value': round(threshold, 3),
-                                                    'median': round(median_d, 3),
-                                                    'mad': round(mad, 4),
-                                                    'n_excluded': len(bad_frames),
-                                                    'degrees_excluded': round(excl_degrees, 1),
-                                                    'n_total': n_total,
-                                                }
-                                            else:
-                                                if len(bad_3) > n_total * 0.15:
-                                                    send("ap_log", {"text": ">>>   Too many outliers at 3×MAD ("
-                                                                          + str(len(bad_3)) + "/" + str(n_total)
-                                                                          + " > 15%) — skipping exclusion"})
-                                                else:
-                                                    send("ap_log", {"text": ">>>   No severe outliers detected — data is clean"})
-                                                dcc_half_result = {
-                                                    'threshold': '3×MAD',
-                                                    'threshold_value': round(threshold_3, 3),
-                                                    'median': round(median_d, 3),
-                                                    'mad': round(mad, 4),
-                                                    'n_excluded': 0,
-                                                    'degrees_excluded': 0,
-                                                    'n_total': n_total,
-                                                }
                                         else:
-                                            send("ap_log", {"text": ">>>   ΔCC½ distribution is uniform (MAD≈0) — no outliers"})
+                                            send("ap_log", {"text": ">>>   No range of frames to exclude"})
+                                        dcc_half_result = record
                                     else:
                                         send("ap_log", {"text": ">>>   Too few batches for ΔCC½ analysis (" + str(len(frames)) + ")"})
                                 else:

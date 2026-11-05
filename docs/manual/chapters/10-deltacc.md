@@ -27,3 +27,4 @@ The tab checks for the `xdscc12` binary. If it is missing, **⬇ Download automa
 - A gentle decline of ΔCC½ towards the end is radiation damage; excluding the last batches often raises CC½ in the outer shells.
 - Isolated very negative frames are usually ice, a shutter problem or a crystal jump: look at those frames in the viewer (chapter 17).
 - Do not exclude more than necessary: completeness falls with every frame removed. Check completeness in the CORRECT table after applying.
+- Suggestions stop at 20% of the batches, worst ranges first, and a warning appears above 10%. Ranges over the limit are named under the list: apply the others first, then run the analysis again. A suggested range can have a mean ΔCC½ above 0: it stands out from the rest of the data but still raises CC½, so untick it unless the frames themselves look wrong. AutoPilot excludes only ranges with a mean below 0.

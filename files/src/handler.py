@@ -581,10 +581,10 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
                     content = _read_text_lenient(lp_file)
                     if step == "IDXREF":
                         metrics = LPParser.parse_idxref(content)
-                        self.send_json({"step": step, "metrics": metrics, "diagnostics": idxref_diagnostics(metrics, content)})
+                        self.send_json({"step": step, "metrics": metrics, "diagnostics": step_advice(step, metrics, content)})
                     elif step == "CORRECT":
                         metrics = LPParser.parse_correct(content)
-                        self.send_json({"step": step, "metrics": metrics, "diagnostics": page_diagnostics(step, metrics)})
+                        self.send_json({"step": step, "metrics": metrics, "diagnostics": step_advice(step, metrics, content)})
                     elif step == "INTEGRATE":
                         metrics = LPParser.parse_integrate(content)
                         self.send_json({"step": step, "metrics": metrics})

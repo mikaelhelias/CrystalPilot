@@ -1781,7 +1781,7 @@ def define_checks(m, scratch):
         for empty in ("", "n/a", None, "%", True, float("nan")):
             assert m.js_float(empty) is None, empty
 
-    @check("page rules: the same answers as the page's JavaScript gave, recorded on real logs and around every threshold")
+    @check("page rules: the answers the page's JavaScript gave, on real logs and around every threshold; frame ranges with each frame counted once")
     def _():
         recorded = json.loads((FIX / "page_rules_recorded.json").read_text(encoding="utf-8"))
         for item in recorded["logs"]:
@@ -1913,6 +1913,79 @@ def define_checks(m, scratch):
                 continue
             raise AssertionError("accepted: %r" % (params,))
         m._agent_check_params({"SPOT_RANGE": [[1, 10], [20, 30]], "DATA_RANGE": "1 900", "SIGNAL_PIXEL": None, "OUTPUT_FILE": "merged.ahkl", "FRIEDEL'S_LAW": "TRUE"})
+
+    @check("frame suggestions: each frame counted once, so the limit does not drop a real bad run; what the limit leaves out is reported")
+    def _():
+        frames = [{"batch": i + 1, "delta_only": 0.1 + 0.01 * (i % 5), "delta_all": 0.1} for i in range(100)]
+        for f in frames[90:]:
+            f["delta_only"] = -5.0
+        for f in frames[40:44]:
+            f["delta_only"] = -3.0
+        got = m.frame_suggestions({"frames": frames, "summary": {}}, {"radtail": False})
+        assert [(r["start"], r["end"], r["count"]) for r in got["ranges"]] == [(41, 44, 4), (91, 100, 10)], got["ranges"]
+        assert got["ranges"][1]["avg_delta"] == -5.0 and got["left_out"] == []
+        # a small gap inside a merged range is excluded with it, so it is counted with it
+        gap = [dict(f) for f in frames]
+        for i in (30, 31, 32, 34, 35, 36):
+            gap[i]["delta_only"] = -4.0
+        got = m.frame_suggestions({"frames": gap, "summary": {}}, {"radtail": False})
+        assert (31, 37, 7) in [(r["start"], r["end"], r["count"]) for r in got["ranges"]], got["ranges"]
+        narrow = m.frame_suggestions({"frames": frames, "summary": {}}, {"radtail": False}, limit=0.05)
+        assert [r["start"] for r in narrow["ranges"]] == [41] and [r["start"] for r in narrow["left_out"]] == [91], narrow
+        assert m.frame_suggestions({"frames": [], "summary": {}})["left_out"] == []
+
+    @check("AutoPilot frame rejection: the page's rule on the 'only' columns, 10% at most, whole frame ranges from batches")
+    def _():
+        frames = [{"batch": 5 * (i + 1), "delta_only": 0.1 + 0.01 * (i % 5), "delta_all": 0.1} for i in range(100)]
+        frames[20]["delta_all"] = -50.0                 # bad only in the column the wiki says to disregard
+        for f in frames[50:54]:
+            f["delta_only"] = -3.0
+        got = m.autopilot_frame_choice({"frames": frames, "frames_per_batch": 5, "summary": {}}, 0.1)
+        assert [(e["first"], e["last"], e["batches"]) for e in got["exclude"]] == [(251, 270, 4)], got
+        record = got["record"]
+        assert record["n_excluded"] == 4 and record["degrees_excluded"] == 2.0 and record["n_total"] == 100 and record["column"] == "only", record
+        assert record["threshold"] == "outliers" and record["limit_pct"] == 10 and record["left_out"] == 0, record
+        # a damaged tail above 10% stays in and is reported, the smaller run still goes
+        for f in frames[85:]:
+            f["delta_only"] = -5.0
+        got = m.autopilot_frame_choice({"frames": frames, "frames_per_batch": 5, "summary": {}}, 0.1)
+        assert [e["first"] for e in got["exclude"]] == [251] and got["record"]["left_out"] >= 15, got
+        assert got["left_out"][0]["last"] == 500, got
+        # good data: a run stands out from the median yet still raises CC1/2, so it stays
+        good = [{"batch": i + 1, "delta_only": 6.0 + 0.2 * (i % 5), "delta_all": 6.0} for i in range(100)]
+        for f in good[:11]:
+            f["delta_only"] = 2.0
+        got = m.autopilot_frame_choice({"frames": good, "summary": {}}, 0.5)
+        assert got["exclude"] == [] and got["left_out"] == [] and got["record"]["n_excluded"] == 0 and got["record"]["not_negative"] == 11, got
+        assert [r["start"] for r in m.frame_suggestions({"frames": good, "summary": {}})["ranges"]] == [1]     # the page still lists it
+        # nothing stands out from identical values
+        same = [{"batch": i + 1, "delta_only": 0.5, "delta_all": 0.5} for i in range(40)]
+        got = m.autopilot_frame_choice({"frames": same, "summary": {"median_delta_only": 0.5, "mad_delta_only": 0.0}}, 0.1)
+        assert got["exclude"] == [] and got["record"]["n_excluded"] == 0, got
+
+    @check("advice: the page also says what AutoPilot acts on, without repeating what it already says")
+    def _():
+        advice = [{"severity": "warning", "title": "Very low indexing rate (3.0%)", "body": "x"}]
+        findings = [{"error": "insufficient_indexed_severe", "message": "Only 3% of spots indexed — will attempt auto-indexing", "fix": {}, "severity": "fatal"},
+                    {"error": "refinement_not_converged", "message": "Refinement did not converge — removing POSITION from IDXREF refinement", "fix": {}, "severity": "warning"},
+                    {"error": "half_integer_indices", "message": "Half-integer cluster indices detected — reducing SEPMIN/CLUSTER_RADIUS", "fix": {}, "severity": "warning"},
+                    {"error": "cannot_read_spot_xds", "message": "Cannot read SPOT.XDS — check NAME_TEMPLATE_OF_DATA_FRAMES", "fix": {}, "severity": "fatal"},
+                    {"error": "ice_rings_detected", "message": "Ice rings detected (1 strong) — adding exclusion ranges", "severity": "warning",
+                     "fix": {"_exclude_resolution_ranges": [{"lo": 3.70, "hi": 3.64, "label": "3.67"}]}}]
+        got = m.with_autopilot_findings(advice, findings)
+        titles = [g["title"] for g in got]
+        assert titles == ["Very low indexing rate (3.0%)", "Refinement did not converge", "Half-integer cluster indices detected", "Cannot read SPOT.XDS", "Ice rings detected (1 strong)"], titles
+        assert got[1]["severity"] == "caution" and got[1]["body"] == "AutoPilot responds by removing POSITION from IDXREF refinement.", got[1]
+        assert got[3]["severity"] == "warning" and got[3]["body"] == "Check NAME_TEMPLATE_OF_DATA_FRAMES.", got[3]
+        assert got[4]["body"] == "AutoPilot responds by adding exclusion ranges. Rings: 3.67 Å.", got[4]
+        text = real("CORRECT.LP")
+        metrics = LP.parse_correct(text)
+        page = m.page_diagnostics("CORRECT", metrics)
+        assert m.step_advice("CORRECT", metrics, text)[:len(page)] == page
+        text = real("IDXREF.LP")
+        metrics = LP.parse_idxref(text)
+        page = m.idxref_diagnostics(metrics, text)
+        assert m.step_advice("IDXREF", metrics, text)[:len(page)] == page
 
     @check("methods text: real logs give real numbers; caveats and programs only when they apply")
     def _():

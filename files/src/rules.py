@@ -339,7 +339,7 @@ def idxref_diagnostics(metrics, lp_text):
 
 
 # ── frames to exclude (ΔCC½) ─────────────────────────────────────────────────
-def frame_suggestions(data, strategies=None):
+def frame_suggestions(data, strategies=None, limit=0.20):
     """Bad frame ranges for EXCLUDE_DATA_RANGE, from parsed XDSCC12 results.
 
     Adapts to how much of the data is damaged.  With under 30% of the frames negative,
@@ -347,7 +347,8 @@ def frame_suggestions(data, strategies=None):
     so ΔCC½ < 0 is the threshold (Assmann et al., 2016: such a frame lowers CC½) and the
     worst contiguous negative blocks and the damaged tail are found instead.
     Diederichs recommends excluding no more than about 10% per iteration; suggestions
-    are capped at 20% of the frames and the page warns above 10%.
+    are capped at limit (a fraction of the batches) and the page warns above 10%.
+    What the cap leaves out is reported in left_out.
     """
     strategies = strategies or {}
     use = lambda key: strategies.get(key, True) is not False
@@ -356,7 +357,7 @@ def frame_suggestions(data, strategies=None):
     count = len(frames)
     diagnostics = {"hasRadDamage": False, "radDamageOnsetIdx": None, "radDamageOnsetBatch": None}
     if not count:
-        return {"ranges": [], "diagnostics": diagnostics}
+        return {"ranges": [], "left_out": [], "diagnostics": diagnostics, "median": None, "mad": None}
     deltas = [f["delta_only"] for f in frames]
     negative_pct = len([v for v in deltas if v < 0]) / count * 100
     median, mad = summary.get("median_delta_only"), summary.get("mad_delta_only")
@@ -442,21 +443,87 @@ def frame_suggestions(data, strategies=None):
     for item in sorted(ranges, key=lambda r: r["start"]):
         if merged and item["start"] <= merged[-1]["end"] + 2:
             previous = merged[-1]
-            together = previous["count"] + item["count"]
-            previous["avg_delta"] = (previous["avg_delta"] * previous["count"] + item["avg_delta"] * item["count"]) / together
-            previous["count"] = together
             previous["end"] = max(previous["end"], item["end"])
             if item["reason"] == "radiation_damage":
                 previous["reason"] = "radiation_damage"
         else:
-            merged.append({k: item[k] for k in ("start", "end", "count", "avg_delta", "reason")})
-    limit = int(math.floor(count * 0.20))
-    kept, excluded = [], 0
+            merged.append({k: item[k] for k in ("start", "end", "reason")})
+    # Strategies overlap, and a merged range also takes the frames in its small gaps:
+    # what a range holds is read from the frames, each counted once.
+    for item in merged:
+        inside = [delta for frame, delta in zip(frames, deltas) if item["start"] <= frame["batch"] <= item["end"]]
+        item["count"] = len(inside)
+        item["avg_delta"] = sum_of(inside) / len(inside)
+    allowed = int(math.floor(count * limit))
+    kept, left_out, excluded = [], [], 0
     for item in sorted(merged, key=lambda r: r["avg_delta"]):
-        if excluded + item["count"] <= limit:
+        if excluded + item["count"] <= allowed:
             kept.append(item)
             excluded += item["count"]
-    return {"ranges": sorted(kept, key=lambda r: r["start"]), "diagnostics": diagnostics}
+        else:
+            left_out.append(item)
+    return {"ranges": sorted(kept, key=lambda r: r["start"]), "left_out": sorted(left_out, key=lambda r: r["start"]),
+            "diagnostics": diagnostics, "median": median, "mad": mad}
+
+
+AUTOPILOT_DCC_LIMIT = 0.10
+_DCC_REASONS = {"radiation_damage": "damage tail", "negative_block": "negative block", "isolated_bad": "outliers"}
+
+
+def autopilot_frame_choice(data, oscillation):
+    """What AutoPilot excludes from XDSCC12 results: the rule the page suggests from, in the
+    "only" columns, at most 10% of the batches in its one pass.  Nobody reviews this choice,
+    so a range goes only when its mean delta-CC1/2 is below zero: the median - MAD outliers
+    of good data still raise CC1/2.  The page lists those for the user to decide."""
+    frames = data.get("frames") or []
+    width = data.get("frames_per_batch") or 1
+    found = frame_suggestions(data, limit=AUTOPILOT_DCC_LIMIT)
+    median, mad = found["median"], found["mad"]
+    uniform = mad is None or mad <= 0.001          # nothing stands out from identical values
+    ranges = [] if uniform else [r for r in found["ranges"] if r["avg_delta"] < 0]
+    left_out = [] if uniform else [r for r in found["left_out"] if r["avg_delta"] < 0]
+    not_negative = 0 if uniform else sum(r["count"] for r in found["ranges"] + found["left_out"] if r["avg_delta"] >= 0)
+    batches = sum(r["count"] for r in ranges)
+    reasons = []
+    for item in ranges:
+        if _DCC_REASONS[item["reason"]] not in reasons:
+            reasons.append(_DCC_REASONS[item["reason"]])
+    record = {"threshold": " + ".join(reasons) or "no range found", "threshold_value": None if median is None or mad is None else round(median - 2 * mad, 3),
+              "median": None if median is None else round(median, 3), "mad": None if mad is None else round(mad, 4), "n_excluded": batches,
+              "degrees_excluded": round(batches * width * oscillation, 1), "n_total": len(frames), "column": "only",
+              "limit_pct": int(AUTOPILOT_DCC_LIMIT * 100), "left_out": sum(r["count"] for r in left_out), "not_negative": not_negative}
+
+    def frame_range(item):
+        return {"first": max(1, item["start"] - width + 1), "last": item["end"], "reason": "dcc_half=" + str(round(item["avg_delta"], 2)), "batches": item["count"]}
+
+    return {"exclude": [frame_range(r) for r in ranges], "left_out": [frame_range(r) for r in left_out], "record": record}
+
+
+# ── what AutoPilot acts on, for the page ─────────────────────────────────────
+_AUTOPILOT_COVERED_BY = {"insufficient_indexed_moderate": "indexing rate", "insufficient_indexed_severe": "indexing rate", "very_few_indexed": "indexing rate",
+                         "low_indexed_fraction": "indexing rate", "half_integer_indices": "half-integer", "low_isa": "isa"}
+
+
+def with_autopilot_findings(advice, findings):
+    """The page's advice, and what AutoPilot acts on where the advice does not already say it."""
+    merged = list(advice)
+    for finding in findings:
+        covered = _AUTOPILOT_COVERED_BY.get(finding["error"])
+        if covered and any(covered in item["title"].lower() for item in advice):
+            continue
+        said, _, action = finding["message"].partition(" — ")
+        rings = (finding.get("fix") or {}).get("_exclude_resolution_ranges") or []
+        where = " Rings: " + ", ".join(str(r["label"]) for r in rings) + " Å." if rings else ""
+        merged.append({"severity": {"fatal": "warning", "warning": "caution"}.get(finding["severity"], "info"), "title": said,
+                       "body": ("AutoPilot responds by " + action if action.split(" ")[0].endswith("ing") else action[:1].upper() + action[1:]) + "." + where})
+    return merged
+
+
+def step_advice(step, metrics, lp_text):
+    """What a log suggests, in the words the page shows."""
+    if step == "IDXREF":
+        return with_autopilot_findings(idxref_diagnostics(metrics, lp_text), LPParser.diagnose_idxref(lp_text))
+    return with_autopilot_findings(page_diagnostics(step, metrics), LPParser.diagnose_correct(lp_text, metrics.get("statistics_table")))
 
 
 # ── XSCALE autofill ──────────────────────────────────────────────────────────

@@ -496,9 +496,9 @@ def _tool_get_diagnostics(ctx, args):
     else:
         raise AgentError("step must be IDXREF, INTEGRATE or CORRECT")
     if step == "IDXREF":
-        advice = idxref_diagnostics(LPParser.parse_idxref(text), text)
+        advice = step_advice(step, LPParser.parse_idxref(text), text)
     elif step == "CORRECT":
-        advice = page_diagnostics(step, LPParser.parse_correct(text))
+        advice = step_advice(step, LPParser.parse_correct(text), text)
     else:
         advice = []
     return {"project": name, "step": step, "log_file": str(lp), "autopilot_diagnostics": found, "advice": advice,

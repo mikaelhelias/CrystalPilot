@@ -593,6 +593,37 @@ class Workflows(unittest.TestCase):
         self.assertIs(summary["optimization"]["kept"], False, summary.get("optimization"))
         self.assertTrue((self.p / "pre_optimize" / "CORRECT.LP").is_file())
 
+    def test_autopilot_excludes_frames_by_the_only_column_and_writes_them(self):
+        (self.p / "XDS.INP").write_text("JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nDATA_RANGE= 1 100\nOSCILLATION_RANGE= 0.1\n")
+        lines = []
+        for i in range(100):
+            only = -3.0 if 50 <= i < 54 else 0.1 + 0.01 * (i % 5)
+            every = -50.0 if i == 20 else 0.1
+            lines.append("a %d 1000 90.0 90.0 %.2f 1000 90.0 90.0 %.2f" % (i + 1, only, every))
+        tool = self.p / "fake_xdscc12"
+        tool.write_text("")
+        real_run = m._run_streaming
+
+        def run(cmd, cwd, on_line, **kwargs):
+            if cmd[0] != str(tool):
+                return real_run(cmd, cwd, on_line, **kwargs)
+            for line in lines:
+                on_line(line)
+            return 0, "ok"
+
+        collected = []
+        with patch.object(m, "XDSCC12_BIN", str(tool)), patch.object(m, "_run_streaming", run):
+            m.stream_autopilot(self.name, collected.append, optimize=True, dcc_half=True)
+        text = "".join(collected)
+        summary = [json.loads(block.split("data: ", 1)[1]) for block in text.split("\n\n")
+                   if block.startswith("event: ap_done")][-1]["summary"]
+        record = summary["dcc_half"]
+        self.assertEqual((record["n_excluded"], record["column"], record["n_total"], record["left_out"]), (4, "only", 100, 0), record)
+        written = (self.p / "XDS.INP").read_text()
+        self.assertRegex(written, r"(?m)^EXCLUDE_DATA_RANGE\s*=\s*51\s+54")
+        self.assertNotRegex(written, r"(?m)^EXCLUDE_DATA_RANGE\s*=\s*21\s+21")
+        self.assertIn("Re-integrating with bad frames excluded", text)
+
     def test_if_better_restores_the_first_integration_when_reintegration_fails(self):
         (self.p / "XDS.INP").write_text("JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nDATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.1\n")
         self.control(INTEGRATE="exit_again")
@@ -1372,7 +1403,9 @@ class Workflows(unittest.TestCase):
             self.assertEqual(self.tool_ok('get_diagnostics', project=self.name, step=step)['advice'], page['diagnostics'])
             again = self.request('POST', '/api/rules/diagnostics', {'step': step, 'metrics': page['metrics']})[1]['diagnostics']
             if step == 'CORRECT':
-                self.assertEqual(again, page['diagnostics'])
+                # from the metrics alone: what AutoPilot acts on comes from the log, after these
+                self.assertEqual(again, page['diagnostics'][:len(again)])
+                self.assertTrue(any(d['title'].startswith('Ice rings detected') for d in page['diagnostics']))
         self.assertEqual(self.request('POST', '/api/rules/diagnostics', {'step': 'XYCORR', 'metrics': {}})[0], 400)
         autofill = self.request('GET', self.url + '/xscale-autofill?mode=cc50')[1]
         self.assertEqual(self.tool_ok('get_analysis', project=self.name, kind='xscale_autofill', params={'mode': 'cc50'}), autofill)
