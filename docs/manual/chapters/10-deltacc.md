@@ -11,7 +11,7 @@ The tab checks for the `xdscc12` binary. If it is missing, **⬇ Download automa
 ## Run
 
 1. Open the **ΔCC½** tab after a CORRECT run.
-2. Set the *batch width* (degrees of rotation per batch; 1 for a fine view, 5–10 for long data sets) and the number of resolution bins. Tick the *detection strategies* to combine: **Radiation damage tail** (a progressive decline at the end of the data set), **Negative blocks** (contiguous frames with ΔCC½ below zero), **2-MAD outliers** (runs of three or more frames below median − 2 MAD) and **3-MAD severe** (adjacent pairs below median − 3 MAD).
+2. Set the *batch width* (degrees of rotation per batch; 1 for a fine view, 5–10 for long data sets), the number of resolution bins and the *high resolution* limit. The limit starts at the project's cut-off (the Cutoff Preference, the same value XSCALE is filled with); beyond it, noisy shells make most frames look negative and hide the ones that really hurt. Empty the field to read every reflection. Tick the *detection strategies* to combine: **Radiation damage tail** (a progressive decline at the end of the data set), **Negative blocks** (contiguous frames with ΔCC½ below zero), **2-MAD outliers** (runs of three or more frames below median − 2 MAD) and **3-MAD severe** (adjacent pairs below median − 3 MAD).
 3. Click **▶ Run ΔCC½ Analysis**. The log is kept as `XDSCC12.LP` next to the XDS output (**📄 View XDSCC12.LP** shows it); results are reloaded when you return.
 
 ![The ΔCC½ tab: binary status, options, run button and the chart with suggested exclusions.](images/10-01-deltacc.png)

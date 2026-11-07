@@ -3678,13 +3678,14 @@ class XDSGUIHandler(BaseHTTPRequestHandler):
             project_name = qs.get("project", [""])[0]
             batch_width = qs.get("batch_width", ["1"])[0]
             nbin = qs.get("nbin", ["5"])[0]
+            dmax = qs.get("dmax", [""])[0]
             self._begin_processing_stream(project_name, "done")
             def write_fn_dcc(s):
                 try: self.wfile.write(s.encode()); self.wfile.flush()
                 except Exception: pass
             write_fn_dcc._sse_ids = True     # events carry ids: the page can resume after a lost connection
             stream_xdscc12(project_name, write_fn_dcc,
-                           batch_width=batch_width, nbin=nbin)
+                           batch_width=batch_width, nbin=nbin, dmax=dmax)
 
         # Download XDSCC12 binary (SSE stream)
         elif path == "/api/xdscc12/download":

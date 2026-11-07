@@ -3559,7 +3559,12 @@
                                         <label>Resolution bins</label>
                                         <input type="text" id="dcc-nbin" value="5" placeholder="5" title="Number of resolution shells for per-shell ΔCC½ curves." style="width:60px;">
                                     </div>
+                                    <div class="param-row" style="flex:1; min-width:140px;">
+                                        <label>High resolution (Å)</label>
+                                        <input type="text" id="dcc-dmax" value="" placeholder="all" title="XDSCC12 reads reflections to this limit only (-dmax). It starts at the project's cut-off; empty reads every reflection." style="width:60px;">
+                                    </div>
                                 </div>
+                                <div id="dcc-dmax-note" style="font-size:0.74rem; color:var(--txt3); margin-top:4px;"></div>
                                 <div style="margin-top:10px;">
                                     <label style="font-size:0.78rem; color:var(--txt3); display:block; margin-bottom:5px;">Detection strategies (combine as needed):</label>
                                     <div style="display:flex; flex-wrap:wrap; gap:6px 14px;">
@@ -3572,7 +3577,7 @@
                             </div>
 
                             <!-- Run -->
-                            <div style="font-size:0.78rem; color:var(--txt3); margin:8px 0 4px 0; line-height:1.5;">💡 <b>Tip:</b> For meaningful results, ensure <code style="color:var(--accent2);">INCLUDE_RESOLUTION_RANGE</code> is set to a reasonable resolution cutoff and CORRECT has been run before launching ΔCC½ analysis. If the cutoff is too generous, noisy high-resolution shells will make most frames appear negative.</div>
+                            <div style="font-size:0.78rem; color:var(--txt3); margin:8px 0 4px 0; line-height:1.5;">💡 <b>Tip:</b> Run CORRECT first. Keep the high-resolution limit at the data's cut-off: beyond it, noisy shells make most frames appear negative and hide the frames that really hurt.</div>
                             <div style="display:flex; align-items:center; gap:10px; margin:12px 0;">
                                 <button id="dcc-run-btn" class="btn-primary" onclick="dccRun()" style="padding:8px 20px;">▶ Run ΔCC½ Analysis</button>
                                 <button id="dcc-view-lp-btn" class="btn-ghost" onclick="dccViewLP()" style="display:none; padding:6px 14px; font-size:0.82rem;" title="View raw XDSCC12 log file">📄 View XDSCC12.LP</button>
@@ -10902,7 +10907,7 @@
             // Auto-check CCP4 when switching to AIMLESS tab
             if (tab === 'aimless') { amlCheckCCP4(); amlLoadCorrectInfo(); amlLoadXscaleInfo(); amlDetectPointlessMTZ(); amlLoadCachedResults(); }
             // Auto-check XDSCC12 binary + load cached results when switching to ΔCC½ tab
-            if (tab === 'deltacc') { dccCheckBinary(); dccLoadCachedResults(); }
+            if (tab === 'deltacc') { dccCheckBinary(); dccLoadCachedResults(); dccFillDmax(); }
             // Auto-check gemmi when switching to Gemmi Analysis tab
             if (tab === 'gemmi') { gmInit(); }
             // Load cached autopilot results when switching to AutoPilot tab
@@ -15142,6 +15147,33 @@
             }
         }
 
+        // High-resolution limit: the project's cut-off (Cutoff Preference), refreshed while the
+        // field still holds the value filled in for this project; a value typed by hand stays.
+        var _dccDmaxAuto = { project: null, value: '' };
+        async function dccFillDmax() {
+            var input = document.getElementById('dcc-dmax');
+            var note = document.getElementById('dcc-dmax-note');
+            if (!input || !currentProject) return;
+            var project = currentProject;
+            var sameProject = _dccDmaxAuto.project === project;
+            if (sameProject && input.value.trim() !== _dccDmaxAuto.value) return;
+            var high = '', label = '';
+            try {
+                var r = await fetch(API + '/projects/' + encodeURIComponent(project) + '/xscale-autofill');
+                if (r.ok) {
+                    var d = await r.json();
+                    high = d.resolution_high || '';
+                    label = d.cutoff_label || '';
+                }
+            } catch (e) { return; }
+            if (currentProject !== project) return;
+            if (_dccDmaxAuto.project === project && input.value.trim() !== _dccDmaxAuto.value) return;
+            input.value = high;
+            _dccDmaxAuto = { project: project, value: high };
+            if (note) note.textContent = high ? 'High resolution from the cut-off: ' + label + '. Empty the field to read every reflection.'
+                                              : 'No cut-off found in CORRECT.LP: every reflection is read.';
+        }
+
         async function dccRun() {
             if (!currentProject) { showToast('No project selected', 'warning'); return; }
             cpAskNotify();
@@ -15151,6 +15183,7 @@
             params.set('project', currentProject);
             params.set('batch_width', document.getElementById('dcc-batch-width').value || '1');
             params.set('nbin', document.getElementById('dcc-nbin').value || '5');
+            params.set('dmax', (document.getElementById('dcc-dmax').value || '').trim());
             dccFollow(API + '/xdscc12/stream?' + params.toString(), currentProject, '');
         }
 

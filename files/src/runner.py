@@ -2564,8 +2564,9 @@ def _parse_ctruncate_log(text):
 
 
 @_processing_job("xdscc12")
-def stream_xdscc12(project_name, write_fn, batch_width=1, nbin=5):
+def stream_xdscc12(project_name, write_fn, batch_width=1, nbin=5, dmax=None):
     """Run XDSCC12 on XDS_ASCII.HKL, streaming output via SSE write_fn.
+    dmax: high-resolution limit in angstrom (XDSCC12 -dmax); empty reads every reflection.
 
     Computes per-frame ΔCC½ for identifying bad/damaged frames.
     Reference: Assmann, Brehm & Diederichs (2016) J. Appl. Cryst. 49, 1021-1028.
@@ -2618,6 +2619,12 @@ def stream_xdscc12(project_name, write_fn, batch_width=1, nbin=5):
             cmd += ["-nbin", str(nb)]
     except (ValueError, TypeError):
         cmd += ["-nbin", "5"]
+    try:
+        high = float(dmax) if dmax not in (None, "") else 0.0
+    except (ValueError, TypeError):
+        high = 0.0
+    if high > 0:
+        cmd += ["-dmax", "%.2f" % high]
     cmd.append("XDS_ASCII.HKL")
 
     send("step_start", {"step": "XDSCC12"})

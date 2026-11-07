@@ -631,6 +631,24 @@ class Workflows(unittest.TestCase):
         self.assertEqual(float(commands[0][2]), record["dmax"])
         self.assertEqual(commands[0][-1], "XDS_ASCII.HKL")
 
+    def test_the_tab_runs_xdscc12_to_the_high_resolution_limit_it_is_given(self):
+        (m._project_out_dir(self.p) / "XDS_ASCII.HKL").write_text("!END_OF_HEADER\n!END_OF_DATA\n")
+        tool = self.p / "fake_xdscc12"
+        tool.write_text("")
+        commands = []
+
+        def run(cmd, cwd, on_line, **kwargs):
+            commands.append(cmd)
+            on_line("a 1 1000 90.0 90.0 0.10 1000 90.0 90.0 0.10")
+            return 0, "ok"
+
+        with patch.object(m, "XDSCC12_BIN", str(tool)), patch.object(m, "_run_streaming", run):
+            for dmax in ("2.4", "", "x"):
+                m.stream_xdscc12(self.name, [].append, batch_width="1", nbin="5", dmax=dmax)
+        self.assertEqual(commands[0][-3:], ["-dmax", "2.40", "XDS_ASCII.HKL"], commands)
+        self.assertNotIn("-dmax", commands[1], commands)
+        self.assertNotIn("-dmax", commands[2], commands)
+
     def test_if_better_restores_the_first_integration_when_reintegration_fails(self):
         (self.p / "XDS.INP").write_text("JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nDATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.1\n")
         self.control(INTEGRATE="exit_again")

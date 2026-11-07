@@ -300,8 +300,9 @@ data: {"step": "XSCALE", "status": "completed", "error": null}
             fi
             R=$(c "$U/api/xdscc12/check")
             if echo "$R" | grep -q '"found": true'; then
-                t0=$(date +%s); stream xdscc12 "/api/xdscc12/stream?project=real" 900; echo "   XDSCC12 took $(( $(date +%s) - t0 )) s"
+                t0=$(date +%s); stream xdscc12 "/api/xdscc12/stream?project=real&dmax=2.0" 900; echo "   XDSCC12 took $(( $(date +%s) - t0 )) s"
                 check "real xdscc12: completed" "done_ok xdscc12 XDSCC12" "$(explain xdscc12)"
+                check "real xdscc12: reads reflections to the limit it is given" "grep -q -- '-dmax 2.00' $T/xdscc12.log" "$(grep -m1 'Command' $T/xdscc12.log)"
             else
                 echo "   XDSCC12 not installed - skipped"
             fi

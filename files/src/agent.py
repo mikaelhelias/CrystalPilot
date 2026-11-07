@@ -1044,6 +1044,19 @@ def _agent_options(program, options, allowed):
         raise AgentError("%s has no option %s. It takes: %s." % (program, ", ".join(unknown), ", ".join(sorted(allowed)) or "none"))
 
 
+def _agent_project_cutoff(project):
+    """The project's resolution cut-off, as the page fills it in: the latest CORRECT.LP
+    by the chosen cut-off preference.  None when there is no CORRECT.LP to read."""
+    lp = _find_latest_lp(_pdir(project), "CORRECT")
+    if not lp:
+        return None
+    try:
+        return xscale_autofill(LPParser.parse_correct(_read_text_lenient(lp)), _load_settings().get("cutoff_preference")).get("resolution_high")
+    except Exception as e:
+        _note_error(e)
+        return None
+
+
 def _tool_run_program(ctx, args):
     project = _agent_require_project(args)
     program = str(args.get("program") or "")
@@ -1112,9 +1125,10 @@ def _tool_run_program(ctx, args):
                                         run_ctruncate=options.get("run_ctruncate") is not False, input_file=source)
         kind = "aimless"
     elif program == "xdscc12":
-        _agent_options(program, options, ("batch_width", "nbin"))
+        _agent_options(program, options, ("batch_width", "nbin", "resolution_high"))
         width, nbin = str(options.get("batch_width", 1)), str(options.get("nbin", 5))
-        call, kind = (lambda w: stream_xdscc12(project, w, batch_width=width, nbin=nbin)), "xdscc12"
+        dmax = options["resolution_high"] if "resolution_high" in options else _agent_project_cutoff(project)
+        call, kind = (lambda w: stream_xdscc12(project, w, batch_width=width, nbin=nbin, dmax=dmax)), "xdscc12"
     else:
         raise AgentError("program must be xds, autoindex, xscale, xdsconv, gemmi_mtz, pointless, aimless or xdscc12.")
     job_id = _agent_start_run("run_program", args, project, program, kind, call)
@@ -1709,7 +1723,7 @@ AGENT_TOOLS = [
      "description": "Start one program and return a job_id at once; follow it with job_status. program: xds (options.steps; options.reintegrate re-integrates with the refined geometry), "
                     "autoindex (options.tier quick, medium or full; options.force_cell), xscale, xdsconv (options.mtz_name), gemmi_mtz (options.mtz_name, input_file, free_r), "
                     "pointless (options.input_file, chirality, setting, lauegroup, spacegroup, resolution_low, resolution_high), aimless (options.input_file, resolution_low, resolution_high, "
-                    "anomalous, bins, run_pointless, run_ctruncate), xdscc12 (options.batch_width, nbin). Results it replaces are the project's earlier ones: in a user's project overwrite: true asks the user on the page, "
+                    "anomalous, bins, run_pointless, run_ctruncate), xdscc12 (options.batch_width, nbin, resolution_high: reflections to this limit only, default the project's cut-off, empty for all). Results it replaces are the project's earlier ones: in a user's project overwrite: true asks the user on the page, "
                     "and new_run_folder: true keeps them (xds from XYCORR, xscale).",
      "schema": _agent_schema({"project": _AGENT_P_PROJECT, "program": {"type": "string", "enum": ["xds", "autoindex", "xscale", "xdsconv", "gemmi_mtz", "pointless", "aimless", "xdscc12"]},
                               "options": {"type": "object"}, "overwrite": {"type": "boolean"}, "new_run_folder": {"type": "boolean"}, "reason": _AGENT_P_REASON}, ["project", "program"])},
