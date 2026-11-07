@@ -62,7 +62,7 @@ STRATEGY_OPTIONS = [
      "help": "What the re-integration is judged on."},
     {"key": "dcc_half", "step": "reprocessing", "label": "ΔCC½ frame rejection (XDSCC12)", "default": "on", "input": "checkbox",
      "choices": [["on", "on"], ["off", "off"]],
-     "help": "Excludes ranges of frames that lower CC½ (mean ΔCC½ below 0), found by the rule of the ΔCC½ tab on the reflections inside the resolution cut-off, at most 10% of the data. It runs as part of the re-integration, so it does nothing when re-integration is ‘never’."},
+     "help": "Excludes ranges of frames that lower CC½ (mean ΔCC½ below 0), found by the rule of the ΔCC½ tab on the reflections inside the resolution cut-off, at most 10% of the data; of a larger range, its worst part. It runs as part of the re-integration, so it does nothing when re-integration is ‘never’."},
     {"key": "exclude_ice", "step": "reprocessing", "label": "Ice rings", "default": "yes",
      "choices": [["yes", "exclude them when CORRECT shows them"], ["no", "leave them in"]],
      "help": "Detected rings are written as EXCLUDE_RESOLUTION_RANGE and CORRECT runs again."},

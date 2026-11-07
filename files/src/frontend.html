@@ -21098,6 +21098,9 @@
                 } else {
                     html += '<span style="color:' + dcColor + '; font-family:var(--mono);">No range of frames to exclude</span>';
                 }
+                if (dc.trimmed > 0) {
+                    html += ' <span style="color:var(--txt3); font-size:0.72rem;">(' + (dc.trimmed === 1 ? 'one range' : dc.trimmed + ' ranges') + ' over the limit: its worst part)</span>';
+                }
                 if (dc.dmax) {
                     html += ' <span style="color:var(--txt3); font-size:0.72rem;">(reflections to ' + Number(dc.dmax).toFixed(2) + ' Å)</span>';
                 }

@@ -1945,12 +1945,19 @@ def define_checks(m, scratch):
         record = got["record"]
         assert record["n_excluded"] == 4 and record["degrees_excluded"] == 2.0 and record["n_total"] == 100 and record["column"] == "only", record
         assert record["threshold"] == "outliers" and record["limit_pct"] == 10 and record["left_out"] == 0, record
-        # a damaged tail above 10% stays in and is reported, the smaller run still goes
-        for f in frames[85:]:
-            f["delta_only"] = -5.0
+        # a damaged tail too large for what is left of the 10% gives its worst part; the rest stays in and is reported
+        for k, f in enumerate(frames[85:]):
+            f["delta_only"] = -1.0 - 0.5 * k
         got = m.autopilot_frame_choice({"frames": frames, "frames_per_batch": 5, "summary": {}}, 0.1)
-        assert [e["first"] for e in got["exclude"]] == [251] and got["record"]["left_out"] >= 15, got
-        assert got["left_out"][0]["last"] == 500, got
+        assert [(e["first"], e["last"], e["batches"]) for e in got["exclude"]] == [(251, 270, 4), (471, 500, 6)], got
+        assert got["exclude"][1]["part_of"][1] == 500 and "part_of" not in got["exclude"][0], got
+        assert got["record"]["n_excluded"] == 10 and got["record"]["trimmed"] == 1 and got["record"]["left_out"] >= 9, got
+        assert got["left_out"][-1]["last"] == 470, got
+        # less than three batches left of the 10%: the range stays in whole
+        for f in frames[40:46]:
+            f["delta_only"] = -3.0
+        got = m.autopilot_frame_choice({"frames": frames, "frames_per_batch": 5, "summary": {}}, 0.1)
+        assert got["record"]["trimmed"] == 0 and got["record"]["n_excluded"] <= 10 and got["left_out"][-1]["last"] == 500, got
         # good data: a run stands out from the median yet still raises CC1/2, so it stays
         good = [{"batch": i + 1, "delta_only": 6.0 + 0.2 * (i % 5), "delta_all": 6.0} for i in range(100)]
         for f in good[:11]:

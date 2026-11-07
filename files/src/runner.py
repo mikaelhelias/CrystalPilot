@@ -4264,7 +4264,9 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                                                                   + " batches (" + str(record['degrees_excluded']) + "°): " + record['threshold']})
                                             for chosen in choice['exclude']:
                                                 send("ap_log", {"text": ">>>     frames " + str(chosen['first']) + "-" + str(chosen['last'])
-                                                                      + "  ΔCC½=" + chosen['reason'].split('=')[1]})
+                                                                      + "  ΔCC½=" + chosen['reason'].split('=')[1]
+                                                                      + ("  (worst part of frames " + str(chosen['part_of'][0]) + "-" + str(chosen['part_of'][1])
+                                                                         + ", which is over the limit)" if chosen.get('part_of') else "")})
 
                                             _ap_apply_xdsinp_fix(xds_inp_path,
                                                 {'_exclude_data_ranges': choice['exclude']}, send)

@@ -467,22 +467,59 @@ def frame_suggestions(data, strategies=None, limit=0.20):
 
 
 AUTOPILOT_DCC_LIMIT = 0.10
+AUTOPILOT_DCC_MIN_PART = 3          # fewest batches worth excluding from a range over the limit
 _DCC_REASONS = {"radiation_damage": "damage tail", "negative_block": "negative block", "isolated_bad": "outliers"}
+
+
+def _worst_part(frames, item, size):
+    """The run of `size` consecutive batches inside a range with the lowest mean delta-CC1/2,
+    and the parts of the range on either side of it."""
+    inside = [f for f in frames if item["start"] <= f["batch"] <= item["end"]]
+    best = None
+    for i in range(len(inside) - size + 1):
+        mean = sum(f["delta_only"] for f in inside[i:i + size]) / size
+        if best is None or mean < best[1]:
+            best = (i, mean)
+    i, mean = best
+    part = {"start": inside[i]["batch"], "end": inside[i + size - 1]["batch"], "count": size, "avg_delta": mean,
+            "reason": item["reason"], "part_of": (item["start"], item["end"])}
+    rest = []
+    for piece in (inside[:i], inside[i + size:]):
+        if piece:
+            rest.append({"start": piece[0]["batch"], "end": piece[-1]["batch"], "count": len(piece),
+                         "avg_delta": sum(f["delta_only"] for f in piece) / len(piece), "reason": item["reason"]})
+    return part, rest
 
 
 def autopilot_frame_choice(data, oscillation):
     """What AutoPilot excludes from XDSCC12 results: the rule the page suggests from, in the
     "only" columns, at most 10% of the batches in its one pass.  Nobody reviews this choice,
     so a range goes only when its mean delta-CC1/2 is below zero: the median - MAD outliers
-    of good data still raise CC1/2.  The page lists those for the user to decide."""
+    of good data still raise CC1/2.  The page lists those for the user to decide.
+    A range too large for what is left of the 10% gives its worst part, when that part
+    still lowers CC1/2; the rest of the range stays in."""
     frames = data.get("frames") or []
     width = data.get("frames_per_batch") or 1
     found = frame_suggestions(data, limit=AUTOPILOT_DCC_LIMIT)
     median, mad = found["median"], found["mad"]
     uniform = mad is None or mad <= 0.001          # nothing stands out from identical values
     ranges = [] if uniform else [r for r in found["ranges"] if r["avg_delta"] < 0]
-    left_out = [] if uniform else [r for r in found["left_out"] if r["avg_delta"] < 0]
+    over = [] if uniform else [r for r in found["left_out"] if r["avg_delta"] < 0]
     not_negative = 0 if uniform else sum(r["count"] for r in found["ranges"] + found["left_out"] if r["avg_delta"] >= 0)
+    budget = int(math.floor(len(frames) * AUTOPILOT_DCC_LIMIT)) - sum(r["count"] for r in ranges)
+    left_out = []
+    for item in sorted(over, key=lambda r: r["avg_delta"]):
+        size = min(budget, item["count"])
+        if size >= AUTOPILOT_DCC_MIN_PART:
+            part, rest = _worst_part(frames, item, size)
+            if part["avg_delta"] < 0:
+                ranges.append(part)
+                budget -= size
+                left_out.extend(r for r in rest if r["avg_delta"] < 0)
+                continue
+        left_out.append(item)
+    ranges.sort(key=lambda r: r["start"])
+    left_out.sort(key=lambda r: r["start"])
     batches = sum(r["count"] for r in ranges)
     reasons = []
     for item in ranges:
@@ -491,10 +528,17 @@ def autopilot_frame_choice(data, oscillation):
     record = {"threshold": " + ".join(reasons) or "no range found", "threshold_value": None if median is None or mad is None else round(median - 2 * mad, 3),
               "median": None if median is None else round(median, 3), "mad": None if mad is None else round(mad, 4), "n_excluded": batches,
               "degrees_excluded": round(batches * width * oscillation, 1), "n_total": len(frames), "column": "only",
-              "limit_pct": int(AUTOPILOT_DCC_LIMIT * 100), "left_out": sum(r["count"] for r in left_out), "not_negative": not_negative}
+              "limit_pct": int(AUTOPILOT_DCC_LIMIT * 100), "left_out": sum(r["count"] for r in left_out), "not_negative": not_negative,
+              "trimmed": len([r for r in ranges if r.get("part_of")])}
+
+    def first_frame(batch):
+        return max(1, batch - width + 1)
 
     def frame_range(item):
-        return {"first": max(1, item["start"] - width + 1), "last": item["end"], "reason": "dcc_half=" + str(round(item["avg_delta"], 2)), "batches": item["count"]}
+        chosen = {"first": first_frame(item["start"]), "last": item["end"], "reason": "dcc_half=" + str(round(item["avg_delta"], 2)), "batches": item["count"]}
+        if item.get("part_of"):
+            chosen["part_of"] = [first_frame(item["part_of"][0]), item["part_of"][1]]
+        return chosen
 
     return {"exclude": [frame_range(r) for r in ranges], "left_out": [frame_range(r) for r in left_out], "record": record}
 
