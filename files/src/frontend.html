@@ -21098,6 +21098,9 @@
                 } else {
                     html += '<span style="color:' + dcColor + '; font-family:var(--mono);">No range of frames to exclude</span>';
                 }
+                if (dc.dmax) {
+                    html += ' <span style="color:var(--txt3); font-size:0.72rem;">(reflections to ' + Number(dc.dmax).toFixed(2) + ' Å)</span>';
+                }
                 if (dc.left_out > 0) {
                     html += ' <span style="color:#fbd38d; font-size:0.72rem;">' + dc.left_out + ' batch(es) over the ' + dc.limit_pct + '% limit were kept; see the \u0394CC\u00bd tab</span>';
                 }

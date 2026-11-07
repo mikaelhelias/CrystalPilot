@@ -69,7 +69,7 @@ Every change is a comment starting with `! CrystalPilot:` in the project's `XDS.
 | Choice | What it decides |
 |---|---|
 | Re-integrate with refined geometry (GXPARM → XPARM) | a second DEFPIX-INTEGRATE-CORRECT with the geometry CORRECT refined: **never**, **always** (default), or **only if better** — the first integration is put aside and restored when the re-integration does not improve the measure you choose (ISa, the resolution cut-off, or overall CC½) |
-| ΔCC½ frame rejection (XDSCC12) | tick box, on by default. It finds ranges by the rule of the ΔCC½ tab (chapter 10) and excludes those that lower CC½ (mean ΔCC½ below 0), at most 10% of the batches; a larger range stays in and the results say so. It runs inside the re-integration, so it does nothing when re-integration is *never*; the wizard tells you |
+| ΔCC½ frame rejection (XDSCC12) | tick box, on by default. XDSCC12 reads the reflections inside AutoPilot's resolution cut-off only. It finds ranges by the rule of the ΔCC½ tab (chapter 10) and excludes those that lower CC½ (mean ΔCC½ below 0), at most 10% of the batches; a larger range stays in and the results say so. It runs inside the re-integration, so it does nothing when re-integration is *never*; the wizard tells you |
 | Ice rings | excluded when CORRECT shows them (default), or left in |
 
 ## 5. Space group and indexing

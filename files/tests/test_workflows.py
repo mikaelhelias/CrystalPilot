@@ -604,9 +604,12 @@ class Workflows(unittest.TestCase):
         tool.write_text("")
         real_run = m._run_streaming
 
+        commands = []
+
         def run(cmd, cwd, on_line, **kwargs):
             if cmd[0] != str(tool):
                 return real_run(cmd, cwd, on_line, **kwargs)
+            commands.append(cmd)
             for line in lines:
                 on_line(line)
             return 0, "ok"
@@ -623,6 +626,10 @@ class Workflows(unittest.TestCase):
         self.assertRegex(written, r"(?m)^EXCLUDE_DATA_RANGE\s*=\s*51\s+54")
         self.assertNotRegex(written, r"(?m)^EXCLUDE_DATA_RANGE\s*=\s*21\s+21")
         self.assertIn("Re-integrating with bad frames excluded", text)
+        self.assertEqual(len(commands), 1, commands)
+        self.assertEqual(commands[0][1], "-dmax", commands)
+        self.assertEqual(float(commands[0][2]), record["dmax"])
+        self.assertEqual(commands[0][-1], "XDS_ASCII.HKL")
 
     def test_if_better_restores_the_first_integration_when_reintegration_fails(self):
         (self.p / "XDS.INP").write_text("JOB= XYCORR INIT COLSPOT IDXREF DEFPIX INTEGRATE CORRECT\nDATA_RANGE= 1 60\nOSCILLATION_RANGE= 0.1\n")

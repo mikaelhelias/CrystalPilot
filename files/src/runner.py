@@ -4200,10 +4200,22 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                     if XDSCC12_BIN and Path(XDSCC12_BIN).exists():
                         ascii_hkl_cc = _pfile(project_dir, "XDS_ASCII.HKL")
                         if ascii_hkl_cc.exists():
-                            send("ap_log", {"text": ">>> Running XDSCC12 for ΔCC½ frame analysis..."})
+                            # Only reflections inside the cut-off: beyond it CC½ is noise, which makes
+                            # nearly every frame look harmful and hides the frames that really are.
+                            cc12_cmd = [XDSCC12_BIN]
+                            cc12_dmax = None
+                            try:
+                                if resolution and float(resolution) > 0:
+                                    cc12_dmax = round(float(resolution), 2)
+                                    cc12_cmd += ["-dmax", "%.2f" % cc12_dmax]
+                            except (ValueError, TypeError):
+                                cc12_dmax = None
+                            cc12_cmd.append("XDS_ASCII.HKL")
+                            send("ap_log", {"text": ">>> Running XDSCC12 for ΔCC½ frame analysis"
+                                                  + (" (reflections to " + ("%.2f" % cc12_dmax) + " Å)" if cc12_dmax else "") + "..."})
                             try:
                                 cc12_log_lines = []
-                                cc12_rc, cc12_outcome = _run_streaming([XDSCC12_BIN, "XDS_ASCII.HKL"], _project_out_dir(project_dir),
+                                cc12_rc, cc12_outcome = _run_streaming(cc12_cmd, _project_out_dir(project_dir),
                                                                        cc12_log_lines.append, timeout=1800,
                                                                        should_stop=lambda: _job_stopped(), key="autopilot")
 
@@ -4232,6 +4244,7 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
 
                                         choice = autopilot_frame_choice(cc12_data, osc)
                                         record = choice['record']
+                                        record['dmax'] = cc12_dmax
                                         send("ap_log", {"text": ">>>   ΔCC½ median=" + str(record['median'])
                                                               + "  MAD=" + str(record['mad'])
                                                               + "  batches=" + str(record['n_total'])
