@@ -237,6 +237,17 @@ def _xds_sg_cell(xds):
     return sg, cell, list(cc)
 
 
+def _xds_friedel(xds):
+    """True when the file was written with FRIEDEL'S_LAW=TRUE (anomalous pairs merged).
+
+    gemmi gives the flag as the character 'T' or 'F', which is true in a plain test
+    either way; a bool is accepted too.  Without the flag XDS's default, TRUE, holds."""
+    flag = getattr(xds, 'friedels_law', True)
+    if isinstance(flag, str):
+        return flag.strip().upper()[:1] != 'F'
+    return bool(flag)
+
+
 def _get_merged_mtz(xds):
     """Return an Mtz with one row per unique (merged, mean) reflection.
 
@@ -271,13 +282,35 @@ def _get_merged_mtz(xds):
     return xds.to_mtz(), "to_mtz"
 
 
-def _filter_intensities_by_resolution(intensities, res_low=None, res_high=None):
+def _xds_signed_hkl(xds, hkl, values):
+    """The indices as written in the XDS file, Friedel mates with their own sign, row
+    for row with an import_xds'd Intensities (whose indices lose that sign, so a copy
+    made with set_data merges the mates even as DataType.Anomalous).  None when the
+    file's rows do not line up with the imported ones."""
+    import numpy as np
+    if not hasattr(xds, 'miller_array') or not hasattr(xds, 'sigma_array'):
+        return None
+    orig = np.asarray(xds.miller_array, dtype=np.int32)
+    sig = np.asarray(xds.sigma_array, dtype=np.float64)
+    iobs = np.asarray(xds.iobs_array, dtype=np.float64) if hasattr(xds, 'iobs_array') else None
+    for keep in (sig > 0, sig >= 0, np.ones(len(sig), dtype=bool)):
+        if int(keep.sum()) != len(hkl):
+            continue
+        if iobs is not None and not np.allclose(iobs[keep], values):
+            continue
+        return orig[keep]
+    return None
+
+
+def _filter_intensities_by_resolution(intensities, res_low=None, res_high=None, signed_hkl=None):
     """Filter an Intensities object to a resolution range.
 
     Args:
         intensities: gemmi.Intensities (already import_xds'd)
         res_low:  low-resolution limit in Angstrom (e.g. 80.0) — large d
         res_high: high-resolution limit in Angstrom (e.g. 2.0) — small d
+        signed_hkl: the file's own indices (_xds_signed_hkl), for anomalous data:
+                    the copy then keeps Friedel mates apart
 
     Returns new Intensities with only reflections in [res_high, res_low].
     If both are None, returns the original unchanged.
@@ -309,6 +342,8 @@ def _filter_intensities_by_resolution(intensities, res_low=None, res_high=None):
     if mask.all():
         return intensities  # no filtering needed
 
+    if signed_hkl is not None and len(signed_hkl) == len(hkl):
+        hkl = np.asarray(signed_hkl, dtype=np.int32)
     filtered = gemmi.Intensities()
     filtered.set_data(cell, sg, hkl[mask], val[mask], sig[mask])
     return filtered
@@ -363,10 +398,14 @@ def analyze_merging_stats(input_hkl, n_shells=20, weighting='X', res_low=None, r
     intensities.import_xds(xds)
 
     # Apply resolution filter if specified
-    intensities = _filter_intensities_by_resolution(intensities, res_low, res_high)
+    signed = None
+    if not _xds_friedel(xds) and (res_low is not None or res_high is not None):
+        import numpy as np
+        signed = _xds_signed_hkl(xds, np.array(intensities.miller_array), np.array(intensities.value_array))
+    intensities = _filter_intensities_by_resolution(intensities, res_low, res_high, signed)
 
     # Determine data type from friedels_law flag
-    dt = gemmi.DataType.Mean if xds.friedels_law else gemmi.DataType.Anomalous
+    dt = gemmi.DataType.Mean if _xds_friedel(xds) else gemmi.DataType.Anomalous
 
     intensities.prepare_for_merging(dt)
 
@@ -533,8 +572,13 @@ def table1_rpim(hkl_path, stats_table):
     # The lowest-resolution observation the statistics include: the true low
     # limit of the data (XSCALE.LP does not print it).
     out["d_low"] = round(float(d[order[0]]), 2)
-    friedel = getattr(xds, 'friedels_law', True)
-    dtype = gemmi.DataType.Mean if friedel else gemmi.DataType.Anomalous
+    dtype = gemmi.DataType.Mean if _xds_friedel(xds) else gemmi.DataType.Anomalous
+    if dtype == gemmi.DataType.Anomalous:
+        signed = _xds_signed_hkl(xds, hkl, val)
+        if signed is None:
+            out["reason"] = "%s: Friedel mates cannot be told apart in this file" % hkl_path.name
+            return out
+        hkl = signed
 
     def _stats(idx):
         part = gemmi.Intensities()
@@ -585,7 +629,7 @@ def analyze_completeness(input_hkl, n_shells=20, res_low=None, res_high=None):
     if not sg:
         return {"success": False, "message": "Could not read spacegroup from file"}
 
-    is_anomalous = not xds.friedels_law
+    is_anomalous = not _xds_friedel(xds)
 
     # Get merged MTZ (tries multiple strategies)
     merged_mtz, method = _get_merged_mtz(xds)
@@ -1046,7 +1090,7 @@ def _quick_rmerge(xds):
     try:
         intensities = gemmi.Intensities()
         intensities.import_xds(xds)
-        dt = gemmi.DataType.Mean if xds.friedels_law else gemmi.DataType.Anomalous
+        dt = gemmi.DataType.Mean if _xds_friedel(xds) else gemmi.DataType.Anomalous
         intensities.prepare_for_merging(dt)
 
         # Overall stats (no binner = overall)

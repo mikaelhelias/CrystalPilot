@@ -331,9 +331,9 @@ def define_checks(m, scratch):
         got = m._table1_rpim_for({"xscale": {}, "correct": {}})
         assert got["overall"] is None and got["reason"]
 
-    def _xds_ascii_header():
+    def _xds_ascii_header(friedel="TRUE"):
         # the 12-item record gemmi expects of an unmerged XDS_ASCII.HKL, P1, 30 x 40 x 50 A
-        head = ["!FORMAT=XDS_ASCII    MERGE=FALSE    FRIEDEL'S_LAW=TRUE", "!SPACE_GROUP_NUMBER=1",
+        head = ["!FORMAT=XDS_ASCII    MERGE=FALSE    FRIEDEL'S_LAW=" + friedel, "!SPACE_GROUP_NUMBER=1",
                 "!UNIT_CELL_CONSTANTS= 30 40 50 90 90 90", "!X-RAY_WAVELENGTH=1",
                 "!NUMBER_OF_ITEMS_IN_EACH_DATA_RECORD=12"]
         head += ["!ITEM_%s=%d" % (k, i) for i, k in enumerate(
@@ -367,6 +367,40 @@ def define_checks(m, scratch):
         wrong = [dict(row, r_meas="55.0%") for row in table]
         got = m.table1_rpim(d / "XDS_ASCII.HKL", wrong)
         assert got["overall"] is None and "R-meas" in got["reason"], got
+
+    @check("Friedel's law read from the file: gemmi gives 'T'/'F', both true in a plain test")
+    def _():
+        from types import SimpleNamespace
+        assert m._xds_friedel(SimpleNamespace(friedels_law="T")) is True
+        assert m._xds_friedel(SimpleNamespace(friedels_law="F")) is False
+        assert m._xds_friedel(SimpleNamespace(friedels_law=False)) is False
+        assert m._xds_friedel(SimpleNamespace(friedels_law="\x00")) is True     # flag not in the header
+        assert m._xds_friedel(SimpleNamespace()) is True
+
+    @check("Table 1: exact R-pim keeps Friedel mates apart for FRIEDEL'S_LAW=FALSE data")
+    def _():
+        try:
+            import gemmi, numpy  # noqa: F401
+        except ImportError:
+            raise SkipCheck("gemmi/numpy not installed here")
+        d = scratch / "rpim_anom"; d.mkdir(exist_ok=True)
+        # Friedel mates with different intensities: merged together they would scatter far more
+        obs = [((1, 0, 0), [100.0, 110.0]), ((-1, 0, 0), [140.0, 150.0]), ((0, 1, 0), [50.0, 56.0, 53.0])]
+        lines = _xds_ascii_header("FALSE")
+        for (h, k, l), values in obs:
+            lines += ["%d %d %d %.3f %.3f 1 1 1 1 100 100 0" % (h, k, l, v, 5.0) for v in values]
+        lines.append("!END_OF_DATA")
+        (d / "XDS_ASCII.HKL").write_text("\n".join(lines) + "\n")
+        num = den = num_m = 0.0
+        for _hkl, values in obs:
+            n, mean = len(values), sum(values) / len(values)
+            dev = sum(abs(v - mean) for v in values)
+            num += (1.0 / (n - 1)) ** 0.5 * dev; num_m += (n / (n - 1.0)) ** 0.5 * dev; den += sum(values)
+        r_meas = "%.1f%%" % (100 * num_m / den)
+        table = [{"resolution": "30.00", "observed": "7", "unique": "3", "r_meas": r_meas},
+                 {"resolution": "total", "observed": "7", "unique": "3", "r_meas": r_meas}]
+        got = m.table1_rpim(d / "XDS_ASCII.HKL", table)
+        assert got["overall"] == "%.1f" % (100 * num / den), (got, 100 * num / den)
 
     @check("anisotropy: CC½ pairs observations of the SAME reflection")
     def _():
