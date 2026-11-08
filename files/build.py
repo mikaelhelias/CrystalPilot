@@ -46,6 +46,12 @@ SOURCE_FILES = [
 ]
 
 FRONTEND_FILE = 'frontend.html'
+VENDOR_DIR = os.path.join(SCRIPT_DIR, 'vendor')
+
+# mxconv (statistics conventions, BSD-3-Clause), embedded as a package named
+# _cp_mxconv so it never meets another installed copy.  Load order follows the
+# imports between its modules; __init__ comes last.
+MXCONV_MODULES = ['fmt', 'shells', 'cutoff', 'stats', 'significance', 'dcc', 'table1', 'cite', 'logs', '__init__']
 
 
 def read_file(path):
@@ -75,6 +81,64 @@ def build_frontend_function(html_content):
     """Build the get_frontend_html() function with embedded HTML."""
     escaped = escape_html_for_python(html_content)
     return "def get_frontend_html():\n    \"\"\"Return embedded frontend HTML\"\"\"\n    return '''" + escaped + "'''\n"
+
+
+def build_mxconv_block():
+    """Python source that registers the vendored mxconv modules as the package _cp_mxconv.
+
+    The copy must match its SHA256SUMS: the vendored files are only ever replaced
+    as a whole by a pinned copy, never edited here."""
+    import hashlib
+    folder = os.path.join(VENDOR_DIR, 'mxconv')
+    sums = {}
+    for line in read_file(os.path.join(folder, 'SHA256SUMS')).splitlines():
+        if line.strip():
+            digest, name = line.split()
+            sums[name] = digest
+    sources = {}
+    for name in MXCONV_MODULES:
+        path = os.path.join(folder, name + '.py')
+        with open(path, 'rb') as f:
+            data = f.read()
+        if hashlib.sha256(data).hexdigest() != sums.get(name + '.py'):
+            print(f"ERROR: {path} does not match vendor/mxconv/SHA256SUMS")
+            sys.exit(1)
+        sources[name] = data.decode('utf-8')
+    version = read_file(os.path.join(folder, 'VERSION')).strip()
+    licence = read_file(os.path.join(folder, 'LICENSE')).strip()
+    lines = ['# ── mxconv ' + version + ': statistics conventions (vendor/mxconv) ──',
+             '_MXCONV_VERSION = ' + repr(version),
+             '_MXCONV_LICENSE = ' + repr(licence),
+             '_MXCONV_SOURCES = {']
+    for name in MXCONV_MODULES:
+        lines.append('    ' + repr(name) + ': ' + repr(sources[name]) + ',')
+    lines += ['}',
+              '',
+              '',
+              'def _load_mxconv():',
+              '    """The vendored mxconv as the package _cp_mxconv (modules executed in import order)."""',
+              '    import types as _types',
+              "    if '_cp_mxconv' in sys.modules:",
+              "        return sys.modules['_cp_mxconv']",
+              "    package = _types.ModuleType('_cp_mxconv')",
+              "    package.__path__ = []",
+              "    package.__package__ = '_cp_mxconv'",
+              "    sys.modules['_cp_mxconv'] = package",
+              '    for name, source in _MXCONV_SOURCES.items():',
+              "        if name == '__init__':",
+              '            module = package',
+              '        else:',
+              "            module = _types.ModuleType('_cp_mxconv.' + name)",
+              "            module.__package__ = '_cp_mxconv'",
+              "            sys.modules['_cp_mxconv.' + name] = module",
+              '            setattr(package, name, module)',
+              "        exec(compile(source, '<mxconv/' + name + '.py>', 'exec'), module.__dict__)",
+              '    return package',
+              '',
+              '',
+              '_mx = _load_mxconv()',
+              '']
+    return '\n'.join(lines) + '\n'
 
 
 def assemble(output_path=None, verify_against=None):
@@ -109,6 +173,10 @@ def assemble(output_path=None, verify_against=None):
         
         parts.append(content)
         print(f"  Assembled: {filename} ({len(content):,} bytes)")
+        if filename == 'config.py':
+            block = build_mxconv_block()
+            parts.append('\n\n' + block)
+            print(f"  Assembled: vendor/mxconv ({len(block):,} bytes)")
     
     result = ''.join(parts)
     
@@ -132,6 +200,10 @@ def assemble(output_path=None, verify_against=None):
         print("\nERROR: _DIFFRACTION_BG_B64 not found in assembled file!")
         checks_passed = False
     
+    if '_mx = _load_mxconv()' not in result:
+        print("\nERROR: vendored mxconv not found in assembled file!")
+        checks_passed = False
+
     if 'get_frontend_html' not in result:
         print("\nERROR: get_frontend_html not found in assembled file!")
         checks_passed = False

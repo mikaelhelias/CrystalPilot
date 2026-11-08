@@ -9,39 +9,13 @@
 #  js_float and js_fixed read and print numbers as the page always has, so a value
 #  in a table or a message keeps its last digit (2.5 prints as 3 at no decimals).
 # ═════════════════════════════════════════════════════════════════════════════
-_JS_FLOAT_PREFIX = re.compile(r"\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
-
-
-def js_float(value):
-    """The number a value starts with, as '12.3%' or '99.9*' give 12.3 and 99.9.  None when there is none."""
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value) if value == value else None
-    match = _JS_FLOAT_PREFIX.match(str(value))
-    return float(match.group(1)) if match else None
-
-
-def js_fixed(value, digits):
-    """A number with a fixed count of decimals; an exact tie rounds away from zero."""
-    from decimal import Decimal, ROUND_HALF_UP
-    number = float(value) or 0.0            # -0.0 prints as 0.0; -0.04 stays -0.0 at one decimal
-    step = Decimal(1).scaleb(-digits) if digits else Decimal(1)
-    return format(Decimal(number).quantize(step, rounding=ROUND_HALF_UP), "f")
-
-
-def _js_number_text(value):
-    """A number as text with no trailing .0: 18.0 is 18, 0.1 stays 0.1."""
-    if isinstance(value, float) and value == int(value) and abs(value) < 1e15:
-        return str(int(value))
-    return str(value)
-
-
-def _js_true(value):
-    """True for what an if statement in the page took as set: not empty text, not 0, not missing."""
-    if value is None or value is False or value == "" or value == 0:
-        return False
-    return value == value
+#  The statistics conventions (shells, cut-off, frame rejection, Table 1, number
+#  printing) come from mxconv, embedded by build.py as _mx; the names below are
+#  the ones the rest of CrystalPilot calls.
+js_float = _mx.fmt.number          # '12.3%' and '99.9*' give 12.3 and 99.9; None when there is none
+js_fixed = _mx.fmt.fixed           # fixed decimals, an exact tie rounds away from zero
+_js_number_text = _mx.fmt.plain    # 18.0 is "18", 0.1 stays "0.1"
+_js_true = _mx.fmt.is_set          # not empty text, not 0, not missing
 
 
 def _is_total(row):
@@ -339,208 +313,23 @@ def idxref_diagnostics(metrics, lp_text):
 
 
 # ── frames to exclude (ΔCC½) ─────────────────────────────────────────────────
+#  mxconv.dcc: suggestions for review (capped at `limit`, 20 % by default) and what
+#  AutoPilot excludes unreviewed (mean ΔCC½ < 0, at most 10 %, worst part of a range
+#  over the limit).
+AUTOPILOT_DCC_LIMIT = _mx.dcc.AUTO_LIMIT
+AUTOPILOT_DCC_MIN_PART = _mx.dcc.AUTO_MIN_PART       # fewest batches worth excluding from a range over the limit
+_DCC_REASONS = _mx.dcc.REASON_LABELS
+_worst_part = _mx.dcc.worst_part
+
+
 def frame_suggestions(data, strategies=None, limit=0.20):
-    """Bad frame ranges for EXCLUDE_DATA_RANGE, from parsed XDSCC12 results.
-
-    Adapts to how much of the data is damaged.  With under 30% of the frames negative,
-    median - MAD outliers work.  From 30% on the median itself is near zero or negative,
-    so ΔCC½ < 0 is the threshold (Assmann et al., 2016: such a frame lowers CC½) and the
-    worst contiguous negative blocks and the damaged tail are found instead.
-    Diederichs recommends excluding no more than about 10% per iteration; suggestions
-    are capped at limit (a fraction of the batches) and the page warns above 10%.
-    What the cap leaves out is reported in left_out.
-    """
-    strategies = strategies or {}
-    use = lambda key: strategies.get(key, True) is not False
-    summary = data.get("summary") or {}
-    frames = data.get("frames") or []
-    count = len(frames)
-    diagnostics = {"hasRadDamage": False, "radDamageOnsetIdx": None, "radDamageOnsetBatch": None}
-    if not count:
-        return {"ranges": [], "left_out": [], "diagnostics": diagnostics, "median": None, "mad": None}
-    deltas = [f["delta_only"] for f in frames]
-    negative_pct = len([v for v in deltas if v < 0]) / count * 100
-    median, mad = summary.get("median_delta_only"), summary.get("mad_delta_only")
-    if median is None or mad is None:
-        ordered = sorted(deltas)
-        median = ordered[len(ordered) // 2]
-        deviations = sorted(abs(v - median) for v in ordered)
-        mad = deviations[len(deviations) // 2]
-        if mad < 0.01:
-            mad = 0.01
-    ranges, used = [], set()
-
-    def sum_of(values):
-        total = 0
-        for value in values:
-            total = total + value
-        return total
-
-    # A: radiation damage tail.  Walking back from the end, the tail starts after the
-    # first sliding window that averages >= 0; it counts at >= 10 frames and >= 5% of the
-    # data, when its second half is worse than its first or both are clearly negative.
-    if use("radtail"):
-        window = max(3, min(7, int(math.floor(count * 0.02))))
-        onset = count
-        for start in range(count - window, -1, -1):
-            if sum_of(deltas[start:start + window]) / window >= 0:
-                onset = start + 1
-                break
-            if start == 0:
-                onset = 0
-        length = count - onset
-        if length >= 10 and length >= int(math.floor(count * 0.05)):
-            half = length // 2
-            first_half = deltas[onset:onset + half]
-            second_half = deltas[onset + half:]
-            avg_first = sum_of(first_half) / len(first_half)
-            avg_second = sum_of(second_half) / len(second_half)
-            if avg_second < avg_first or (avg_first < -0.5 and avg_second < -0.5):
-                diagnostics.update({"hasRadDamage": True, "radDamageOnsetIdx": onset, "radDamageOnsetBatch": frames[onset]["batch"]})
-                ranges.append({"start": frames[onset]["batch"], "end": frames[count - 1]["batch"], "count": length,
-                               "avg_delta": sum_of(deltas[onset:]) / length, "reason": "radiation_damage"})
-                used.update(range(onset, count))
-
-    def finish(run):
-        run["avg_delta"] = run["_sum"] / run["count"]
-        ranges.append(run)
-
-    def runs_below(threshold, minimum, reason, mark):
-        """Contiguous runs of frames under a threshold; mark: they count as used for later strategies."""
-        run = None
-        for i in range(count):
-            if i in used:
-                if run and run["count"] >= minimum:
-                    finish(run)
-                run = None
-                continue
-            if deltas[i] < threshold:
-                if not run:
-                    run = {"start": frames[i]["batch"], "end": frames[i]["batch"], "_sum": 0, "count": 0, "_first": i, "reason": reason}
-                run["end"] = frames[i]["batch"]
-                run["_sum"] = run["_sum"] + deltas[i]
-                run["count"] += 1
-            else:
-                if run and run["count"] >= minimum:
-                    finish(run)
-                    if mark:
-                        used.update(range(run["_first"], run["_first"] + run["count"]))
-                run = None
-        if run and run["count"] >= minimum:
-            finish(run)
-
-    # B: contiguous negative blocks, when the median can no longer be trusted
-    if use("negblock") and negative_pct >= 30:
-        runs_below(0, 3, "negative_block", True)
-    # C: statistical outliers (median - 2 MAD); stricter when B already ran
-    if use("outlier2"):
-        runs_below(median - 2 * mad, 5 if negative_pct >= 30 else 3, "isolated_bad", True)
-    # D: severe outlier pairs (median - 3 MAD)
-    if use("outlier3"):
-        runs_below(median - 3 * mad, 2, "isolated_bad", False)
-
-    merged = []
-    for item in sorted(ranges, key=lambda r: r["start"]):
-        if merged and item["start"] <= merged[-1]["end"] + 2:
-            previous = merged[-1]
-            previous["end"] = max(previous["end"], item["end"])
-            if item["reason"] == "radiation_damage":
-                previous["reason"] = "radiation_damage"
-        else:
-            merged.append({k: item[k] for k in ("start", "end", "reason")})
-    # Strategies overlap, and a merged range also takes the frames in its small gaps:
-    # what a range holds is read from the frames, each counted once.
-    for item in merged:
-        inside = [delta for frame, delta in zip(frames, deltas) if item["start"] <= frame["batch"] <= item["end"]]
-        item["count"] = len(inside)
-        item["avg_delta"] = sum_of(inside) / len(inside)
-    allowed = int(math.floor(count * limit))
-    kept, left_out, excluded = [], [], 0
-    for item in sorted(merged, key=lambda r: r["avg_delta"]):
-        if excluded + item["count"] <= allowed:
-            kept.append(item)
-            excluded += item["count"]
-        else:
-            left_out.append(item)
-    return {"ranges": sorted(kept, key=lambda r: r["start"]), "left_out": sorted(left_out, key=lambda r: r["start"]),
-            "diagnostics": diagnostics, "median": median, "mad": mad}
-
-
-AUTOPILOT_DCC_LIMIT = 0.10
-AUTOPILOT_DCC_MIN_PART = 3          # fewest batches worth excluding from a range over the limit
-_DCC_REASONS = {"radiation_damage": "damage tail", "negative_block": "negative block", "isolated_bad": "outliers"}
-
-
-def _worst_part(frames, item, size):
-    """The run of `size` consecutive batches inside a range with the lowest mean delta-CC1/2,
-    and the parts of the range on either side of it."""
-    inside = [f for f in frames if item["start"] <= f["batch"] <= item["end"]]
-    best = None
-    for i in range(len(inside) - size + 1):
-        mean = sum(f["delta_only"] for f in inside[i:i + size]) / size
-        if best is None or mean < best[1]:
-            best = (i, mean)
-    i, mean = best
-    part = {"start": inside[i]["batch"], "end": inside[i + size - 1]["batch"], "count": size, "avg_delta": mean,
-            "reason": item["reason"], "part_of": (item["start"], item["end"])}
-    rest = []
-    for piece in (inside[:i], inside[i + size:]):
-        if piece:
-            rest.append({"start": piece[0]["batch"], "end": piece[-1]["batch"], "count": len(piece),
-                         "avg_delta": sum(f["delta_only"] for f in piece) / len(piece), "reason": item["reason"]})
-    return part, rest
+    """Bad frame ranges for EXCLUDE_DATA_RANGE, from parsed XDSCC12 results (mxconv.dcc.suggest)."""
+    return _mx.dcc.suggest(data, strategies, limit)
 
 
 def autopilot_frame_choice(data, oscillation):
-    """What AutoPilot excludes from XDSCC12 results: the rule the page suggests from, in the
-    "only" columns, at most 10% of the batches in its one pass.  Nobody reviews this choice,
-    so a range goes only when its mean delta-CC1/2 is below zero: the median - MAD outliers
-    of good data still raise CC1/2.  The page lists those for the user to decide.
-    A range too large for what is left of the 10% gives its worst part, when that part
-    still lowers CC1/2; the rest of the range stays in."""
-    frames = data.get("frames") or []
-    width = data.get("frames_per_batch") or 1
-    found = frame_suggestions(data, limit=AUTOPILOT_DCC_LIMIT)
-    median, mad = found["median"], found["mad"]
-    uniform = mad is None or mad <= 0.001          # nothing stands out from identical values
-    ranges = [] if uniform else [r for r in found["ranges"] if r["avg_delta"] < 0]
-    over = [] if uniform else [r for r in found["left_out"] if r["avg_delta"] < 0]
-    not_negative = 0 if uniform else sum(r["count"] for r in found["ranges"] + found["left_out"] if r["avg_delta"] >= 0)
-    budget = int(math.floor(len(frames) * AUTOPILOT_DCC_LIMIT)) - sum(r["count"] for r in ranges)
-    left_out = []
-    for item in sorted(over, key=lambda r: r["avg_delta"]):
-        size = min(budget, item["count"])
-        if size >= AUTOPILOT_DCC_MIN_PART:
-            part, rest = _worst_part(frames, item, size)
-            if part["avg_delta"] < 0:
-                ranges.append(part)
-                budget -= size
-                left_out.extend(r for r in rest if r["avg_delta"] < 0)
-                continue
-        left_out.append(item)
-    ranges.sort(key=lambda r: r["start"])
-    left_out.sort(key=lambda r: r["start"])
-    batches = sum(r["count"] for r in ranges)
-    reasons = []
-    for item in ranges:
-        if _DCC_REASONS[item["reason"]] not in reasons:
-            reasons.append(_DCC_REASONS[item["reason"]])
-    record = {"threshold": " + ".join(reasons) or "no range found", "threshold_value": None if median is None or mad is None else round(median - 2 * mad, 3),
-              "median": None if median is None else round(median, 3), "mad": None if mad is None else round(mad, 4), "n_excluded": batches,
-              "degrees_excluded": round(batches * width * oscillation, 1), "n_total": len(frames), "column": "only",
-              "limit_pct": int(AUTOPILOT_DCC_LIMIT * 100), "left_out": sum(r["count"] for r in left_out), "not_negative": not_negative,
-              "trimmed": len([r for r in ranges if r.get("part_of")])}
-
-    def first_frame(batch):
-        return max(1, batch - width + 1)
-
-    def frame_range(item):
-        chosen = {"first": first_frame(item["start"]), "last": item["end"], "reason": "dcc_half=" + str(round(item["avg_delta"], 2)), "batches": item["count"]}
-        if item.get("part_of"):
-            chosen["part_of"] = [first_frame(item["part_of"][0]), item["part_of"][1]]
-        return chosen
-
-    return {"exclude": [frame_range(r) for r in ranges], "left_out": [frame_range(r) for r in left_out], "record": record}
+    """What AutoPilot excludes from XDSCC12 results in its one pass (mxconv.dcc.automatic)."""
+    return _mx.dcc.automatic(data, oscillation)
 
 
 # ── what AutoPilot acts on, for the page ─────────────────────────────────────
@@ -574,36 +363,19 @@ def step_advice(step, metrics, lp_text):
 def xscale_shells(high):
     """RESOLUTION_SHELLS for a high-resolution limit: ten shells of equal volume in 1/d²
     from 80 Å, then five 0.1 Å shells that visibly reach the cut-off."""
-    d_low, n_fine, n_coarse = 80.0, 5, 10
-    fine_start = high + n_fine * 0.10
-    if fine_start >= d_low:
-        return js_fixed(high, 2)
-    inv_low = 1.0 / (d_low * d_low)
-    inv_fine = 1.0 / (fine_start * fine_start)
-    bounds = [math.sqrt(1.0 / (inv_low + i * (inv_fine - inv_low) / n_coarse)) for i in range(1, n_coarse)]
-    for i in range(n_fine + 1):
-        d = fine_start - i * 0.10
-        if d < high - 0.001:
-            break
-        bounds.append(d)
-    return " ".join(js_fixed(v, 2) for v in bounds)
+    return _mx.shells.text(_mx.shells.table(high))
 
 
 def xds_shells(high):
     """RESOLUTION_SHELLS for CORRECT, which takes at most 9 values: six shells of equal
     volume in 1/d² from 80 Å, then three 0.1 Å shells that reach the cut-off."""
-    d_low, n_fine, n_coarse = 80.0, 3, 6
-    fine_start = high + n_fine * 0.10
-    inv_low = 1.0 / (d_low * d_low)
-    inv_fine = 1.0 / (fine_start * fine_start)
-    bounds = [math.sqrt(1.0 / (inv_low + i * (inv_fine - inv_low) / n_coarse)) for i in range(1, n_coarse)]
-    bounds += [fine_start - i * 0.10 for i in range(n_fine)] + [high]
-    return " ".join(js_fixed(v, 2) for v in bounds[-9:])
+    return _mx.shells.text(_mx.shells.table_xds(high))
 
 
 XSCALE_CUTOFF_MODES = {"isig": ("isig2", "I/σ ≈ 2.0"), "robs": ("r_obs_55", "R-obs ≈ 55%"),
                        "cc50": ("cc_half_50", "CC½ ≈ 50%"), "cc12": ("cc_half_sig", "CC½ significant")}
 XSCALE_CUTOFF_DEFAULT = "cc50"
+XSCALE_CUTOFF_ORDER = ("isig", "robs", "cc50", "cc12")      # the next one found when the chosen one is not reached
 
 
 def xscale_autofill(metrics, mode=None):
@@ -614,19 +386,8 @@ def xscale_autofill(metrics, mode=None):
     cell = metrics.get("unit_cell")
     if cell:
         out["unit_cell"] = " ".join(js_fixed(cell[k], 2) for k in ("a", "b", "c", "alpha", "beta", "gamma"))
-    cutoffs = metrics.get("cutoffs") or {}
-    found = cutoffs.get("all_cutoffs") or {}
-    reached = cutoffs.get("reached") or {}
-    values = {"isig": found.get("isig2") if reached.get("isig2") else None,
-              "robs": found.get("r_obs_55") if reached.get("r_obs_55") else None,
-              "cc50": found.get("cc_half_50") if reached.get("cc_half_50") else None,
-              "cc12": found.get("cc_half_sig")}
     mode = mode if mode in XSCALE_CUTOFF_MODES else XSCALE_CUTOFF_DEFAULT
-    chosen, name = values.get(mode), mode
-    if chosen is None:
-        out["fallback"] = True
-        name = next((k for k in ("isig", "robs", "cc50", "cc12") if values[k] is not None), None)
-        chosen = values[name] if name else None
+    chosen, name, out["fallback"] = _mx.cutoff.choose(metrics.get("cutoffs") or {}, mode, order=XSCALE_CUTOFF_ORDER)
     if chosen is not None:
         high = float(js_fixed(chosen, 2))
         out.update({"resolution_low": "999", "resolution_high": js_fixed(high, 2), "shells": xscale_shells(high),
@@ -635,163 +396,19 @@ def xscale_autofill(metrics, mode=None):
 
 
 # ── Table 1 ──────────────────────────────────────────────────────────────────
-SG_SYMBOLS = {1: "P 1", 2: "P -1", 3: "P 2", 4: "P 2₁", 5: "C 2", 10: "P 2/m", 16: "P 2 2 2",
-              17: "P 2 2 2₁", 18: "P 2₁ 2₁ 2", 19: "P 2₁ 2₁ 2₁", 20: "C 2 2 2₁", 21: "C 2 2 2", 22: "F 2 2 2",
-              23: "I 2 2 2", 24: "I 2₁ 2₁ 2₁", 75: "P 4", 76: "P 4₁", 77: "P 4₂", 78: "P 4₃", 79: "I 4", 80: "I 4₁",
-              89: "P 4 2 2", 90: "P 4 2₁ 2", 91: "P 4₁ 2 2", 92: "P 4₁ 2₁ 2", 93: "P 4₂ 2 2", 94: "P 4₂ 2₁ 2",
-              95: "P 4₃ 2 2", 96: "P 4₃ 2₁ 2", 97: "I 4 2 2", 98: "I 4₁ 2 2",
-              143: "P 3", 144: "P 3₁", 145: "P 3₂", 146: "R 3", 149: "P 3 1 2", 150: "P 3 2 1",
-              151: "P 3₁ 1 2", 152: "P 3₁ 2 1", 153: "P 3₂ 1 2", 154: "P 3₂ 2 1", 155: "R 3 2",
-              168: "P 6", 169: "P 6₁", 170: "P 6₅", 171: "P 6₂", 172: "P 6₄", 173: "P 6₃",
-              177: "P 6 2 2", 178: "P 6₁ 2 2", 179: "P 6₅ 2 2", 180: "P 6₂ 2 2", 181: "P 6₄ 2 2", 182: "P 6₃ 2 2",
-              195: "P 2 3", 196: "F 2 3", 197: "I 2 3", 198: "P 2₁ 3", 199: "I 2₁ 3",
-              207: "P 4 3 2", 208: "P 4₂ 3 2", 209: "F 4 3 2", 210: "F 4₁ 3 2", 211: "I 4 3 2", 212: "P 4₃ 3 2",
-              213: "P 4₁ 3 2", 214: "I 4₁ 3 2"}
-
-
-def _sg_name(number):
-    value = js_float(number)
-    n = int(value) if value is not None else None
-    return SG_SYMBOLS[n] + " (#" + str(n) + ")" if n in SG_SYMBOLS else "#" + ("NaN" if n is None else str(n))
+SG_SYMBOLS = _mx.table1.SG_SYMBOLS
+_sg_name = _mx.table1.space_group_text
 
 
 def table1_rows(d):
     """The rows of Table 1 from /table1data's results: [{section}, {label, value}, ...].
-    Each value reads overall (outer shell).  A label may hold markup such as <sub>."""
-    inp = d.get("xdsinp") or {}
-    xscale = d.get("xscale") or {}
-    correct = d.get("correct") or {}
-    has_xscale = bool(xscale.get("statistics_table"))
-    has_correct = bool(correct.get("statistics_table"))
-    stats = xscale["statistics_table"] if has_xscale else (correct["statistics_table"] if has_correct else [])
-    total, outer = None, None
-    if stats:
-        total = _last_total(stats) or stats[-1]
-        for row in stats:
-            if _has_resolution(row) and not _is_total(row):
-                outer = row
-    sg = xscale.get("space_group") if _js_true(xscale.get("space_group")) else (
-        correct.get("space_group") if _js_true(correct.get("space_group")) else inp.get("space_group"))
-    cell = xscale.get("unit_cell") if _js_true(xscale.get("unit_cell")) else (
-        correct.get("unit_cell") if _js_true(correct.get("unit_cell")) else None)
-    if isinstance(cell, dict):
-        cell_text = (", ".join(js_fixed(cell[k], 2) for k in ("a", "b", "c")) + "  "
-                     + ", ".join(js_fixed(cell[k], 1) for k in ("alpha", "beta", "gamma")))
-    else:
-        cell_text = inp.get("unit_cell") or ""
-    primary = xscale if has_xscale else (correct if has_correct else {})
-    shells = [row for row in stats if _has_resolution(row) and not _is_total(row)]
-    rpim = d.get("rpim")
-    res_text, res_outer = "", ""
-    if outer:
-        low = js_float(primary.get("resolution_range_low"))
-        if low is None and rpim and _js_true(rpim.get("d_low")):
-            low = js_float(rpim.get("d_low"))
-        if low is None and d.get("correct") is not None:
-            low = js_float(correct.get("resolution_range_low"))
-        low_text = "" if low is None else js_fixed(low, 2)
-        res_text = (low_text + "–" if low_text else "") + str(outer["resolution"])
-        before = shells[-2]["resolution"] if len(shells) > 1 else low_text
-        res_outer = (str(before) + "–" if before else "") + str(outer["resolution"])
-
-    def clean(value):
-        return "" if value is None else re.sub(r"[%*]", "", str(value)).strip()
-
-    def redundancy(row):
-        if not row:
-            return ""
-        observed, unique = js_float(row.get("observed")), js_float(row.get("unique"))
-        return js_fixed(observed / unique, 1) if unique and unique > 0 and observed is not None else ""
-
-    def pair(value, value_outer=None):
-        if not value and value != 0:
-            return ""
-        text = str(value)
-        if value_outer is not None and value_outer != "":
-            text += " (" + str(value_outer) + ")"
-        return text
-
-    def cc_star(row):
-        if not row or not _js_true(row.get("cc_half")):
-            return ""
-        value = js_float(str(row.get("cc_half")).replace("*", ""))
-        if value is None:
-            return ""
-        fraction = value / 100.0
-        if fraction <= 0:
-            return "0.0"
-        fraction = min(fraction, 1)
-        return js_fixed(math.sqrt(2.0 * fraction / (1.0 + fraction)) * 100, 1)
-
-    def column(key):
-        return pair(clean(total.get(key)), clean(outer.get(key)) if outer else "") if total else ""
-
-    isa = ""
-    if xscale.get("isa_table"):
-        isa = ", ".join(str(r.get("isa")) for r in xscale["isa_table"])
-    elif isinstance(correct.get("isa"), dict) and _js_true(correct["isa"].get("isa")):
-        isa = correct["isa"]["isa"]
-    rows = []
-
-    def add(label, value):
-        if value is not None and value != "":
-            rows.append({"label": label, "value": _js_number_text(value) if isinstance(value, float) else str(value)})
-
-    def filled(value):
-        return value if _js_true(value) else ""
-
-    rows.append({"section": "Data Collection"})
-    add("Detector", filled(inp.get("detector")))
-    add("Wavelength (Å)", filled(inp.get("wavelength")))
-    add("Detector distance (mm)", filled(inp.get("detector_distance")))
-    add("Oscillation range (°)", filled(inp.get("oscillation_range")))
-    add("No. of images", filled(inp.get("n_images")))
-    add("Total rotation range (°)", filled(inp.get("total_rotation")))
-    add("Space group", _sg_name(sg) if _js_true(sg) else "")
-    add("Unit cell (a, b, c (Å); α, β, γ (°))", cell_text)
-    rows.append({"section": "Data Processing"})
-    add("Resolution range (Å)", pair(res_text, res_outer) if res_text else "")
-    add("Completeness (%)", column("completeness"))
-    add("Redundancy", pair(redundancy(total), redundancy(outer)) if total else "")
-    add("R<sub>meas</sub> (%) &dagger;", column("r_meas"))
-    # R-pim is exact, from the unmerged reflections, and only when it could be checked
-    # against the R-meas of the log.  Never R-meas/sqrt(N).
-    if total:
-        if "rpim" not in d:
-            add("R<sub>pim</sub> (%) &Dagger;", "calculating…")
-        elif rpim and _js_true(rpim.get("overall")):
-            add("R<sub>pim</sub> (%) &Dagger;", pair(rpim.get("overall"), rpim.get("outer") or ""))
-    add("R<sub>merge</sub> (%) &sect;", column("r_obs"))
-    add("⟨I/σ(I)⟩", column("i_sigma"))
-    add("CC<sub>1/2</sub> (%) &Vert;", column("cc_half"))
-    add("CC* (%) &Vert;", pair(cc_star(total), cc_star(outer)) if total else "")
-    add("Total reflections", pair(total.get("observed"), outer.get("observed") if outer else "") if total else "")
-    add("Unique reflections", pair(total.get("unique"), outer.get("unique") if outer else "") if total else "")
-    if total and _js_true(total.get("anomal_corr")):
-        add("CC(anom) (%)", column("anomal_corr"))
-    if total and _js_true(total.get("siganom")):
-        add("SigAno", pair(total.get("siganom"), outer.get("siganom") if outer else ""))
-    if isa:
-        add("ISa", isa)
-    wilson = ""
-    if isinstance(correct.get("wilson_line"), dict) and "b" in correct["wilson_line"]:
-        wilson = js_fixed(correct["wilson_line"]["b"] or 0, 1)
-    from_correct = ' <span style="font-size:0.75em; opacity:0.65;">(CORRECT.LP)</span>' if has_xscale else ""
-    add("Wilson B (Å²)" + from_correct, wilson)
-    if correct.get("mosaicity") is not None and correct.get("mosaicity") != "":
-        add("Mosaicity (°)" + from_correct, js_fixed(correct["mosaicity"], 3))
-    return rows
+    Each value reads overall (outer shell); R-pim only when exact (mxconv.table1)."""
+    return _mx.table1.rows_from_xds(d)
 
 
 # ── methods text ─────────────────────────────────────────────────────────────
 _ENANTIOMORPHS = {76, 78, 91, 95, 92, 96, 144, 145, 151, 153, 152, 154, 169, 170, 171, 172, 178, 179, 180, 181, 212, 213}
-METHOD_REFERENCES = {
-    "xds": "Kabsch, W. (2010). Acta Cryst. D66, 125-132.",
-    "xscale": "Kabsch, W. (2010). Acta Cryst. D66, 133-144.",
-    "xdscc12": "Assmann, G. M., Wang, M. & Diederichs, K. (2020). Acta Cryst. D76, 636-644.",
-    "pointless": "Evans, P. R. (2006). Acta Cryst. D62, 72-82.",
-    "aimless": "Evans, P. R. & Murshudov, G. N. (2013). Acta Cryst. D69, 1204-1214.",
-}
+METHOD_REFERENCES = {key: _mx.cite.REFERENCES[key] for key in ("xds", "xscale", "xdscc12", "pointless", "aimless")}
 
 
 def _ranges_text(pairs):

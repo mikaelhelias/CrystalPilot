@@ -2472,128 +2472,18 @@ class LPParser:
           - criterion: str — which criterion was used
           - shell_index: int or None — index in table
           - all_cutoffs: dict — cutoffs for all four criteria
+          - reached: dict — False where the data never cross the threshold
+
+        One definition for the whole program (mxconv.cutoff): each statistic sits at
+        the middle of its shell in 1/d², and the cut-off is where it crosses its
+        threshold, interpolated linearly in 1/d²; CC½ significance is the last shell
+        XDS marks with '*'.  CrystalPilot keeps its four criteria (mxconv also gives
+        CC½ = 30 %, not used here).
         """
-        result = {
-            'resolution': None, 'criterion': criterion,
-            'shell_index': None, 'all_cutoffs': {}
-        }
-
-        if not statistics_table:
-            return result
-
-        # Parse shells (skip 'total' row)
-        shells = []
-        for i, row in enumerate(statistics_table):
-            res_str = row.get('resolution', '')
-            if not res_str or res_str.lower() == 'total':
-                continue
-            try:
-                d = float(res_str)
-            except (ValueError, TypeError):
-                continue
-            try:
-                isig = float(row.get('i_sigma', ''))
-            except (ValueError, TypeError):
-                isig = None
-            try:
-                cc = float(row.get('cc_half', '').replace('*', '').replace('%', ''))
-            except (ValueError, TypeError):
-                cc = None
-            try:
-                robs = float(row.get('r_obs', '').replace('%', ''))
-            except (ValueError, TypeError):
-                robs = None
-            try:
-                nano = int(row.get('nano', '0'))
-            except (ValueError, TypeError):
-                nano = 0
-            try:
-                siganom = float(row.get('siganom', '0'))
-            except (ValueError, TypeError):
-                siganom = 0.0
-
-            shells.append({
-                'idx': i, 'd': d, 'isig': isig, 'cc': cc,
-                'robs': robs, 'nano': nano, 'siganom': siganom,
-            })
-
-        if not shells:
-            return result
-
-        # One definition for the whole program (interface, AutoPilot, batch,
-        # figures): the point where the statistic crosses its threshold,
-        # interpolated linearly in 1/d² between the two shells around it.
-        # The log prints the HIGH limit of each shell, but the statistic is the
-        # mean over the whole shell: it is attached to the middle of the shell
-        # in 1/d². (Attached to the limit, every cut-off came out about half a
-        # shell too optimistic.) The first shell starts at 1/d² = 0.
-        low_edge = 0.0
-        for s in shells:
-            high_edge = 1.0 / (s['d'] * s['d'])
-            s['inv_d2'] = 0.5 * (low_edge + high_edge)
-            low_edge = high_edge
-            s['star'] = '*' in str(statistics_table[s['idx']].get('cc_half', ''))
-
-        def _crossing(field, threshold, cross_above):
-            """(d, reached). reached is False when every shell passes."""
-            for k in range(1, len(shells)):
-                v0, v1 = shells[k - 1][field], shells[k][field]
-                if v0 is None or v1 is None:
-                    continue
-                if cross_above:
-                    crossed = v0 <= threshold < v1
-                else:
-                    crossed = v0 >= threshold > v1
-                if crossed:
-                    frac = (threshold - v0) / (v1 - v0)
-                    inv = shells[k - 1]['inv_d2'] + frac * (shells[k]['inv_d2'] - shells[k - 1]['inv_d2'])
-                    if inv > 0:
-                        return (1.0 / inv) ** 0.5, True
-            # No clean crossing. If the last shell fails (values not monotonic),
-            # cut at the last shell that still passes; if all fail, the first.
-            last = shells[-1][field]
-            if len(shells) >= 2 and last is not None:
-                fails = last > threshold if cross_above else last < threshold
-                if fails:
-                    for s in reversed(shells):
-                        v = s[field]
-                        if v is None:
-                            continue
-                        if (v <= threshold) if cross_above else (v >= threshold):
-                            return s['d'], True
-                    return shells[0]['d'], True
-            # Every shell passes: all the data can be kept.
-            return (shells[-1]['d'] if last is not None else None), False
-
-        reached = {}
-        for key, field, threshold, above in (('isig2', 'isig', 2.0, False),
-                                             ('cc_half_50', 'cc', 50.0, False),
-                                             ('r_obs_55', 'robs', 55.0, True)):
-            value, reached[key] = _crossing(field, threshold, above)
-            result['all_cutoffs'][key] = round(value, 2) if value is not None else None
-
-        # ── CC½ significance ──────────────────────────────────────────
-        # The last shell whose CC½ XDS marks with '*' (significant at the 0.1 %
-        # level; Karplus & Diederichs, 2012). Not a fixed percentage.
-        starred = [s for s in shells if s['star']]
-        if starred:
-            result['all_cutoffs']['cc_half_sig'] = starred[-1]['d']
-            reached['cc_half_sig'] = starred[-1] is not shells[-1]
-        else:
-            # A log without significance marks: fall back on I/σ.
-            result['all_cutoffs']['cc_half_sig'] = result['all_cutoffs']['isig2']
-            reached['cc_half_sig'] = reached['isig2']
-        result['reached'] = reached
-
-        # Select the requested criterion
-        chosen = result['all_cutoffs'].get(criterion)
-        result['resolution'] = chosen
-
-        # The shell the cut-off falls in or next to (for marking a table row)
-        if chosen is not None:
-            nearest = min(shells, key=lambda s: abs(s['d'] - chosen))
-            result['shell_index'] = nearest['idx']
-
+        result = _mx.cutoff.determine_xds(statistics_table, criterion)
+        for key in ('all_cutoffs', 'reached'):
+            if key in result:
+                result[key].pop('cc_half_30', None)
         return result
 
     @staticmethod

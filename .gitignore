@@ -19,6 +19,7 @@
 !/files/build.py
 !/files/tools/
 !/files/tests/
+!/files/vendor/
 /files/src/1/
 /files/src/src_FILEMAP.md
 /files/src/AUTOPILOT_OPTIMIZE_SPEC*.md

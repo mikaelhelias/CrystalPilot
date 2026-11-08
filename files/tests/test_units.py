@@ -1805,6 +1805,29 @@ def define_checks(m, scratch):
             none = m._clean_inp_text(text % other, "xds")
             assert "LIB" not in m._parse_xdsinp_params(none) and ("!LIB= " + other) in none, none
 
+    # ── mxconv: the statistics conventions, embedded from files/vendor/mxconv ──
+    @check("mxconv: the build embeds the pinned copy in files/vendor/mxconv, unchanged")
+    def _():
+        import hashlib
+        folder = FILES / "vendor" / "mxconv"
+        sums = {}
+        for line in (folder / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                digest, name = line.split()
+                sums[name] = digest
+        assert set(m._MXCONV_SOURCES) == {name[:-3] for name in sums}, sorted(m._MXCONV_SOURCES)
+        for name, source in m._MXCONV_SOURCES.items():
+            data = (folder / (name + ".py")).read_bytes()
+            assert source.encode("utf-8") == data, name
+            assert hashlib.sha256(data).hexdigest() == sums[name + ".py"], name
+        assert m._MXCONV_VERSION == (folder / "VERSION").read_text(encoding="utf-8").strip()
+        assert "BSD 3-Clause" in m._MXCONV_LICENSE
+        # CrystalPilot keeps its own default and its four criteria
+        assert m.XSCALE_CUTOFF_DEFAULT == "cc50"
+        assert set(m.LPParser.determine_resolution_cutoff([{"resolution": "3.0", "i_sigma": "5", "cc_half": "90*", "r_obs": "9%"},
+                                                           {"resolution": "2.0", "i_sigma": "1", "cc_half": "20", "r_obs": "90%"}])["all_cutoffs"]) \
+            == {"isig2", "cc_half_50", "r_obs_55", "cc_half_sig"}
+
     # ── page rules on the server: frame-suggestions, xscale-shells, diagnostics ──
     @check("page rules: numbers print as the page always printed them")
     def _():
