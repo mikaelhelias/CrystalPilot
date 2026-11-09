@@ -507,21 +507,20 @@ def table1_rpim(hkl_path, stats_table):
 
     XDS and XSCALE print R-meas but not R-pim.  R-meas / sqrt(multiplicity)
     is only an approximation, so the value is computed from the unmerged
-    reflections with gemmi (XDS-style weighting).  The shells are the ones
-    of the log: the reflections are sorted by resolution and cut at the
-    observation counts of the log's own table, so no shell limit has to be
-    guessed from a number rounded to 0.01 A.
+    reflections (mxconv.merge.checked_rpim).  The shells are the ones of the
+    log: the reflections (I/sigma >= -3, as XDS counts them) are sorted by
+    resolution and cut at the observation counts of the log's own table, so
+    no shell limit has to be guessed from a number rounded to 0.01 A.  Friedel
+    mates are kept apart when the file says FRIEDEL'S_LAW=FALSE.
 
-    Nothing is trusted blindly: the R-meas gemmi finds for the same
-    reflections must agree with the R-meas printed in the log, otherwise
-    the value is withheld and the reason returned.
+    Nothing is trusted blindly: the R-meas found for the same reflections must
+    agree with the R-meas printed in the log, otherwise the value is withheld
+    and the reason returned.
 
     Returns {"overall": str|None, "outer": str|None, "source": name,
              "d_low": low-resolution limit of the data (A),
              "reason": text when something is withheld}.
     """
-    import gemmi
-    import numpy as np
     from pathlib import Path as _P
 
     hkl_path = _P(hkl_path)
@@ -550,64 +549,21 @@ def table1_rpim(hkl_path, stats_table):
     if key in _T1_RPIM_CACHE:
         return dict(_T1_RPIM_CACHE[key])
 
-    xds = gemmi.read_xds_ascii(str(hkl_path))
-    full = gemmi.Intensities()
-    full.import_xds(xds)
-    cell, sg = full.unit_cell, full.spacegroup
-    hkl = np.array(full.miller_array, dtype=np.int32)
-    val = np.array(full.value_array, dtype=np.float64)
-    sig = np.array(full.sigma_array, dtype=np.float64)
-    n_file, n_log = len(hkl), sum(counts)
+    mx = _mx_engine()
+    data = mx.unmerged.read(str(hkl_path))
+    n_file, n_log = len(data), sum(counts)
     # The log leaves out a few observations (signal/noise below -3); more than
     # 1 % apart means the file and the log do not belong together.
     if n_file < n_log or (n_file - n_log) > 0.01 * max(n_log, 1):
         out["reason"] = ("%s holds %d observations, the log counts %d: "
                          "not the same run" % (hkl_path.name, n_file, n_log))
         return out
-    if hasattr(cell, 'calculate_d_array'):
-        d = np.asarray(cell.calculate_d_array(hkl))
-    else:
-        d = np.array([cell.calculate_d(h) for h in hkl])
-    order = np.argsort(-d, kind='stable')
-    # The lowest-resolution observation the statistics include: the true low
-    # limit of the data (XSCALE.LP does not print it).
-    out["d_low"] = round(float(d[order[0]]), 2)
-    dtype = gemmi.DataType.Mean if _xds_friedel(xds) else gemmi.DataType.Anomalous
-    if dtype == gemmi.DataType.Anomalous:
-        signed = _xds_signed_hkl(xds, hkl, val)
-        if signed is None:
-            out["reason"] = "%s: Friedel mates cannot be told apart in this file" % hkl_path.name
-            return out
-        hkl = signed
-
-    def _stats(idx):
-        part = gemmi.Intensities()
-        part.set_data(cell, sg, hkl[idx], val[idx], sig[idx])
-        part.prepare_for_merging(dtype)
-        try:
-            s = part.calculate_merging_stats(None, use_weights='X')[0]
-        except TypeError:
-            s = part.calculate_merging_stats(None)[0]
-        return s.r_meas() * 100.0, s.r_pim() * 100.0
-
-    def _checked(idx, row, what):
-        r_meas, r_pim = _stats(idx)
-        logged = _num(row.get('r_meas'))
-        if logged is None or not (r_meas == r_meas and r_pim == r_pim):
-            return None, "%s: no R-meas to check against" % what
-        if abs(r_meas - logged) > max(0.2, 0.01 * abs(logged)):
-            return None, ("%s: R-meas from %s is %.1f %%, the log says %.1f %%"
-                          % (what, hkl_path.name, r_meas, logged))
-        return "%.1f" % r_pim, ""
-
-    reasons = []
-    out["overall"], why = _checked(order[:n_log], totals[-1], "overall")
-    if why:
-        reasons.append(why)
-    out["outer"], why = _checked(order[n_log - counts[-1]:n_log], shells[-1], "highest shell")
-    if why:
-        reasons.append(why)
-    out["reason"] = "; ".join(reasons)
+    # The lowest-resolution observation: the true low limit of the data
+    # (XSCALE.LP does not print it).
+    out["d_low"] = round(float(data.d().max()), 2)
+    got = mx.merge.checked_rpim(data, [{"n_obs": c, "r_meas": _num(r.get('r_meas'))} for c, r in zip(counts, shells)],
+                                _num(totals[-1].get('r_meas')))
+    out.update({"overall": got["overall"], "outer": got["outer"], "reason": got["reason"]})
     if len(_T1_RPIM_CACHE) > 16:
         _T1_RPIM_CACHE.clear()
     _T1_RPIM_CACHE[key] = dict(out)
@@ -1238,379 +1194,103 @@ def apply_polarization_and_compare(input_hkl, polarization=0.99, normal=(0, 1, 0
 # ---------------------------------------------------------------------------
 
 def analyze_anisotropy(input_hkl, n_shells=15):
-    """Analyse diffraction anisotropy from XDS_ASCII.HKL.
+    """Analyse diffraction anisotropy from XDS_ASCII.HKL (mxconv.anisotropy).
 
-    Projects each reflection onto the principal reciprocal-space axes
-    (a*, b*, c*) and computes per-axis resolution statistics.
+    Observations whose scattering vector lies within 30 degrees of a*, b* or c*
+    are binned by resolution (equal reciprocal volume), and the merged
+    <I/sigma>, CC1/2 (random halves of each reflection's observations) and a
+    Wilson B (shells with signal) are computed per axis and for all data.
 
     Requires: gemmi, numpy.
 
-    Args:
-        input_hkl: path to XDS_ASCII.HKL
-        n_shells:  number of resolution bins per axis (default 15)
-
     Returns:
         dict with keys:
-          success (bool), message (str),
-          cell (list), spacegroup (str),
-          per_axis (dict of 'a_star','b_star','c_star' each containing
-                    list of shell dicts with d_min, d_max, mean_i_sigma, cc_half),
-          b_factors (dict with a_star, b_star, c_star Wilson B per axis),
-          b_iso (float — isotropic Wilson B for comparison),
-          fractional_anisotropy (float — 0=isotropic, 1=fully anisotropic),
-          delta_b (dict with pairwise B differences),
-          recommendation (str)
+          success (bool), message (str), cell (list), spacegroup (str),
+          per_axis ('a_star', 'b_star', 'c_star': list of shell dicts with
+                    d_max, d_min, n_refl, mean_i_sigma, cc_half),
+          b_factors (Wilson B per axis), b_iso (Wilson B of all data),
+          fractional_anisotropy ((B_max - B_min) / B_mean), delta_b (pairwise),
+          limits (per axis: CC1/2 50 %, CC1/2 30 %, I/sigma 2, CC1/2 significance),
+          recommendation (str), axis_counts, n_shells, half_angle
     """
-    import gemmi
-    import numpy as np
     from pathlib import Path
-    import math
 
     input_hkl = str(input_hkl)
     if not Path(input_hkl).exists():
         return {"success": False, "message": "XDS_ASCII.HKL not found: " + input_hkl}
-
     try:
-        xds = gemmi.read_xds_ascii(input_hkl)
+        mx = _mx_engine()
+        data = mx.unmerged.read(input_hkl)
     except Exception as e:
         return {"success": False, "message": "Cannot read HKL file: " + str(e)}
-
-    if xds.data_size < 100:
+    if len(data) < 100:
         return {"success": False, "message": "Too few reflections for anisotropy analysis"}
 
-    sg, cell, cell_params = _xds_sg_cell(xds)
-    sg_name = sg.xhm() if sg else "unknown"
+    res = mx.anisotropy.along(data, n_bins=n_shells)
+    names = {"a*": "a_star", "b*": "b_star", "c*": "c_star"}
+    axis_results, b_factors, limits, axis_counts = {}, {}, {}, {}
+    for name, entry in res["directions"].items():
+        ax = names[name]
+        axis_results[ax] = [{"d_max": round(sh["d_low"], 3), "d_min": round(sh["d_high"], 3), "n_refl": sh["n_obs"],
+                             "mean_i_sigma": None if sh["i_sigma"] is None or sh["n_obs"] < 3 else round(sh["i_sigma"], 2),
+                             "cc_half": None if sh["cc_half"] is None or sh["n_cc"] < 10 else round(100.0 * sh["cc_half"], 1)}
+                            for sh in entry["shells"]]
+        b_factors[ax] = None if entry["wilson_b"] is None else round(entry["wilson_b"], 2)
+        found = entry["cutoffs"].get("all_cutoffs") or {}
+        limits[ax] = {k: found.get(k) for k in ("cc_half_50", "cc_half_30", "isig2", "cc_half_sig")}
+        axis_counts[ax] = entry["n_obs"]
+    axis_counts["unassigned"] = res["n_obs"] - sum(axis_counts.values())
+    axis_counts["total"] = res["n_obs"]
+    b_iso = None if res["isotropic"]["wilson_b"] is None else round(res["isotropic"]["wilson_b"], 2)
 
-    # ── Extract reflection data as numpy arrays ──
-    # gemmi XdsAscii stores h,k,l,iobs,sigma per reflection
-    uid = None   # index of the unique reflection each observation belongs to
-    try:
-        if hasattr(gemmi, 'Intensities') and hasattr(gemmi, 'DataType'):
-            # Asymmetric-unit indices, sorted: equivalent observations are neighbours.
-            merged_view = gemmi.Intensities()
-            merged_view.import_xds(xds)
-            merged_view.prepare_for_merging(gemmi.DataType.Mean)
-            hkl = np.array(merged_view.miller_array, dtype=np.int32)
-            if len(hkl) > 1:
-                changed = np.any(hkl[1:] != hkl[:-1], axis=1)
-                uid = np.concatenate(([0], np.cumsum(changed))).astype(np.int64)
-        elif hasattr(xds, 'miller_array'):
-            hkl = np.array(xds.miller_array, dtype=np.int32)
-        elif hasattr(gemmi, 'Intensities'):
-            intens = gemmi.Intensities()
-            intens.import_xds(xds)
-            hkl = np.array(intens.miller_array, dtype=np.int32)
-        else:
-            return {"success": False, "message": "gemmi version too old for anisotropy analysis"}
-    except Exception as e:
-        return {"success": False, "message": "Cannot extract HKL data: " + str(e)}
-
-    n_refl = len(hkl)
-    if n_refl < 100:
-        return {"success": False, "message": "Too few reflections (" + str(n_refl) + ")"}
-
-    # Get intensity and sigma arrays
-    try:
-        if uid is not None:
-            iobs = np.array(merged_view.value_array, dtype=np.float64)
-            sigma = np.array(merged_view.sigma_array, dtype=np.float64)
-        elif hasattr(xds, 'iobs_array'):
-            iobs = np.array(xds.iobs_array, dtype=np.float64)
-            sigma = np.array(xds.sigma_array, dtype=np.float64)
-        elif hasattr(gemmi, 'Intensities'):
-            intens = gemmi.Intensities()
-            intens.import_xds(xds)
-            iobs = np.array(intens.value_array, dtype=np.float64)
-            sigma = np.array(intens.sigma_array, dtype=np.float64)
-        else:
-            return {"success": False, "message": "Cannot extract intensity data"}
-    except Exception as e:
-        return {"success": False, "message": "Cannot extract intensities: " + str(e)}
-
-    # ── Compute reciprocal-space metric tensor ──
-    # G* = (a* b* c*) orthogonalization matrix
-    a, b, c = cell.a, cell.b, cell.c
-    al, be, ga = math.radians(cell.alpha), math.radians(cell.beta), math.radians(cell.gamma)
-
-    # Reciprocal cell parameters
-    vol = cell.volume
-    if vol < 1e-6:
-        return {"success": False, "message": "Invalid unit cell (zero volume)"}
-
-    sa, sb, sg_ = math.sin(al), math.sin(be), math.sin(ga)
-    ca, cb, cg = math.cos(al), math.cos(be), math.cos(ga)
-
-    a_star = b * c * sa / vol
-    b_star = a * c * sb / vol
-    c_star = a * b * sg_ / vol
-
-    # Compute d-spacing for each reflection
-    if hasattr(cell, 'calculate_d_array'):
-        d_arr = np.asarray(cell.calculate_d_array(hkl), dtype=np.float64)
-    else:
-        d_arr = np.array([cell.calculate_d(h) for h in hkl], dtype=np.float64)
-
-    # ── Classify reflections by dominant axis ──
-    # Use fractional Miller index contribution to determine which axis
-    # a reflection is most aligned with.
-    # For a reflection (h,k,l), the fractional contributions to 1/d² from
-    # each axis direction are computed using the metric tensor.
-    # We use a simplified projection: compute the component of 1/d² along
-    # each reciprocal axis.
-
-    h_arr = hkl[:, 0].astype(np.float64)
-    k_arr = hkl[:, 1].astype(np.float64)
-    l_arr = hkl[:, 2].astype(np.float64)
-
-    # Reciprocal metric tensor elements (for the squared contributions)
-    # 1/d² = h²a*² + k²b*² + l²c*² + cross terms
-    # We attribute the "axis contribution" using only the diagonal terms
-    # to classify reflections.
-    comp_a = (h_arr * a_star) ** 2
-    comp_b = (k_arr * b_star) ** 2
-    comp_c = (l_arr * c_star) ** 2
-    comp_total = comp_a + comp_b + comp_c
-    # Avoid division by zero
-    comp_total = np.where(comp_total > 0, comp_total, 1.0)
-
-    frac_a = comp_a / comp_total
-    frac_b = comp_b / comp_total
-    frac_c = comp_c / comp_total
-
-    # Classify: a reflection belongs to axis X if frac_X > threshold
-    # Use 0.5 — reflection is "predominantly" along that axis
-    CONE_THRESH = 0.5
-    mask_a = frac_a >= CONE_THRESH
-    mask_b = frac_b >= CONE_THRESH
-    mask_c = frac_c >= CONE_THRESH
-
-    # Filter out bad data
-    valid = (sigma > 0) & (d_arr > 0) & np.isfinite(iobs) & np.isfinite(sigma)
-
-    # ── Compute per-axis shell statistics ──
-    def _cc_half(ids, values):
-        """CC1/2 of one shell: the observations of EACH unique reflection are
-        split at random into two halves, the halves averaged, and the two sets
-        of half-means correlated (Karplus & Diederichs, 2012). Reflections
-        measured once cannot take part. None when fewer than 10 can."""
-        if ids is None or len(ids) < 20:
-            return None
-        order = np.lexsort((np.random.random(len(ids)), ids))
-        ids, values = ids[order], values[order]
-        first = np.concatenate(([True], ids[1:] != ids[:-1]))
-        group = np.cumsum(first) - 1
-        start = np.flatnonzero(first)
-        half = (np.arange(len(ids)) - start[group]) % 2
-        n_groups = int(group[-1]) + 1
-        n1 = np.bincount(group[half == 0], minlength=n_groups)
-        n2 = np.bincount(group[half == 1], minlength=n_groups)
-        s1 = np.bincount(group[half == 0], weights=values[half == 0], minlength=n_groups)
-        s2 = np.bincount(group[half == 1], weights=values[half == 1], minlength=n_groups)
-        both = (n1 > 0) & (n2 > 0)
-        if int(np.sum(both)) < 10:
-            return None
-        m1, m2 = s1[both] / n1[both], s2[both] / n2[both]
-        if np.std(m1) == 0 or np.std(m2) == 0:
-            return None
-        c12 = np.corrcoef(m1, m2)[0, 1]
-        return round(float(c12) * 100, 1) if np.isfinite(c12) else None
-
-    def _axis_shells(mask, d_vals, i_vals, s_vals, n_bins):
-        """Compute resolution shell statistics for a subset of reflections."""
-        sel = mask & valid
-        if np.sum(sel) < 20:
-            return [], None
-
-        ds = d_vals[sel]
-        iv = i_vals[sel]
-        sv = s_vals[sel]
-        us = uid[sel] if uid is not None else None
-
-        # Bin by 1/d² for even shell spacing
-        inv_d2 = 1.0 / (ds * ds)
-        lo, hi = np.min(inv_d2), np.max(inv_d2)
-        if hi - lo < 1e-9:
-            return [], None
-
-        edges = np.linspace(lo, hi, n_bins + 1)
-        bin_idx = np.digitize(inv_d2, edges) - 1
-        bin_idx = np.clip(bin_idx, 0, n_bins - 1)
-
-        shells = []
-        all_ln_i = []
-        all_ss = []  # sin²θ/λ² = 1/(4d²)
-
-        for bi in range(n_bins):
-            bm = bin_idx == bi
-            n_in = int(np.sum(bm))
-            if n_in < 3:
-                shells.append({
-                    "d_max": round(1.0 / math.sqrt(edges[bi]) if edges[bi] > 0 else 999, 3),
-                    "d_min": round(1.0 / math.sqrt(edges[bi + 1]) if edges[bi + 1] > 0 else 0.1, 3),
-                    "n_refl": n_in,
-                    "mean_i_sigma": None,
-                    "cc_half": None,
-                })
-                continue
-
-            bi_i = iv[bm]
-            bi_s = sv[bm]
-            bi_d = ds[bm]
-
-            # Mean I/σ of the merged unique reflections (inverse-variance weighted
-            # mean of the observations of each one), as CORRECT and XSCALE print
-            # it. The I/σ of single observations is lower by about the square
-            # root of the multiplicity and would understate every axis.
-            if us is not None:
-                _, inverse = np.unique(us[bm], return_inverse=True)
-                w = 1.0 / (bi_s * bi_s)
-                sum_w = np.bincount(inverse, weights=w)
-                sum_wi = np.bincount(inverse, weights=w * bi_i)
-                mean_isig = float(np.mean(sum_wi / np.sqrt(sum_w)))
-            else:
-                mean_isig = float(np.mean(bi_i / bi_s))
-
-            try:
-                cc_half = _cc_half(us[bm] if us is not None else None, bi_i)
-            except Exception:
-                cc_half = None
-
-            d_max = round(1.0 / math.sqrt(edges[bi]) if edges[bi] > 0 else 999, 3)
-            d_min = round(1.0 / math.sqrt(edges[bi + 1]) if edges[bi + 1] > 0 else 0.1, 3)
-
-            shells.append({
-                "d_max": d_max,
-                "d_min": d_min,
-                "n_refl": n_in,
-                "mean_i_sigma": round(mean_isig, 2),
-                "cc_half": cc_half,
-            })
-
-            # Collect for Wilson B fit
-            pos_mask = bi_i > 0
-            if np.sum(pos_mask) >= 3:
-                ln_mean_i = math.log(float(np.mean(bi_i[pos_mask])))
-                mid_inv_d2 = (edges[bi] + edges[bi + 1]) / 2.0
-                ss = mid_inv_d2 / 4.0  # sin²θ/λ²
-                all_ln_i.append(ln_mean_i)
-                all_ss.append(ss)
-
-        # Wilson B from linear fit: ln(<I>) = A - 2B·sin²θ/λ²
-        b_factor = None
-        if len(all_ss) >= 3:
-            try:
-                ss_arr = np.array(all_ss)
-                ln_arr = np.array(all_ln_i)
-                # Linear regression: ln_I = intercept + slope * ss
-                # slope = -2B, so B = -slope/2
-                A = np.vstack([ss_arr, np.ones(len(ss_arr))]).T
-                result = np.linalg.lstsq(A, ln_arr, rcond=None)
-                slope = result[0][0]
-                b_factor = round(-slope / 2.0, 2)
-            except Exception as _e:
-                _note_error(_e)
-
-        return shells, b_factor
-
-    # Set random seed for reproducible CC½
-    np.random.seed(42)
-
-    axis_results = {}
-    b_factors = {}
-
-    for axis_name, mask in [("a_star", mask_a), ("b_star", mask_b), ("c_star", mask_c)]:
-        shells, b_fac = _axis_shells(mask, d_arr, iobs, sigma, n_shells)
-        axis_results[axis_name] = shells
-        b_factors[axis_name] = b_fac
-
-    # ── Isotropic Wilson B for comparison ──
-    _, b_iso = _axis_shells(np.ones(n_refl, dtype=bool), d_arr, iobs, sigma, n_shells)
-
-    # ── Compute anisotropy metrics ──
     valid_b = {k: v for k, v in b_factors.items() if v is not None}
-
     fractional_anisotropy = None
     delta_b = {}
     recommendation = "Insufficient data for anisotropy assessment."
-
     if len(valid_b) >= 2:
         b_vals = list(valid_b.values())
-        b_max = max(b_vals)
-        b_min = min(b_vals)
         b_mean = sum(b_vals) / len(b_vals)
-
-        if b_mean > 0:
-            fractional_anisotropy = round((b_max - b_min) / b_mean, 3)
-        else:
-            fractional_anisotropy = 0.0
-
-        # Pairwise ΔB
+        fractional_anisotropy = round((max(b_vals) - min(b_vals)) / b_mean, 3) if b_mean > 0 else 0.0
         axes = list(valid_b.keys())
         for i_ax in range(len(axes)):
             for j_ax in range(i_ax + 1, len(axes)):
-                key = axes[i_ax] + "_vs_" + axes[j_ax]
-                delta_b[key] = round(abs(valid_b[axes[i_ax]] - valid_b[axes[j_ax]]), 2)
-
-        # Per-axis effective resolution (where I/σ drops below 2.0)
-        eff_res = {}
-        for ax_name, shells in axis_results.items():
+                delta_b[axes[i_ax] + "_vs_" + axes[j_ax]] = round(abs(valid_b[axes[i_ax]] - valid_b[axes[j_ax]]), 2)
+        if fractional_anisotropy < 0.25:
+            recommendation = ("Isotropic — fractional anisotropy {:.2f}. "
+                              "Standard isotropic resolution cutoff is appropriate.").format(fractional_anisotropy)
+        elif fractional_anisotropy < 0.5:
+            recommendation = ("Mild anisotropy detected (FA = {:.2f}). "
+                              "Consider anisotropic truncation (STARANISO) to retain "
+                              "stronger data along the best-diffracting axis while "
+                              "removing noise along the worst.").format(fractional_anisotropy)
+        else:
+            recommendation = ("Severe anisotropy (FA = {:.2f}). "
+                              "Strongly recommend anisotropic truncation via STARANISO. "
+                              "An isotropic cutoff will either discard good data along the "
+                              "best axis or include noise along the worst axis.").format(fractional_anisotropy)
+        res_parts = []
+        for ax in ("a_star", "b_star", "c_star"):
             last_good = None
-            for sh in shells:
+            for sh in axis_results.get(ax, []):
                 if sh["mean_i_sigma"] is not None and sh["mean_i_sigma"] >= 2.0:
                     last_good = sh["d_min"]
-            eff_res[ax_name] = last_good
-
-        # ── Recommendation ──
-        if fractional_anisotropy is not None:
-            if fractional_anisotropy < 0.25:
-                recommendation = ("Isotropic — fractional anisotropy {:.2f}. "
-                                  "Standard isotropic resolution cutoff is appropriate."
-                                  ).format(fractional_anisotropy)
-            elif fractional_anisotropy < 0.5:
-                recommendation = ("Mild anisotropy detected (FA = {:.2f}). "
-                                  "Consider anisotropic truncation (STARANISO) to retain "
-                                  "stronger data along the best-diffracting axis while "
-                                  "removing noise along the worst."
-                                  ).format(fractional_anisotropy)
-            else:
-                recommendation = ("Severe anisotropy (FA = {:.2f}). "
-                                  "Strongly recommend anisotropic truncation via STARANISO. "
-                                  "An isotropic cutoff will either discard good data along the "
-                                  "best axis or include noise along the worst axis."
-                                  ).format(fractional_anisotropy)
-
-            # Add effective resolution info
-            res_parts = []
-            for ax_name in ["a_star", "b_star", "c_star"]:
-                r = eff_res.get(ax_name)
-                label = ax_name.replace("_star", "*").replace("_", "")
-                if r is not None:
-                    res_parts.append("{}: {:.2f} Å".format(label, r))
-                else:
-                    res_parts.append("{}: N/A".format(label))
-            if res_parts:
-                recommendation += " Effective resolution (I/σ ≥ 2): " + ", ".join(res_parts) + "."
-
-    # Count reflections per axis
-    axis_counts = {
-        "a_star": int(np.sum(mask_a & valid)),
-        "b_star": int(np.sum(mask_b & valid)),
-        "c_star": int(np.sum(mask_c & valid)),
-        "unassigned": int(np.sum(~(mask_a | mask_b | mask_c) & valid)),
-        "total": int(np.sum(valid)),
-    }
+            label = ax.replace("_star", "*")
+            res_parts.append("{}: {:.2f} Å".format(label, last_good) if last_good is not None else "{}: N/A".format(label))
+        recommendation += " Effective resolution (I/σ ≥ 2): " + ", ".join(res_parts) + "."
 
     return {
         "success": True,
         "message": "Anisotropy analysis complete",
-        "cell": cell_params,
-        "spacegroup": sg_name,
+        "cell": list(data.cell),
+        "spacegroup": data.space_group.xhm(),
         "per_axis": axis_results,
         "b_factors": b_factors,
         "b_iso": b_iso,
         "fractional_anisotropy": fractional_anisotropy,
         "delta_b": delta_b,
+        "limits": limits,
         "recommendation": recommendation,
         "axis_counts": axis_counts,
         "n_shells": n_shells,
+        "half_angle": res["half_angle"],
     }

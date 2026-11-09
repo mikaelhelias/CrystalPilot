@@ -230,7 +230,7 @@ Mikael Elias
 
 ## License
 
-Copyright © 2026 Mikael Elias. CrystalPilot is free software under the [GNU General Public License v3](LICENSE). It comes without any warranty. XDS, neggia, CCP4 and XDSCC12 are separate programs under their own licences and are not part of this repository. The statistics conventions (resolution shells, cut-off, frame rejection, Table 1) come from mxconv, included in `files/vendor/mxconv` under the BSD 3-Clause licence ([files/vendor/mxconv/LICENSE](files/vendor/mxconv/LICENSE)).
+Copyright © 2026 Mikael Elias. CrystalPilot is free software under the [GNU General Public License v3](LICENSE). It comes without any warranty. XDS, neggia, CCP4 and XDSCC12 are separate programs under their own licences and are not part of this repository. The statistics conventions and calculations (resolution shells, cut-off, frame rejection, Table 1, exact R-pim, anisotropy) come from mxconv, included in `files/vendor/mxconv` under the BSD 3-Clause licence ([files/vendor/mxconv/LICENSE](files/vendor/mxconv/LICENSE)).
 
 ## Status
 

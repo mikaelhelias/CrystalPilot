@@ -7,6 +7,6 @@ library; `unmerged`, `merge` and `anisotropy` (statistics from unmerged data)
 need numpy and gemmi and are imported explicitly.
 """
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.1.dev0"
 
 from . import fmt, shells, cutoff, stats, dcc, table1, cite, significance, logs  # noqa: F401

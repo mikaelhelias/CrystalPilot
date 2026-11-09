@@ -52,6 +52,8 @@ VENDOR_DIR = os.path.join(SCRIPT_DIR, 'vendor')
 # _cp_mxconv so it never meets another installed copy.  Load order follows the
 # imports between its modules; __init__ comes last.
 MXCONV_MODULES = ['fmt', 'shells', 'cutoff', 'stats', 'significance', 'dcc', 'table1', 'cite', 'logs', '__init__']
+# statistics from unmerged data: need numpy and gemmi, so they are executed on first use (_mx_engine())
+MXCONV_ENGINE = ['unmerged', 'merge', 'anisotropy']
 
 
 def read_file(path):
@@ -96,7 +98,7 @@ def build_mxconv_block():
             digest, name = line.split()
             sums[name] = digest
     sources = {}
-    for name in MXCONV_MODULES:
+    for name in MXCONV_MODULES + MXCONV_ENGINE:
         path = os.path.join(folder, name + '.py')
         with open(path, 'rb') as f:
             data = f.read()
@@ -110,9 +112,10 @@ def build_mxconv_block():
              '_MXCONV_VERSION = ' + repr(version),
              '_MXCONV_LICENSE = ' + repr(licence),
              '_MXCONV_SOURCES = {']
-    for name in MXCONV_MODULES:
+    for name in MXCONV_MODULES + MXCONV_ENGINE:
         lines.append('    ' + repr(name) + ': ' + repr(sources[name]) + ',')
     lines += ['}',
+              '_MXCONV_ENGINE = ' + repr(tuple(MXCONV_ENGINE)),
               '',
               '',
               'def _load_mxconv():',
@@ -125,6 +128,8 @@ def build_mxconv_block():
               "    package.__package__ = '_cp_mxconv'",
               "    sys.modules['_cp_mxconv'] = package",
               '    for name, source in _MXCONV_SOURCES.items():',
+              '        if name in _MXCONV_ENGINE:',
+              '            continue',
               "        if name == '__init__':",
               '            module = package',
               '        else:',
@@ -137,6 +142,24 @@ def build_mxconv_block():
               '',
               '',
               '_mx = _load_mxconv()',
+              '',
+              '',
+              'def _mx_engine():',
+              '    # the vendored mxconv with its statistics engine (numpy and gemmi needed), loaded once',
+              '    import types as _types',
+              '    for name in _MXCONV_ENGINE:',
+              "        if '_cp_mxconv.' + name in sys.modules:",
+              '            continue',
+              "        module = _types.ModuleType('_cp_mxconv.' + name)",
+              "        module.__package__ = '_cp_mxconv'",
+              "        sys.modules['_cp_mxconv.' + name] = module",
+              '        try:',
+              "            exec(compile(_MXCONV_SOURCES[name], '<mxconv/' + name + '.py>', 'exec'), module.__dict__)",
+              '        except BaseException:',
+              "            del sys.modules['_cp_mxconv.' + name]",
+              '            raise',
+              '        setattr(_mx, name, module)',
+              '    return _mx',
               '']
     return '\n'.join(lines) + '\n'
 
