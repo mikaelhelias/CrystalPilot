@@ -1309,6 +1309,23 @@ class Workflows(unittest.TestCase):
         self.allowed('revert_change', project=self.name, change_id=change['undo'])
         self.assertEqual((self.p / 'XDS.INP').read_text().strip(), start.strip())
 
+    def test_an_object_argument_sent_as_json_text_is_read_and_a_wrong_one_is_explained(self):
+        self.agent_on('own')
+        project = self.own_project()
+        changed = self.tool_ok('set_parameters', project=project, params='{"SIGNAL_PIXEL": 7}')
+        self.assertIn('SIGNAL_PIXEL= 7', json.dumps(changed))
+        message, failed = self.tool('set_parameters', project=project, params='resolution 2.0')
+        self.assertTrue(failed)
+        self.assertIn('params must be an object', message)
+        self.assertIn('INCLUDE_RESOLUTION_RANGE', message)
+        self.assertIn('resolution 2.0', message)
+        # a keyword whose value is an object is refused before anything is written or asked
+        start = self.tool_ok('read_project_file', project=project, file='XDS.INP', limit=500)['text']
+        message, failed = self.tool('set_parameters', project=project, params='{"RESOLUTION_CUTOFF": {"resolution": 2.0}}')
+        self.assertTrue(failed)
+        self.assertIn('not an object', message)
+        self.assertEqual(self.tool_ok('read_project_file', project=project, file='XDS.INP', limit=500)['text'], start)
+
     def test_methods_text_says_only_what_the_project_shows(self):
         self.agent_on('own')
         project = self.own_project()
@@ -1336,6 +1353,18 @@ class Workflows(unittest.TestCase):
         # a project no agent touched does not say one did
         self.assert_terminal(self.stream(), 'completed')
         self.assertNotIn('AI agent', self.request('GET', self.url + '/methods')[1]['text'])
+        # an agent's change after the user's run, kept or undone, is not how the data were made
+        self.agent_on('full')
+        change = self.allowed('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 8})
+        self.allowed('revert_change', project=self.name, change_id=change['undo'])
+        self.assertNotIn('AI agent', self.request('GET', self.url + '/methods')[1]['text'])
+        # a change made before the user's next run is said, and the run stays the user's
+        self.allowed('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 8})
+        time.sleep(1.2)
+        self.assert_terminal(self.stream(), 'completed')
+        words = self.request('GET', self.url + '/methods')[1]['text']
+        self.assertIn('Input files were changed by an AI agent', words)
+        self.assertNotIn('Processing was carried out', words)
         # the file changed after the run: the reader is told
         path = self.p / 'XDS.INP'
         future = time.time() + 60

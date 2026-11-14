@@ -1263,6 +1263,8 @@ _AGENT_KEYWORD = re.compile(r"^[A-Z0-9][A-Z0-9_'./()\-]*$")
 
 
 def _agent_check_value(value):
+    if isinstance(value, dict):
+        raise AgentError("A keyword's value is text, a number, null or a list, not an object: " + json.dumps(value, ensure_ascii=False)[:60])
     if isinstance(value, (list, tuple)):
         for item in value:
             _agent_check_value(item)
@@ -1272,7 +1274,9 @@ def _agent_check_value(value):
 
 def _agent_check_params(params):
     if not isinstance(params, dict) or not params:
-        raise AgentError("params is required: keywords and their values, null to comment one out.")
+        raise AgentError("params must be an object of the file's keywords and their values, null to comment one out, "
+                         "for example {\"INCLUDE_RESOLUTION_RANGE\": \"50 2.0\", \"FRIEDEL'S_LAW\": \"TRUE\"}. Got: "
+                         + (json.dumps(params, ensure_ascii=False)[:80] if params not in (None, {}) else "nothing") + ".")
     for key, value in params.items():
         upper = str(key).upper()
         if not _AGENT_KEYWORD.match(upper):
@@ -1776,13 +1780,30 @@ def _agent_tool_description(tool):
             "annotations": {"title": tool["title"], "readOnlyHint": not writes, "destructiveHint": destructive, "openWorldHint": False}}
 
 
+def _agent_unquote_args(tool, args):
+    """Some models send an object or list argument as JSON text: read it as the value it holds."""
+    props = (tool.get("schema") or {}).get("properties") or {}
+    out = dict(args)
+    for key, value in args.items():
+        wanted = (props.get(key) or {}).get("type")
+        if wanted not in ("object", "array") or not isinstance(value, str):
+            continue
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict if wanted == "object" else list):
+            out[key] = parsed
+    return out
+
+
 def _agent_call(tool_name, arguments, port):
     """Run one tool: its reply as an MCP tool result.  A refusal is a result the agent can read."""
     level = AGENT_LEVEL
     tool = next((t for t in _agent_tools_for(level) if t["name"] == tool_name), None)
     if tool is None:
         raise KeyError(tool_name)
-    args = arguments if isinstance(arguments, dict) else {}
+    args = _agent_unquote_args(tool, arguments if isinstance(arguments, dict) else {})
     ctx = {"port": port, "level": level, "tool": tool_name, "args": args}
     try:
         data = tool["fn"](ctx, args)

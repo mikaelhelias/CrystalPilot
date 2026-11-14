@@ -2071,7 +2071,10 @@ def define_checks(m, scratch):
         tried = m.methods_text({"autopilot": {"optimization": {"kept": False}, "status": "failed", "criterion": "isig2"}})
         assert "tried and not kept" in tried["text"] and "high-resolution limit" not in tried["text"]
         assert m.methods_text({"xscale": LP.parse_xscale(real("XSCALE.LP"))})["references"][1] == "Kabsch, W. (2010b). Acta Cryst. D66, 133-144."
-        assert "by an AI agent (test client) through" in m.methods_text({"agent_acted": True, "agent_clients": ["test client", ""]})["text"]
+        assert "Processing was carried out by an AI agent (test client) through" in m.methods_text({"agent_ran": ["test client", ""]})["text"]
+        changed = m.methods_text({"agent_changed": ["other"]})["text"]
+        assert "Input files were changed by an AI agent (other)" in changed and "Processing was carried out" not in changed, changed
+        assert "AI agent" not in m.methods_text({"agent_ran": [], "agent_changed": []})["text"]
 
     @check("agent: the page's default folder words are the server's; the panel's handlers exist")
     def _():

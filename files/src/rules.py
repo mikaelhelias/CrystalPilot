@@ -510,10 +510,15 @@ def methods_text(facts):
         used.append("aimless")
     if facts.get("xdsconv_ran"):
         sentences.append("Reflections were converted with XDSCONV.")
-    clients = sorted({c for c in facts.get("agent_clients") or [] if c})
-    if facts.get("agent_acted"):
+    ran, changed = facts.get("agent_ran") or [], facts.get("agent_changed") or []
+    if ran or changed:
+        clients = sorted({c for c in ran + changed if c})
         who = " (" + ", ".join(clients) + ")" if clients else ""
-        sentences.append("Processing was carried out by an AI agent" + who + " through CrystalPilot's agent interface; each of its actions is recorded in the project.")
+        if ran:
+            sentences.append("Processing was carried out by an AI agent" + who + " through CrystalPilot's agent interface; each of its actions is recorded in the project.")
+        else:
+            sentences.append("Input files were changed by an AI agent" + who + " through CrystalPilot's agent interface before the data were processed; "
+                             "each change is recorded in the project.")
     text, references = " ".join(sentences), [METHOD_REFERENCES[k] for k in used]
     if "xscale" in used:        # two papers of one year, told apart by a letter
         references = [r.replace("(2010).", "(2010a).") if k == "xds" else r.replace("(2010).", "(2010b).") if k == "xscale" else r
@@ -554,8 +559,14 @@ def project_methods(project):
     facts["aimless_ran"] = _pfile(folder, "aimless.log").is_file()
     facts["xdsconv_ran"] = _pfile(folder, "XDSCONV.LP", "xdsconv").is_file()
     entries = agent_log_entries(project, 100000)
-    facts["agent_acted"] = bool(entries)
-    facts["agent_clients"] = [e.get("client") for e in entries if e.get("client") != "the page"]
+    # An agent's run shaped the data; a change to an input file did only when it came before the last CORRECT run.
+    # The page's own undo and an agent's stop or export are not part of how the data were made.
+    processed = datetime.fromtimestamp(Path(lp).stat().st_mtime).isoformat(timespec="seconds") if lp else ""
+    by_agent = [e for e in entries if e.get("client") != "the page"]
+    runs = ("run_autopilot", "run_program", "merge_datasets")
+    facts["agent_ran"] = [str(e.get("client") or "") for e in by_agent if e.get("tool") in runs]
+    facts["agent_changed"] = [str(e.get("client") or "") for e in by_agent
+                              if e.get("tool") not in runs + ("stop_job", "export_results") and str(e.get("time") or "") < processed]
     out = methods_text(facts)
     if not facts.get("autopilot") and not entries:
         warnings.append("XDS.INP shows what is set now, not any earlier steps done by hand.")
