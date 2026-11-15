@@ -26,6 +26,9 @@ AGENT_TEXT_LIMIT = 4000         # characters of one string in a summary reply
 AGENT_SEARCH_WAIT_SECONDS = 40  # how long one tool call waits for the XDS.INP search
 AGENT_SEARCH_KEEP_SECONDS = 600 # how long a finished search answers a repeated call
 _AGENT_SEARCHES = {}            # the search's request -> its thread's state
+AGENT_WAIT_DEFAULT = 25         # job_status waits this long for a change unless told otherwise
+AGENT_WAIT_MAX = 50             # under the 60 seconds some MCP clients allow a call
+AGENT_WAIT_STEP = 2.0           # how often a waiting job_status looks again
 AGENT_FOUND_KEEP_SECONDS = 3600 # how long run_autopilot knows a data set by the label find_datasets gave
 _AGENT_FOUND = {}               # label -> {template: (time, the entry find_datasets returned)}
 _AGENT_SEARCH_LOCK = threading.Lock()
@@ -38,8 +41,8 @@ AGENT_INSTRUCTIONS = (
     "then job_status until the run has ended, then get_statistics, get_diagnostics and get_space_group_evidence.\n"
     "To step in by hand, in a project of the agent's own: create_project and generate_xdsinp, set_parameters or apply_suggestion, "
     "then run_program. Changing a keyword runs nothing until run_program.\n"
-    "One run goes at a time and a run can take hours: wait the check_after_seconds a reply gives between "
-    "job_status calls.\n"
+    "One run goes at a time and a run can take hours. job_status waits up to 25 seconds for the run to change before "
+    "it answers, so call it again until the run has ended; other replies give check_after_seconds to wait.\n"
     "Set Friedel's law from the experiment: TRUE merges anomalous pairs (native data), FALSE keeps them apart (SAD/MAD). "
     "Ask the user when it is not known.\n"
     "Systematic absences cannot tell enantiomorphs apart (P4(1)/P4(3), P3(1)/P3(2), P6(1)/P6(5)): say so instead of "
@@ -773,7 +776,43 @@ def _agent_batch_id(job_id):
     return text[6:]
 
 
+def _agent_job_going(out):
+    return bool(out.get("running")) or any(m.get("status") == "running" for m in out.get("merges") or [])
+
+
+def _agent_job_mark(out):
+    """What a change of state is judged on: everything but the log, which moves all the time."""
+    return json.dumps({k: v for k, v in out.items() if k not in ("log_tail", "log_project", "log_problem", "check_after_seconds")},
+                      sort_keys=True, default=str)
+
+
 def _tool_job_status(ctx, args):
+    """The state of a run.  While it goes on, the answer waits up to wait_seconds for a change
+    (a step or data set ends, the phase moves on), so a client that does not pause between
+    calls still follows a run of hours without spending a call a second."""
+    try:
+        wait = float(args.get("wait_seconds", AGENT_WAIT_DEFAULT))
+    except (TypeError, ValueError):
+        wait = AGENT_WAIT_DEFAULT
+    wait = max(0.0, min(wait, AGENT_WAIT_MAX))
+    out = _agent_job_state(ctx, args)
+    if wait <= 0 or not _agent_job_going(out):
+        return out
+    started = time.time()
+    mark = _agent_job_mark(out)
+    while time.time() - started < wait:
+        time.sleep(min(AGENT_WAIT_STEP, max(0.05, wait - (time.time() - started))))
+        out = _agent_job_state(ctx, args)
+        if not _agent_job_going(out) or _agent_job_mark(out) != mark:
+            break
+    out["waited_seconds"] = round(time.time() - started, 1)
+    if _agent_job_going(out):
+        out["check_after_seconds"] = 0
+        out["note"] = "job_status waited for a change; call it again now to go on following the run."
+    return out
+
+
+def _agent_job_state(ctx, args):
     if str(args.get("job_id") or "").startswith("run:"):
         return _agent_run_status(str(args["job_id"]), args)
     batch_id = _agent_batch_id(args.get("job_id"))
@@ -1754,8 +1793,10 @@ AGENT_TOOLS = [
      "schema": _agent_schema()},
     {"name": "job_status", "level": "read", "fn": _tool_job_status, "title": "Run status",
      "description": "State of a run from run_autopilot or run_program, or a merge: status, steps or data sets, results once finished and the end of the log. "
-                    "An AutoPilot data set's overall statistics come from its XSCALE run at the cut-off (statistics_from says which).",
+                    "An AutoPilot data set's overall statistics come from its XSCALE run at the cut-off (statistics_from says which). "
+                    "While the run goes on, the answer waits up to wait_seconds (default 25, at most 50) for a change.",
      "schema": _agent_schema({"job_id": {"type": "string"}, "project": {"type": "string", "description": "Whose log to show (default: the current data set)."},
+                              "wait_seconds": {"type": "number", "description": "How long to wait for a change while the run goes on; 0 answers at once."},
                               "log_lines": {"type": "integer", "description": "Log lines to return (default 20)."}}, ["job_id"])},
     {"name": "create_project", "level": "own", "fn": _tool_create_project, "title": "Create a project", "writes": True,
      "description": "A new, empty project of the agent's own. generate_xdsinp then gives it an XDS.INP.",

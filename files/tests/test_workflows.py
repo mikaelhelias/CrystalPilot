@@ -1073,7 +1073,14 @@ class Workflows(unittest.TestCase):
         deadline = time.time() + 15
         while time.time() < deadline and not (m._pdir(project) / 'executed.jsonl').exists():
             time.sleep(0.05)
-        self.assertTrue(self.tool_ok('job_status', job_id=job)['running'])
+        self.assertTrue(self.tool_ok('job_status', job_id=job, wait_seconds=0)['running'])
+        # a run that does not move: the answer waits, then says so
+        t0 = time.time()
+        waited = self.tool_ok('job_status', job_id=job, wait_seconds=3)
+        self.assertTrue(waited['running'])
+        self.assertGreaterEqual(time.time() - t0, 2.5)
+        self.assertGreaterEqual(waited['waited_seconds'], 2.5)
+        self.assertEqual(waited['check_after_seconds'], 0)
         message, failed = self.tool('run_program', project=project, program='xds')
         self.assertTrue(failed)
         self.assertIn('one runs at a time', message)
@@ -1438,7 +1445,7 @@ class Workflows(unittest.TestCase):
         message, failed = self.tool('run_autopilot', datasets=[{'template': str(self.dataset_folder() / 'xtal_????.cbf')}])
         self.assertTrue(failed)
         self.assertIn('one runs at a time', message)
-        self.assertTrue(self.tool_ok('job_status', job_id='batch:' + state['id'])['running'])
+        self.assertTrue(self.tool_ok('job_status', job_id='batch:' + state['id'], wait_seconds=0)['running'])
         with patch.object(m, 'AGENT_LEVEL', 'full'):
             self.assertTrue(self.tool_ok('stop_job', job_id='batch:' + state['id'])['was_running'])
         self.assertEqual(self._batch_wait(state['id'], 30)['items'][0]['status'], 'queued')
