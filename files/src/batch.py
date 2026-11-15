@@ -884,11 +884,19 @@ def batch_metrics(project):
             if str(row.get("resolution", "")).strip().lower() == "total":
                 for key in ("completeness", "r_meas", "i_sigma", "cc_half"):
                     out[key] = row.get(key)
+                out["stats_source"] = "CORRECT"
     results = _pfile(project_dir, "AUTOPILOT_RESULTS.json")
     if results.is_file():
         try:
             summary = json.loads(results.read_text(encoding="utf-8"))
             out["resolution"] = summary.get("resolution")
+            # CORRECT's overall row runs to the edge of the integrated data; AutoPilot's own table
+            # (XSCALE at its cut-off) is what the data set is, so its overall row is the one shown
+            for row in summary.get("stats_table") or []:
+                if isinstance(row, dict) and str(row.get("resolution", "")).strip().lower() == "total":
+                    for key in ("completeness", "r_meas", "i_sigma", "cc_half"):
+                        out[key] = row.get(key)
+                    out["stats_source"] = summary.get("stats_source") or "CORRECT"
             opt = summary.get("optimization") or {}
             if "kept" in opt:
                 out["reintegration"] = "kept" if opt.get("kept") else "rejected"

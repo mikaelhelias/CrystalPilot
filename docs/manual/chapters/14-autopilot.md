@@ -97,7 +97,7 @@ The **Runs** card lists every run. For the chosen one:
 - **Stop** stops now. The data set being processed goes back in the queue with the rest, and **Resume** processes it again — from a fresh `XDS.INP` when its `XDS.INP` was generated (the interrupted run's changes are kept as `XDS.INP.interrupted_run`). A data set that had just finished stays finished.
 - A data set that fails does not stop the others; its row says why.
 
-The table shows each data set's status (with the phase and the attempt while it runs), where its `XDS.INP` came from, space group, cell, resolution cut-off, and the overall completeness, R-meas, I/σ, CC½ and ISa from its own CORRECT.LP, plus whether the re-integration was kept (hover for the numbers it was judged on). The best value of each column is green. Click a heading to sort.
+The table shows each data set's status (with the phase and the attempt while it runs), where its `XDS.INP` came from, space group, cell, resolution cut-off, the overall completeness, R-meas, I/σ and CC½ of its final XSCALE run at that cut-off (CORRECT.LP's, which run to the edge of the data, only when AutoPilot ended before XSCALE), ISa from its CORRECT.LP, plus whether the re-integration was kept (hover for the numbers it was judged on). The best value of each column is green. Click a heading to sort.
 
 ## One data set: progress and summary
 

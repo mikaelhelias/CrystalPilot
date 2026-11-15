@@ -905,6 +905,35 @@ class Workflows(unittest.TestCase):
         self.assertEqual(record[0]['job_id'], started['job_id'])
         self.assertFalse((m._pdir(page_project) / m.AGENT_LOG_NAME).exists())
 
+    def test_agent_run_by_label_alone_gets_the_data_set_find_datasets_gave(self):
+        self.agent_on('own')
+        folder = self.dataset_folder()
+        entry = self.tool_ok('find_datasets', folders=[str(folder)])['datasets'][0]
+        # what a small model sent: the label, with keys of its own
+        message, failed = self.tool('run_autopilot', datasets=[{'label': 'no such data set', 'selection': 1}])
+        self.assertTrue(failed)
+        self.assertIn(entry['label'], message)
+        self.assertIn('no such data set', message)
+        started = self.tool_ok('run_autopilot', datasets=[{'existing_project': None, 'label': entry['label'], 'selection': 1}],
+                               strategy={'optimize': 'never', 'dcc_half': 'off'})
+        ended = self.wait_job(started['job_id'])
+        self.assertEqual(ended['counts'], {'done': 1}, ended)
+        item = m.batch_load(started['job_id'][6:])['items'][0]
+        self.assertEqual((item['template'], item['xdsinp']), (entry['template'], entry['xdsinp']))
+        # the overall statistics are the ones AutoPilot reports, and say where they come from
+        results = ended['items'][0]['results']
+        summary = json.loads((m._pdir(started['projects'][0]) / 'AUTOPILOT_RESULTS.json').read_text(encoding='utf-8'))
+        total = [r for r in summary.get('stats_table') or [] if r.get('resolution') == 'total']
+        if total:
+            self.assertEqual(results['statistics_from'], summary.get('stats_source') or 'CORRECT')
+            self.assertEqual(results['completeness_pct'], m._agent_num(total[0]['completeness']))
+        else:
+            self.assertEqual(results['statistics_from'], 'CORRECT')
+        stats = self.tool_ok('get_statistics', project=started['projects'][0])
+        self.assertIn('overall_to_A', stats)
+        if stats['source'] == 'CORRECT':
+            self.assertIn('not a resolution cut-off', stats['overall_note'])
+
     def test_agent_can_list_datasets_without_the_xdsinp_search_and_the_run_still_searches(self):
         self.agent_on('own')
         folder = self.dataset_folder()
@@ -1010,6 +1039,9 @@ class Workflows(unittest.TestCase):
         self.tool_ok('set_parameters', project=project, file='XSCALE.INP', params={'OUTPUT_FILE': 'scaled.ahkl', "FRIEDEL'S_LAW": 'TRUE', 'INPUT_FILE': 'XDS_ASCII.HKL'})
         self.assertEqual(self.wait_run(self.tool_ok('run_program', project=project, program='xscale')['job_id'])['status'], 'completed')
         self.assertIsInstance(self.tool_ok('get_statistics', project=project, source='XSCALE')['n_shells'], int)
+        # XSCALE ran after CORRECT: the statistics without a source are its, and CORRECT's say how far they reach
+        self.assertEqual(self.tool_ok('get_statistics', project=project)['source'], 'XSCALE')
+        self.assertIn('not a resolution cut-off', self.tool_ok('get_statistics', project=project, source='CORRECT')['overall_note'])
         message = self.wait_run(self.tool_ok('run_program', project=project, program='xdsconv')['job_id'])
         self.assertEqual(message['status'], 'error')
         self.assertIn('XDSCONV.INP', message['errors'][0])

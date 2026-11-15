@@ -26,6 +26,8 @@ AGENT_TEXT_LIMIT = 4000         # characters of one string in a summary reply
 AGENT_SEARCH_WAIT_SECONDS = 40  # how long one tool call waits for the XDS.INP search
 AGENT_SEARCH_KEEP_SECONDS = 600 # how long a finished search answers a repeated call
 _AGENT_SEARCHES = {}            # the search's request -> its thread's state
+AGENT_FOUND_KEEP_SECONDS = 3600 # how long run_autopilot knows a data set by the label find_datasets gave
+_AGENT_FOUND = {}               # label -> {template: (time, the entry find_datasets returned)}
 _AGENT_SEARCH_LOCK = threading.Lock()
 _AGENT_LOG_LOCK = threading.Lock()
 _AGENT_CLIENT = {"name": ""}    # filled by initialize; the route keeps no sessions
@@ -180,11 +182,16 @@ def agent_statistics(metrics, project, source, lp_path, detail="summary"):
            "wilson_b": _agent_num(wilson.get("b")) if isinstance(wilson, dict) else None,
            "mosaicity_deg": _agent_num(metrics.get("mosaicity")),
            "overall": _agent_shell(total[0]) if total else None,
+           "overall_to_A": _agent_num(shells[-1].get("resolution")) if shells else None,
            "cutoffs": {key: {"d_A": _agent_num(found.get(key)), "reached": bool(reached.get(key))}
                        for key in ("isig2", "cc_half_50", "cc_half_sig", "r_obs_55")},
            "n_shells": len(shells), "warnings": []}
     if not table:
         out["warnings"].append("The log has no statistics table.")
+    elif source == "CORRECT":
+        out["overall_note"] = ("CORRECT's overall row counts every integrated reflection, to %s Å, not a resolution cut-off. "
+                               "Once XSCALE has run at a cut-off, its overall row (source XSCALE) is the one to report."
+                               % (js_fixed(out["overall_to_A"], 2) if out["overall_to_A"] is not None else "the edge of the data"))
     if detail == "full":
         out["shells"] = [_agent_shell(row) for row in shells]
     else:
@@ -469,8 +476,20 @@ def _tool_get_project(ctx, args):
 
 def _tool_get_statistics(ctx, args):
     name = _agent_require_project(args)
-    source = str(args.get("source") or "CORRECT").upper()
+    source = str(args.get("source") or "").upper()
     detail = args.get("detail") or "summary"
+    if not source:
+        # the XSCALE result made after the last CORRECT run is the data set at its cut-off
+        source = "CORRECT"
+        correct = _find_latest_lp(_pdir(name), "CORRECT")
+        try:
+            scaled = _agent_api(ctx, "GET", _agent_project_path(name, "/xscalelp"))
+        except AgentError:
+            scaled = {}
+        scaled_path = Path(str(scaled.get("source") or ""))
+        if (scaled.get("metrics") or {}).get("statistics_table") and scaled_path.is_file() and \
+                (not correct or scaled_path.stat().st_mtime >= Path(correct).stat().st_mtime):
+            return agent_statistics(scaled["metrics"], name, "XSCALE", str(scaled_path), detail)
     if source == "CORRECT":
         data = _agent_api(ctx, "GET", _agent_project_path(name, "/metrics/CORRECT"))
         return agent_statistics(data.get("metrics") or {}, name, source, _find_latest_lp(_pdir(name), "CORRECT"), detail)
@@ -709,7 +728,38 @@ def _tool_find_datasets(ctx, args):
             # no xdsinp key: run_autopilot then searches, rather than writing one from the header
             entry["xdsinp_state"] = "searching" if out.get("xdsinp_search_running") else "not searched"
         out["datasets"].append(entry)
+    now = time.time()
+    with _AGENT_SEARCH_LOCK:
+        for entry in out["datasets"]:
+            _AGENT_FOUND.setdefault(str(entry.get("label") or ""), {})[entry.get("template")] = (now, dict(entry))
     return out
+
+
+def _agent_found_dataset(raw):
+    """A data set given by its label alone: the one find_datasets last returned under that label."""
+    if raw.get("template") or raw.get("existing_project") or not raw.get("label"):
+        return raw
+    label = str(raw["label"])
+    now = time.time()
+    with _AGENT_SEARCH_LOCK:
+        kept = [(t, e) for t, e in (_AGENT_FOUND.get(label) or {}).values() if now - t < AGENT_FOUND_KEEP_SECONDS]
+    # the latest find_datasets call that gave this label decides; an earlier search of another folder does not
+    latest = max((t for t, _ in kept), default=None)
+    found = [e for t, e in kept if t == latest]
+    if len(found) > 1:
+        raise AgentError("find_datasets gave several data sets called %s; send the template of the one meant: %s"
+                         % (label, ", ".join(str(e.get("template")) for e in found)))
+    if not found:
+        return raw
+    merged = dict(found[0])
+    for key in ("project", "first", "last"):
+        if raw.get(key) not in (None, ""):
+            merged[key] = raw[key]
+    if "xdsinp" in raw and raw["xdsinp"] is not None:
+        merged["xdsinp"] = raw["xdsinp"]
+    if merged.get("xdsinp_state") in ("searching", "not searched", "pick") and "xdsinp" not in raw:
+        merged.pop("xdsinp", None)      # run_autopilot then finishes the search, and warns when several files fit
+    return merged
 
 
 def _tool_get_strategy_options(ctx, args):
@@ -740,6 +790,7 @@ def _tool_job_status(ctx, args):
                                   "resolution_A": _agent_num(found.get("resolution")), "completeness_pct": _agent_num(found.get("completeness")),
                                   "r_meas_pct": _agent_num(found.get("r_meas")), "i_over_sigma": _agent_num(found.get("i_sigma")),
                                   "cc_half_pct": _agent_num(found.get("cc_half")), "isa": _agent_num(found.get("isa")),
+                                  "statistics_from": found.get("stats_source"),
                                   "reintegration": found.get("reintegration"), "mtz": found.get("mtz")} if found else None})
     active = bool(state.get("active"))
     counts = {}
@@ -791,7 +842,11 @@ def _agent_new_dataset(raw):
     """A data set as the wizard hands it to batch_create; '' as xdsinp means: from the image header."""
     template = str(raw.get("template") or "").strip()
     if not template:
-        raise AgentError("Each data set needs its template, as find_datasets gave it (or existing_project).")
+        known = sorted(k for k in _AGENT_FOUND if k)
+        raise AgentError("Each data set is an entry from find_datasets, its label alone as {\"label\": name}, or {\"existing_project\": name}. "
+                         "Got: %s. %s" % (json.dumps(raw, ensure_ascii=False)[:120],
+                                          "Labels find_datasets gave: " + ", ".join(known[:10]) + "." if known
+                                          else "Call find_datasets on the user's folder first."))
     path = Path(template)
     if not path.parent.is_dir() or ("?" not in template and not path.is_file()):
         raise AgentError("The images were not found: %s. Use a template from find_datasets." % template)
@@ -827,12 +882,17 @@ def _agent_existing_dataset(project, ctx, overwrite):
 
 def _tool_run_autopilot(ctx, args):
     datasets = args.get("datasets")
+    if isinstance(datasets, (str, dict)):
+        datasets = [datasets]
+    if isinstance(datasets, list):
+        datasets = [{"label": d} if isinstance(d, str) else d for d in datasets]
     if not isinstance(datasets, list) or not datasets or not all(isinstance(d, dict) for d in datasets):
-        raise AgentError("datasets is required: a list of data sets from find_datasets")
+        raise AgentError("datasets is required: a list of data sets from find_datasets, or their labels")
     _agent_refuse_if_busy()
     strategy = _agent_check_strategy(args.get("strategy") or {})
     prepared, warnings = [], []
     for raw in datasets:
+        raw = _agent_found_dataset(raw)
         if raw.get("existing_project"):
             prepared.append(_agent_existing_dataset(str(raw["existing_project"]), ctx, args.get("overwrite") is True))
             continue
@@ -1648,7 +1708,9 @@ AGENT_TOOLS = [
      "schema": _agent_schema({"project": _AGENT_P_PROJECT}, ["project"])},
     {"name": "get_statistics", "level": "read", "fn": _tool_get_statistics, "title": "Processing statistics",
      "description": "Statistics from CORRECT or XSCALE as numbers: overall, outer shell (all shells with detail: full) and the four "
-                    "resolution cut-offs. Percentages are in percent, resolutions in angstrom.",
+                    "resolution cut-offs. Percentages are in percent, resolutions in angstrom. Without source: XSCALE when it ran "
+                    "after the last CORRECT run (the data set at its cut-off), otherwise CORRECT, whose overall row runs to the "
+                    "edge of the integrated data (overall_to_A), not to a cut-off.",
      "schema": _agent_schema({"project": _AGENT_P_PROJECT, "source": {"type": "string", "enum": ["CORRECT", "XSCALE"]},
                               "detail": _AGENT_P_DETAIL}, ["project"])},
     {"name": "get_diagnostics", "level": "read", "fn": _tool_get_diagnostics, "title": "Diagnose a step",
@@ -1691,7 +1753,8 @@ AGENT_TOOLS = [
      "description": "Every AutoPilot choice with its allowed values, default and consequences.",
      "schema": _agent_schema()},
     {"name": "job_status", "level": "read", "fn": _tool_job_status, "title": "Run status",
-     "description": "State of a run from run_autopilot or run_program, or a merge: status, steps or data sets, results once finished and the end of the log.",
+     "description": "State of a run from run_autopilot or run_program, or a merge: status, steps or data sets, results once finished and the end of the log. "
+                    "An AutoPilot data set's overall statistics come from its XSCALE run at the cut-off (statistics_from says which).",
      "schema": _agent_schema({"job_id": {"type": "string"}, "project": {"type": "string", "description": "Whose log to show (default: the current data set)."},
                               "log_lines": {"type": "integer", "description": "Log lines to return (default 20)."}}, ["job_id"])},
     {"name": "create_project", "level": "own", "fn": _tool_create_project, "title": "Create a project", "writes": True,
@@ -1756,7 +1819,7 @@ AGENT_TOOLS = [
                     "names one. Returns a job_id at once; a run can take hours. Options left out take the wizard's defaults, which "
                     "include Friedel's law TRUE: set friedel FALSE for SAD/MAD data. A data set with no xdsinp key gets the XDS.INP "
                     "the search chooses; \"\" writes one from the image header.",
-     "schema": _agent_schema({"datasets": {"type": "array", "items": {"type": "object"}, "description": "Entries from find_datasets, or {existing_project: name}."},
+     "schema": _agent_schema({"datasets": {"type": "array", "items": {"type": "object"}, "description": "Entries from find_datasets, or just {label: name} with a label find_datasets gave, or {existing_project: name}."},
                               "strategy": {"type": "object", "description": "Choices from get_strategy_options."},
                               "name": {"type": "string", "description": "A name for the run, shown on the page."},
                               "overwrite": {"type": "boolean", "description": "To process a user's project in place, replacing its results. The user is asked on the page."},
