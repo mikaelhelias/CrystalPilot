@@ -478,7 +478,8 @@ async function main() {
                    loaded: !!(im && im.complete && im.naturalWidth > 100), zoom: typeof _fvZoom === 'number' ? _fvZoom : 0,
                    shown: im ? [im.offsetWidth, im.offsetHeight] : [], box: [innerWidth, innerHeight],
                    hidden: [d('header.hero'), d('aside.sidebar'), d('#main-tab-bar'), d('#fv-own-window-btn')], fit: d('#fv-fit-btn') }; })()`);
-        if (own && own.loaded && own.frame === 2 && own.zoom < 1) break;
+        // the zoom is set before the image is laid out at it: wait until it fits the window
+        if (own && own.loaded && own.frame === 2 && own.zoom < 1 && own.shown[0] <= own.box[0] && own.shown[1] <= own.box[1]) break;
       }
       check("Frame viewer own window: only the viewer, on the frame it was opened on, fitted to the window",
         own && own.only && own.loaded && own.frame === 2 && own.hidden.every(x => x === 'none') && own.fit !== 'none'
