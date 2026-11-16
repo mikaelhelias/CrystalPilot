@@ -30,7 +30,7 @@ _AGENT_FAILED = {}              # the last call that failed and how often it cam
 _AGENT_FAILED_LOCK = threading.Lock()
 AGENT_LOG_LINES = 5             # log lines job_status returns unless asked: they fill a small model's context
 AGENT_APPROVAL_WAIT = 45       # how long a call that asks the user waits for the answer on the page
-AGENT_WAIT_DEFAULT = 25        # job_status waits this long for a change unless told otherwise
+AGENT_WAIT_DEFAULT = 45        # job_status waits this long for a change unless told otherwise
 AGENT_WAIT_MAX = 50             # under the 60 seconds some MCP clients allow a call
 AGENT_WAIT_STEP = 2.0           # how often a waiting job_status looks again
 AGENT_FOUND_KEEP_SECONDS = 3600 # how long run_autopilot knows a data set by the label find_datasets gave
@@ -45,7 +45,7 @@ AGENT_INSTRUCTIONS = (
     "then job_status until the run has ended, then get_statistics, get_diagnostics and get_space_group_evidence.\n"
     "To step in by hand, in a project of the agent's own: create_project and generate_xdsinp, set_parameters or apply_suggestion, "
     "then run_program. Changing a keyword runs nothing until run_program.\n"
-    "One run goes at a time and a run can take hours. job_status waits up to 25 seconds for the run to change before "
+    "One run goes at a time and a run can take hours. job_status waits up to 45 seconds for the run to change before "
     "it answers, so call it again until the run has ended; other replies give check_after_seconds to wait.\n"
     "Set Friedel's law from the experiment: TRUE merges anomalous pairs (native data), FALSE keeps them apart (SAD/MAD). "
     "Ask the user when it is not known.\n"
@@ -953,8 +953,7 @@ def _agent_job_brief(out):
     for key in ("waited_seconds", "check_after_seconds"):
         if key in out:
             brief[key] = out[key]
-    brief["note"] = ("Still running. Call job_status again: it waits for a change. The results and the report come when the "
-                     "run has ended; detail: \"full\" shows everything now.")
+    brief["note"] = "Still running: call job_status again."
     return brief
 
 
@@ -2044,7 +2043,7 @@ AGENT_TOOLS = [
     {"name": "job_status", "level": "read", "fn": _tool_job_status, "title": "Run status",
      "description": "State of a run from run_autopilot or run_program, or a merge: status, steps or data sets, results once finished and the end of the log. "
                     "An AutoPilot data set's overall statistics come from its XSCALE run at the cut-off (statistics_from says which). "
-                    "While the run goes on, the answer waits up to wait_seconds (default 25, at most 50) for a change and is brief "
+                    "While the run goes on, the answer waits up to wait_seconds (default 45, at most 50) for a change and is brief "
                     "(phase and progress); the results and the report come once it has ended.",
      "schema": _agent_schema({"job_id": {"type": "string"}, "project": {"type": "string", "description": "Whose log to show (default: the current data set)."},
                               "wait_seconds": {"type": "number", "description": "How long to wait for a change while the run goes on; 0 answers at once."},
