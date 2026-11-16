@@ -19521,6 +19521,7 @@
             var key = d.key || '<agent key>', header = 'Authorization: Bearer ' + key;
             return [
                 { title: 'Claude Code', text: 'claude mcp add --transport http crystalpilot ' + d.url + ' --header "' + header + '"' },
+                { title: 'Codex: add to config.toml (in .codex in your home folder)', text: '[mcp_servers.crystalpilot]\nurl = "' + d.url + '"\nhttp_headers = { "Authorization" = "Bearer ' + key + '" }' },
                 { title: 'ollmcp with Ollama (a model on this computer)', text: 'ollmcp mcp add --transport http crystalpilot ' + d.url + ' --header "' + header + '"' },
                 { title: 'Another MCP client: address and header (Streamable HTTP)', text: d.url + '\n' + header }
             ];

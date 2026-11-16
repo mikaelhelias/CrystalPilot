@@ -193,7 +193,8 @@ async function main() {
       await agentSetLevel('own');
       const own = document.getElementById('agent-level-own').checked;
       const setups = !!document.getElementById('agent-copy-0') && /claude mcp add/.test(document.getElementById('agent-body').textContent)
-        && /ollmcp mcp add/.test(document.getElementById('agent-body').textContent);
+        && /ollmcp mcp add/.test(document.getElementById('agent-body').textContent)
+        && /\[mcp_servers\.crystalpilot\]/.test(document.getElementById('agent-body').textContent);
       const key = _agentState.key;
       const keyHidden = key.length > 20 && document.getElementById('agent-body').innerHTML.indexOf(key) < 0;
       await agentNewKey();
