@@ -28,6 +28,7 @@ AGENT_SEARCH_KEEP_SECONDS = 600 # how long a finished search answers a repeated 
 _AGENT_SEARCHES = {}            # the search's request -> its thread's state
 _AGENT_FAILED = {}              # the last call that failed and how often it came in a row
 _AGENT_FAILED_LOCK = threading.Lock()
+AGENT_LOG_LINES = 5             # log lines job_status returns unless asked: they fill a small model's context
 AGENT_APPROVAL_WAIT = 45       # how long a call that asks the user waits for the answer on the page
 AGENT_WAIT_DEFAULT = 25        # job_status waits this long for a change unless told otherwise
 AGENT_WAIT_MAX = 50             # under the 60 seconds some MCP clients allow a call
@@ -985,9 +986,9 @@ def _agent_job_state(ctx, args):
         try:
             log = _agent_api(ctx, "GET", "/api/batch/log", query={"id": batch_id, "project": project}).get("log", "")
             try:
-                count = max(1, min(int(args.get("log_lines", 20)), AGENT_MAX_LINES))
+                count = max(1, min(int(args.get("log_lines", AGENT_LOG_LINES)), AGENT_MAX_LINES))
             except (TypeError, ValueError):
-                count = 20
+                count = AGENT_LOG_LINES
             out["log_project"], out["log_tail"] = project, "\n".join(log.splitlines()[-count:])
         except AgentError as exc:
             out["log_problem"] = str(exc)
@@ -1398,9 +1399,9 @@ def _agent_run_status(job_id, args):
         elif name in ("log", "ai_log", "ap_log") and data.get("text"):
             log.append(str(data["text"]))
     try:
-        count = max(1, min(int(args.get("log_lines", 20)), AGENT_MAX_LINES))
+        count = max(1, min(int(args.get("log_lines", AGENT_LOG_LINES)), AGENT_MAX_LINES))
     except (TypeError, ValueError):
-        count = 20
+        count = AGENT_LOG_LINES
     out = {"job_id": job_id, "project": job.project, "program": (known or {}).get("program", job.kind), "running": not finished,
            "status": "running" if not finished else (job.status or ("error" if errors else "completed")),
            "steps": steps, "errors": errors, "log_tail": "\n".join(log[-count:])}
@@ -2023,7 +2024,7 @@ AGENT_TOOLS = [
                     "While the run goes on, the answer waits up to wait_seconds (default 25, at most 50) for a change.",
      "schema": _agent_schema({"job_id": {"type": "string"}, "project": {"type": "string", "description": "Whose log to show (default: the current data set)."},
                               "wait_seconds": {"type": "number", "description": "How long to wait for a change while the run goes on; 0 answers at once."},
-                              "log_lines": {"type": "integer", "description": "Log lines to return (default 20)."}}, ["job_id"])},
+                              "log_lines": {"type": "integer", "description": "Log lines to return (default 5; the report, not the log, holds the results)."}}, ["job_id"])},
     {"name": "create_project", "level": "own", "fn": _tool_create_project, "title": "Create a project", "writes": True,
      "description": "A new, empty project of the agent's own. generate_xdsinp then gives it an XDS.INP.",
      "schema": _agent_schema({"name": {"type": "string"}, "description": {"type": "string"}, "data_path": {"type": "string"}, "reason": _AGENT_P_REASON}, ["name"])},
