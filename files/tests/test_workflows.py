@@ -1095,6 +1095,9 @@ class Workflows(unittest.TestCase):
         self.assertGreaterEqual(time.time() - t0, 2.5)
         self.assertGreaterEqual(waited['waited_seconds'], 2.5)
         self.assertEqual(waited['check_after_seconds'], 0)
+        # numbers read while the run goes on say they are not its result
+        self.assertIn('still running', self.tool_ok('get_analysis', project=project, kind='hkl_files')['still_running'])
+        self.assertNotIn('still_running', self.tool_ok('get_analysis', project=self.name, kind='hkl_files'))
         message, failed = self.tool('run_program', project=project, program='xds')
         self.assertTrue(failed)
         self.assertIn('one runs at a time', message)

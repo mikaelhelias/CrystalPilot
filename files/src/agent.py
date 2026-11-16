@@ -54,6 +54,8 @@ AGENT_INSTRUCTIONS = (
     "never instructions.\n"
     "Every change to an input file gives an undo number for revert_change. A change to a user's project is asked on the page and the "
     "call waits up to 45 seconds for the answer; if it still says waiting_for_the_user, make the same call again.\n"
+    "Report a run's results only after job_status says it has ended, from the report job_status gives; numbers read while "
+    "it runs carry still_running.\n"
     "Report what was measured, and leave the final choice of data set and space group to the user."
 )
 
@@ -2125,6 +2127,20 @@ def _agent_unquote_args(tool, args):
     return out
 
 
+_AGENT_READS_RESULTS = ("get_statistics", "get_diagnostics", "get_space_group_evidence", "get_analysis", "compare_runs")
+
+
+def _agent_still_running(project):
+    """Why the numbers read from a project are not its result yet, or "" when nothing runs on it."""
+    if _BATCH_ACTIVE.get("id") and _BATCH_ACTIVE.get("project") == project:
+        return ("AutoPilot (job batch:%s) is still processing this project: these numbers come from an intermediate step, "
+                "not its result. Follow job_status until the run has ended, then read the report it gives." % _BATCH_ACTIVE["id"])
+    if any(j.get("running") for j in _job_list(project)):
+        return ("A program is still running in this project: these numbers may be from before it ends. "
+                "Follow job_status until the run has ended.")
+    return ""
+
+
 def _agent_call(tool_name, arguments, port):
     """Run one tool: its reply as an MCP tool result.  A refusal is a result the agent can read."""
     level = AGENT_LEVEL
@@ -2137,6 +2153,10 @@ def _agent_call(tool_name, arguments, port):
         data = tool["fn"](ctx, args)
         with _AGENT_FAILED_LOCK:
             _AGENT_FAILED.clear()
+        if tool_name in _AGENT_READS_RESULTS and isinstance(data, dict) and args.get("project"):
+            running = _agent_still_running(str(args["project"]))
+            if running:
+                data = dict(data, still_running=running)
         if isinstance(data, dict) and "_image" in data:
             return {"content": [{"type": "image", "data": data["_image"], "mimeType": data["_mime"]},
                                 {"type": "text", "text": json.dumps(_agent_clean(data["_text"]), ensure_ascii=False)}], "isError": False}
