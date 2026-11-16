@@ -570,8 +570,9 @@ def _agent_space_group_check(parsed, pointless=None, note=""):
     elif others:
         verdict, why = "differs", "The absences point to %s, not %s." % (others[0], current)
     elif all(str(a.get("confidence")) == "high" for a in axes.values()):
-        verdict, why = "clear", ("Every axis (%s) is clear in the absences (%s systematic absences)."
-                                 % (", ".join(sorted(axes)), parsed.get("n_systematic_absences")))
+        span = lambda key: "%s-%s" % (min(a.get(key, 0) for a in axes.values()), max(a.get(key, 0) for a in axes.values()))
+        verdict, why = "clear", ("Every axis (%s) is clear: the axial reflections a screw axis removes have mean I/sigma %s, "
+                                 "the ones it keeps %s." % (", ".join(sorted(axes)), span("mean_isig_absent"), span("mean_isig_allowed")))
     else:
         verdict, why = "weak", ("Not every axis is clear: %s."
                                 % ", ".join("%s %s" % (k, a.get("confidence")) for k, a in sorted(axes.items())))
