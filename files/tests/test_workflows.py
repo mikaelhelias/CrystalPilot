@@ -1020,6 +1020,20 @@ class Workflows(unittest.TestCase):
             time.sleep(0.05)
         self.fail('run did not finish')
 
+    def test_agent_report_counts_frame_rejection_in_batches(self):
+        self.agent_on('own')
+        project = self.own_project()
+        folder = m._pdir(project)
+        (folder / 'AUTOPILOT_RESULTS.json').write_text(json.dumps({'status': 'success', 'dcc_half': {
+            'n_excluded': 5, 'n_total': 50, 'left_out': 3, 'limit_pct': 10, 'frames_per_batch': 5, 'dmax': 2.1}}), encoding='utf-8')
+        with (folder / 'XDS.INP').open('a', encoding='utf-8') as f:
+            f.write('\nEXCLUDE_DATA_RANGE= 101 125 ! dcc_half=-0.8\n')
+        frames = m._agent_run_report(project)['frames_rejected']
+        self.assertEqual((frames['batches_excluded'], frames['batches_total'], frames['frames_per_batch']), (5, 50, 5), frames)
+        self.assertEqual(frames['by_delta_cc_half'], [{'first': 101, 'last': 125, 'mean_delta_cc_half': -0.8}])
+        self.assertIn('3 more batches', frames['kept_by_the_limit'])
+        self.assertIn('of the batches', frames['rule'])
+
     def test_agent_works_by_hand_from_new_project_to_results(self):
         self.agent_on('own')
         project = self.own_project()

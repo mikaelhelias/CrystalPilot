@@ -632,12 +632,14 @@ def _agent_run_report(project):
     if dcc or ranges or other:
         frames = {"by_delta_cc_half": ranges, "other_excluded": other}
         if dcc:
-            frames["rule"] = ("XDSCC12 measured each frame's effect on CC1/2 (reflections to %s A); ranges whose mean "
-                              "delta-CC1/2 is below 0 were removed, at most %s%% of the frames."
+            frames["rule"] = ("XDSCC12 measured the effect of each batch of frames on CC1/2 (reflections to %s A); ranges "
+                              "whose mean delta-CC1/2 is below 0 were removed, at most %s%% of the batches."
                               % (dcc.get("dmax") or "the cut-off", dcc.get("limit_pct", 10)))
-            frames["n_excluded"], frames["n_total"] = dcc.get("n_excluded"), dcc.get("n_total")
+            frames["batches_excluded"], frames["batches_total"] = dcc.get("n_excluded"), dcc.get("n_total")
+            if dcc.get("frames_per_batch"):
+                frames["frames_per_batch"] = dcc["frames_per_batch"]
             if dcc.get("left_out"):
-                frames["kept_by_the_limit"] = ("%s more frames in ranges with mean delta-CC1/2 below 0 stayed in, because "
+                frames["kept_by_the_limit"] = ("%s more batches in ranges with mean delta-CC1/2 below 0 stayed in, because "
                                                "removing them would pass the %s%% limit." % (dcc["left_out"], dcc.get("limit_pct", 10)))
         out["frames_rejected"] = frames
     mtz = summary.get("mtz_file")

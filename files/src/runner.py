@@ -4252,6 +4252,7 @@ def stream_autopilot(project_name, write_fn, criterion='isig2', friedel='FALSE',
                                         choice = autopilot_frame_choice(cc12_data, osc)
                                         record = choice['record']
                                         record['dmax'] = cc12_dmax
+                                        record['frames_per_batch'] = batch_width
                                         send("ap_log", {"text": ">>>   ΔCC½ median=" + str(record['median'])
                                                               + "  MAD=" + str(record['mad'])
                                                               + "  batches=" + str(record['n_total'])
