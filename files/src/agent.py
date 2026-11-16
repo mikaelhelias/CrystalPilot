@@ -919,20 +919,43 @@ def _tool_job_status(ctx, args):
         wait = AGENT_WAIT_DEFAULT
     wait = max(0.0, min(wait, AGENT_WAIT_MAX))
     out = _agent_job_state(ctx, args)
-    if wait <= 0 or not _agent_job_going(out):
-        return out
-    started = time.time()
-    mark = _agent_job_mark(out)
-    while time.time() - started < wait:
-        time.sleep(min(AGENT_WAIT_STEP, max(0.05, wait - (time.time() - started))))
-        out = _agent_job_state(ctx, args)
-        if not _agent_job_going(out) or _agent_job_mark(out) != mark:
-            break
-    out["waited_seconds"] = round(time.time() - started, 1)
-    if _agent_job_going(out):
-        out["check_after_seconds"] = 0
-        out["wait_note"] = "job_status waited for a change; call it again now to go on following the run."
+    if wait > 0 and _agent_job_going(out):
+        started = time.time()
+        mark = _agent_job_mark(out)
+        while time.time() - started < wait:
+            time.sleep(min(AGENT_WAIT_STEP, max(0.05, wait - (time.time() - started))))
+            out = _agent_job_state(ctx, args)
+            if not _agent_job_going(out) or _agent_job_mark(out) != mark:
+                break
+        out["waited_seconds"] = round(time.time() - started, 1)
+        if _agent_job_going(out):
+            out["check_after_seconds"] = 0
+    if _agent_job_going(out) and args.get("detail") != "full" and "log_lines" not in args:
+        return _agent_job_brief(out)
     return out
+
+
+def _agent_job_brief(out):
+    """A run that goes on, in a few words.  A long run is followed by dozens of calls, and a small
+    model keeps every reply: the full state, the log and the report wait for the end."""
+    brief = {"job_id": out.get("job_id"), "running": out.get("running"), "status": out.get("status")}
+    if "counts" in out:
+        brief["counts"] = out["counts"]
+    current = next((i for i in out.get("items") or [] if i.get("status") == "running"), None)
+    if current:
+        brief.update(project=current.get("project"), phase=current.get("phase"), attempt=current.get("attempt"))
+    if "steps" in out:
+        brief.update(project=out.get("project"), program=out.get("program"), steps_done=[s.get("step") for s in out["steps"]])
+    if out.get("errors"):
+        brief["errors"] = out["errors"]
+    if out.get("merges"):
+        brief["merges"] = [{"id": m.get("id"), "status": m.get("status"), "error": m.get("error")} for m in out["merges"]]
+    for key in ("waited_seconds", "check_after_seconds"):
+        if key in out:
+            brief[key] = out[key]
+    brief["note"] = ("Still running. Call job_status again: it waits for a change. The results and the report come when the "
+                     "run has ended; detail: \"full\" shows everything now.")
+    return brief
 
 
 def _agent_job_state(ctx, args):
@@ -2021,9 +2044,11 @@ AGENT_TOOLS = [
     {"name": "job_status", "level": "read", "fn": _tool_job_status, "title": "Run status",
      "description": "State of a run from run_autopilot or run_program, or a merge: status, steps or data sets, results once finished and the end of the log. "
                     "An AutoPilot data set's overall statistics come from its XSCALE run at the cut-off (statistics_from says which). "
-                    "While the run goes on, the answer waits up to wait_seconds (default 25, at most 50) for a change.",
+                    "While the run goes on, the answer waits up to wait_seconds (default 25, at most 50) for a change and is brief "
+                    "(phase and progress); the results and the report come once it has ended.",
      "schema": _agent_schema({"job_id": {"type": "string"}, "project": {"type": "string", "description": "Whose log to show (default: the current data set)."},
                               "wait_seconds": {"type": "number", "description": "How long to wait for a change while the run goes on; 0 answers at once."},
+                              "detail": {"type": "string", "enum": ["brief", "full"], "description": "While the run goes on the answer is brief; full gives every data set and the log."},
                               "log_lines": {"type": "integer", "description": "Log lines to return (default 5; the report, not the log, holds the results)."}}, ["job_id"])},
     {"name": "create_project", "level": "own", "fn": _tool_create_project, "title": "Create a project", "writes": True,
      "description": "A new, empty project of the agent's own. generate_xdsinp then gives it an XDS.INP.",

@@ -1095,6 +1095,11 @@ class Workflows(unittest.TestCase):
         self.assertGreaterEqual(time.time() - t0, 2.5)
         self.assertGreaterEqual(waited['waited_seconds'], 2.5)
         self.assertEqual(waited['check_after_seconds'], 0)
+        # while it goes on the answer is brief; the whole state on request
+        self.assertNotIn('log_tail', waited)
+        self.assertEqual(waited['steps_done'], [])
+        self.assertLess(len(json.dumps(waited)), 600)
+        self.assertIn('log_tail', self.tool_ok('job_status', job_id=job, wait_seconds=0, detail='full'))
         # numbers read while the run goes on say they are not its result
         self.assertIn('still running', self.tool_ok('get_analysis', project=project, kind='hkl_files')['still_running'])
         self.assertNotIn('still_running', self.tool_ok('get_analysis', project=self.name, kind='hkl_files'))
