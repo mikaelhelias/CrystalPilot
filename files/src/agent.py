@@ -26,7 +26,9 @@ AGENT_TEXT_LIMIT = 4000         # characters of one string in a summary reply
 AGENT_SEARCH_WAIT_SECONDS = 40  # how long one tool call waits for the XDS.INP search
 AGENT_SEARCH_KEEP_SECONDS = 600 # how long a finished search answers a repeated call
 _AGENT_SEARCHES = {}            # the search's request -> its thread's state
-AGENT_APPROVAL_WAIT = 45        # how long a call that asks the user waits for the answer on the page
+_AGENT_FAILED = {}              # the last call that failed and how often it came in a row
+_AGENT_FAILED_LOCK = threading.Lock()
+AGENT_APPROVAL_WAIT = 45       # how long a call that asks the user waits for the answer on the page
 AGENT_WAIT_DEFAULT = 25        # job_status waits this long for a change unless told otherwise
 AGENT_WAIT_MAX = 50             # under the 60 seconds some MCP clients allow a call
 AGENT_WAIT_STEP = 2.0           # how often a waiting job_status looks again
@@ -1550,6 +1552,26 @@ def _agent_check_value(value):
         raise AgentError("A value may not hold a line break, = or !: " + str(value)[:60])
 
 
+# Names a model makes up for a setting, and the keyword the programs use for it, with a value as they read it
+_AGENT_KEYWORD_MEANT = {
+    "INCLUDE_RESOLUTION_RANGE": ("INCLUDE_RESOLUTION_RANGE", "\"50 2.0\" (low and high limit in angstrom)"),
+    "RESOLUTION": "INCLUDE_RESOLUTION_RANGE", "RESOLUTION_CUTOFF": "INCLUDE_RESOLUTION_RANGE", "RESOLUTION_LIMIT": "INCLUDE_RESOLUTION_RANGE",
+    "HIGH_RESOLUTION": "INCLUDE_RESOLUTION_RANGE", "HIGH_RESOLUTION_LIMIT": "INCLUDE_RESOLUTION_RANGE", "HIGH_RESOLUTION_CUTOFF": "INCLUDE_RESOLUTION_RANGE",
+    "D_MIN": "INCLUDE_RESOLUTION_RANGE", "DMIN": "INCLUDE_RESOLUTION_RANGE", "RESOLUTION_RANGE": "INCLUDE_RESOLUTION_RANGE",
+    "SPACE_GROUP_NUMBER": ("SPACE_GROUP_NUMBER", "19 (with UNIT_CELL_CONSTANTS; apply_space_group does both)"),
+    "SPACE_GROUP": "SPACE_GROUP_NUMBER", "SPACEGROUP": "SPACE_GROUP_NUMBER", "SG": "SPACE_GROUP_NUMBER",
+    "UNIT_CELL_CONSTANTS": ("UNIT_CELL_CONSTANTS", "\"87.6 104.6 153.4 90 90 90\""),
+    "CELL": "UNIT_CELL_CONSTANTS", "UNIT_CELL": "UNIT_CELL_CONSTANTS", "CELL_CONSTANTS": "UNIT_CELL_CONSTANTS",
+    "X-RAY_WAVELENGTH": ("X-RAY_WAVELENGTH", "0.9793 (angstrom)"), "WAVELENGTH": "X-RAY_WAVELENGTH",
+    "DETECTOR_DISTANCE": ("DETECTOR_DISTANCE", "197.4 (mm)"), "DISTANCE": "DETECTOR_DISTANCE",
+    "FRIEDEL'S_LAW": ("FRIEDEL'S_LAW", "\"FALSE\" for anomalous data, \"TRUE\" for native"),
+    "FRIEDEL": "FRIEDEL'S_LAW", "FRIEDELS_LAW": "FRIEDEL'S_LAW", "FRIEDEL_LAW": "FRIEDEL'S_LAW", "ANOMALOUS": "FRIEDEL'S_LAW",
+    "DATA_RANGE": ("DATA_RANGE", "\"1 100\" (first and last frame)"), "FRAMES": "DATA_RANGE", "IMAGE_RANGE": "DATA_RANGE", "FRAME_RANGE": "DATA_RANGE",
+    "EXCLUDE_DATA_RANGE": ("EXCLUDE_DATA_RANGE", "[[171, 180]] (a list of first and last frame)"),
+    "EXCLUDE_FRAMES": "EXCLUDE_DATA_RANGE", "EXCLUDED_FRAMES": "EXCLUDE_DATA_RANGE", "EXCLUDE_IMAGES": "EXCLUDE_DATA_RANGE",
+}
+
+
 def _agent_check_known(upper, name, current):
     """Refuse a keyword the program does not read, unless the user's file already has it (as a line or commented out)."""
     known = _AGENT_FILE_KEYWORDS.get(name)
@@ -1557,11 +1579,16 @@ def _agent_check_known(upper, name, current):
         return
     if re.search(r"(?mi)^[ \t!]*" + re.escape(upper) + r"\s*=", current or ""):
         return
+    program = {"XDS.INP": "XDS", "XSCALE.INP": "XSCALE", "XDSCONV.INP": "XDSCONV"}.get(name, name)
+    meant = _AGENT_KEYWORD_MEANT.get(re.sub(r"[\s-]+", "_", upper).replace("_(", "("))
+    if isinstance(meant, str) and meant in known:
+        keyword, example = _AGENT_KEYWORD_MEANT[meant]
+        raise AgentError("%s is not a keyword %s reads (it would stop with ILLEGAL KEYWORD). Use %s instead, for example "
+                         "params {\"%s\": %s}." % (upper, program, keyword, keyword, example))
     import difflib
     close = difflib.get_close_matches(upper, sorted(known), n=3, cutoff=0.5)
     raise AgentError("%s is not a keyword %s reads (it would stop with ILLEGAL KEYWORD).%s"
-                     % (upper, {"XDS.INP": "XDS", "XSCALE.INP": "XSCALE", "XDSCONV.INP": "XDSCONV"}.get(name, name),
-                        " Did you mean: " + ", ".join(close) + "?" if close else ""))
+                     % (upper, program, " Did you mean: " + ", ".join(close) + "?" if close else ""))
 
 
 def _agent_check_params(params, name=None, current=""):
@@ -2107,6 +2134,8 @@ def _agent_call(tool_name, arguments, port):
     ctx = {"port": port, "level": level, "tool": tool_name, "args": args}
     try:
         data = tool["fn"](ctx, args)
+        with _AGENT_FAILED_LOCK:
+            _AGENT_FAILED.clear()
         if isinstance(data, dict) and "_image" in data:
             return {"content": [{"type": "image", "data": data["_image"], "mimeType": data["_mime"]},
                                 {"type": "text", "text": json.dumps(_agent_clean(data["_text"]), ensure_ascii=False)}], "isError": False}
@@ -2119,6 +2148,15 @@ def _agent_call(tool_name, arguments, port):
     except Exception as exc:
         _note_error(exc)
         message = "%s: %s" % (type(exc).__name__, exc)
+    # a model that sends the same failing call again and again is told so: the arguments have to change
+    key = json.dumps([tool_name, args], sort_keys=True, default=str)
+    with _AGENT_FAILED_LOCK:
+        _AGENT_FAILED["count"] = _AGENT_FAILED["count"] + 1 if _AGENT_FAILED.get("key") == key else 1
+        _AGENT_FAILED["key"] = key
+        count = _AGENT_FAILED["count"]
+    if count > 1 and not re.search(r"\bagain\b", message, re.I):     # "still going: call again" is a fine repeat
+        message += (" This exact call has now failed %d times with the same arguments and will fail the same way "
+                    "again: change the arguments as the message says, or tell the user what is in the way." % count)
     return {"content": [{"type": "text", "text": message}], "isError": True}
 
 
