@@ -2076,6 +2076,28 @@ def define_checks(m, scratch):
         assert "Input files were changed by an AI agent (other)" in changed and "Processing was carried out" not in changed, changed
         assert "AI agent" not in m.methods_text({"agent_ran": [], "agent_changed": []})["text"]
 
+    @check("agent: every keyword in the real input files and the generated XDS.INP is one the program reads")
+    def _():
+        found = lambda text: {k.upper() for k, _ in re.findall(r"(?m)^[ \t!]*([A-Z0-9][A-Z0-9_'./()\-]*)\s*=(\S*)", text)}
+        for name in ("XDS.INP", "XSCALE.INP", "XDSCONV.INP"):
+            unknown = found(real(name)) - m._AGENT_FILE_KEYWORDS[name]
+            assert not unknown, (name, sorted(unknown))
+        unknown = found((FIX / "XDS.INP").read_text(encoding="utf-8", errors="replace")) - m._AGENT_FILE_KEYWORDS["XDS.INP"]
+        assert not unknown, sorted(unknown)
+
+    @check("agent: the space-group verdict tells enantiomorphs from too few axial reflections")
+    def _():
+        demo = m._agent_space_group_check(LP.parse_correct(real("CORRECT.LP")))
+        assert demo["screw_axes_verdict"] == "undecided" and "enantiomorph" not in demo["why"], demo
+        assert "C222" in demo["why"]
+        pair = {"space_group": 76, "current_sg_name": "P4₁", "axis_analysis": {"00l": {"period": 4, "confidence": "high"}},
+                "sg_suggestions": [{"sg_number": 76, "name": "P4₁", "screws": {"00l": 4}}, {"sg_number": 78, "name": "P4₃", "screws": {"00l": 4}}]}
+        assert m._agent_space_group_check(pair)["screw_axes_verdict"] == "enantiomorphs"
+        clear = dict(pair, sg_suggestions=pair["sg_suggestions"][:1])
+        assert m._agent_space_group_check(clear)["screw_axes_verdict"] == "clear"
+        assert m._agent_space_group_check(dict(clear, axis_analysis={"00l": {"confidence": "low"}}))["screw_axes_verdict"] == "weak"
+        assert m._agent_space_group_check({"space_group": 19})["screw_axes_verdict"] == "no axial data"
+
     @check("agent: the page's default folder words are the server's; the panel's handlers exist")
     def _():
         html = m.get_frontend_html()

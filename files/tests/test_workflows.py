@@ -63,6 +63,10 @@ class Workflows(unittest.TestCase):
         cls.stack.close()
 
     def setUp(self):
+        # a question to the user answers at once here; the test of the wait sets its own time
+        waiting = patch.object(m, 'AGENT_APPROVAL_WAIT', 0)
+        waiting.start()
+        self.addCleanup(waiting.stop)
         self.name = self._testMethodName + ' project'
         self.request('POST','/api/projects', {'name':self.name})
         self.p = m._pdir(self.name)
@@ -855,7 +859,10 @@ class Workflows(unittest.TestCase):
         self.assertEqual(sorted(full['cutoffs']), sorted(['isig2', 'cc_half_50', 'cc_half_sig', 'r_obs_55']))
         self.assertIsInstance(self.tool_ok('get_diagnostics', project=self.name, step='CORRECT')['autopilot_diagnostics'], list)
         self.assertEqual(self.tool_ok('compare_runs', project=self.name)['step'], 'CORRECT')
-        self.assertIn('current', self.tool_ok('get_space_group_evidence', project=self.name))
+        evidence = self.tool_ok('get_space_group_evidence', project=self.name)
+        self.assertIn('current', evidence)
+        self.assertIn(evidence['verdict']['screw_axes_verdict'], ('clear', 'weak', 'enantiomorphs', 'undecided', 'differs', 'no axial data'))
+        self.assertIn('aP always fits', evidence['lattice_note'])
         tail = self.tool_ok('read_project_file', project=self.name, file='CORRECT.LP', limit=3)
         self.assertLessEqual(len(tail['text'].splitlines()), 3)
         whole = self.tool_ok('read_project_file', project=self.name, file='xds.inp', offset=1, limit=1)
@@ -929,8 +936,15 @@ class Workflows(unittest.TestCase):
             self.assertEqual(results['completeness_pct'], m._agent_num(total[0]['completeness']))
         else:
             self.assertEqual(results['statistics_from'], 'CORRECT')
+        # what the user asks after a run is in the reply, read from the project's files
+        report = ended['items'][0]['report']
+        self.assertIn('ISa', ended['glossary']['isa'])
+        self.assertEqual(report['space_group']['current'].split('(#')[1].rstrip(')'), str(results['space_group']))
+        self.assertIn(report['space_group']['screw_axes_verdict'], ('clear', 'weak', 'enantiomorphs', 'undecided', 'differs', 'no axial data'))
+        self.assertEqual(report['cell']['a'], results['cell'][0])
         stats = self.tool_ok('get_statistics', project=started['projects'][0])
         self.assertIn('overall_to_A', stats)
+        self.assertIn('not the data', stats['glossary']['isa'])
         if stats['source'] == 'CORRECT':
             self.assertIn('not a resolution cut-off', stats['overall_note'])
 
@@ -1304,6 +1318,44 @@ class Workflows(unittest.TestCase):
         with m._AGENT_APPROVAL_LOCK:
             m._AGENT_APPROVALS.clear()
 
+    def test_agent_call_that_asks_the_user_waits_for_the_answer_given_meanwhile(self):
+        self.agent_on('full')
+        before = (self.p / 'XDS.INP').read_text()
+
+        def answer(choice):
+            for _ in range(100):
+                questions = self.request('GET', '/api/agent/approvals')[1]['questions']
+                if questions:
+                    self.request('POST', '/api/agent/approvals', {'id': questions[0]['id'], 'answer': choice})
+                    return
+                time.sleep(0.05)
+
+        with patch.object(m, 'AGENT_APPROVAL_WAIT', 10):
+            # allowed while the call waits: done in this one call
+            helper = threading.Thread(target=answer, args=('allow',))
+            helper.start()
+            t0 = time.time()
+            done = self.tool_ok('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 6})
+            helper.join(5)
+            self.assertLess(time.time() - t0, 8)
+            self.assertIn('SIGNAL_PIXEL= 6', '\n'.join(done['changes']))
+            # refused while the call waits: refused in this one call
+            helper = threading.Thread(target=answer, args=('refuse',))
+            helper.start()
+            message, failed = self.tool('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 9})
+            helper.join(5)
+            self.assertTrue(failed)
+            self.assertIn('refused', message)
+        with patch.object(m, 'AGENT_APPROVAL_WAIT', 1):
+            # no answer in time: the call says so and nothing happened
+            waiting = self.tool_ok('set_parameters', project=self.name, overwrite=True, params={'SIGNAL_PIXEL': 11})
+            self.assertEqual(waiting['status'], 'waiting_for_the_user')
+        self.assertNotIn('SIGNAL_PIXEL= 9', (self.p / 'XDS.INP').read_text())
+        self.assertNotIn('SIGNAL_PIXEL= 11', (self.p / 'XDS.INP').read_text())
+        self.assertNotEqual((self.p / 'XDS.INP').read_text(), before)
+        with m._AGENT_APPROVAL_LOCK:
+            m._AGENT_APPROVALS.clear()
+
     def test_agent_change_can_be_undone_by_the_agent_and_on_the_page(self):
         self.agent_on('own')
         project = self.own_project()
@@ -1360,10 +1412,22 @@ class Workflows(unittest.TestCase):
         self.assertIn('resolution 2.0', message)
         # a keyword whose value is an object is refused before anything is written or asked
         start = self.tool_ok('read_project_file', project=project, file='XDS.INP', limit=500)['text']
-        message, failed = self.tool('set_parameters', project=project, params='{"RESOLUTION_CUTOFF": {"resolution": 2.0}}')
+        message, failed = self.tool('set_parameters', project=project, params='{"SIGNAL_PIXEL": {"value": 6}}')
         self.assertTrue(failed)
         self.assertIn('not an object', message)
+        # a keyword the program does not read is refused, with the nearest real ones
+        message, failed = self.tool('set_parameters', project=project, params={'resolution_cutoff': 2.0})
+        self.assertTrue(failed)
+        self.assertIn('RESOLUTION_CUTOFF is not a keyword XDS reads', message)
+        self.assertIn('Did you mean', message)
+        message, failed = self.tool('set_parameters', project=project, file='XSCALE.INP', params={'MINIMUM_ZETA': 0.1})
+        self.assertTrue(failed)
+        self.assertIn('not a keyword XSCALE reads', message)
         self.assertEqual(self.tool_ok('read_project_file', project=project, file='XDS.INP', limit=500)['text'], start)
+        # one the user's file already has stays the user's call
+        path = m._pdir(project) / 'XDS.INP'
+        path.write_text(path.read_text().rstrip('\n') + '\n!LOCAL_EXTRA_KEYWORD= 1\n')
+        self.assertIn('LOCAL_EXTRA_KEYWORD= 2', json.dumps(self.tool_ok('set_parameters', project=project, params={'LOCAL_EXTRA_KEYWORD': 2})))
 
     def test_methods_text_says_only_what_the_project_shows(self):
         self.agent_on('own')
